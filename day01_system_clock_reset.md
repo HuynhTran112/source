@@ -2,11 +2,11 @@
 
 Tài liệu này hướng dẫn chi tiết cách lập trình thanh ghi bare-metal (không sử dụng thư viện HAL/LL) cho **Cấu hình Xung hệ thống 216MHz ở chế độ Over-drive** và **Đọc / Xóa lý do Reset cứng trong RCC->CSR** trên vi điều khiển **STM32F746NG (ARM Cortex-M7)**.
 
-Mọi mã nguồn và hướng dẫn trong tài liệu này đều **tuân thủ tuyệt đối 6 Quy tắc Bare-metal cốt lõi** đã được xác lập trong [`AGENTS.md`](file:///d:/Project/STM32F7/.agents/AGENTS.md) và [`baremetal_register_rules.md`](file:///d:/Project/STM32F7/docs/baremetal_register_rules.md).
+Mọi mã nguồn và hướng dẫn trong tài liệu này đều **tuân thủ tuyệt đối 7 Quy tắc Bare-metal cốt lõi** đã được xác lập trong [`AGENTS.md`](file:///d:/Project/STM32F7/.agents/AGENTS.md).
 
 ---
 
-## 🛠️ RÀ SOÁT 6 QUY TẮC BARE-METAL CỐT LÕI
+## 🛠️ RÀ SOÁT 7 QUY TẮC BARE-METAL CỐT LÕI
 
 | STT | Quy tắc | Áp dụng trong Ngày 1 |
 | :---: | :--- | :--- |
@@ -16,6 +16,7 @@ Mọi mã nguồn và hướng dẫn trong tài liệu này đều **tuân thủ
 | **4** | **`volatile` Qualification** | Mọi struct ánh xạ thanh ghi (`PWR_TypeDef`, `RCC_TypeDef`, `FLASH_TypeDef`) đều sử dụng từ khóa `volatile uint32_t` để chống compiler optimization. |
 | **5** | **Interrupt Workflow** | Quy trình 5 bước đối với ngắt (được chuẩn bị sẵn nếu kích hoạt ngắt sụt áp PVD / Clock Security System CSS). |
 | **6** | **RM / DS Lookup** | Ghi rõ tên chương, số hiệu mục, từ khóa `Ctrl + F`, và công thức tính `Base Address + Offset` cho từng thanh ghi. |
+| **7** | **Hardware Rationale & Specs** | Bắt buộc nêu rõ **Cơ sở Kỹ thuật & Giới hạn Phần cứng** (DS10610 Table 17 limits: APB1 max 54MHz, APB2 max 108MHz; RM0385 Table 7 Flash 6 WS @ 3.3V; Over-drive 2-step sequence). |
 
 ---
 
@@ -96,6 +97,63 @@ FLASH_R_BASE      = AHB1PERIPH_BASE + 0x3C00UL     = 0x4002 3C00UL
 | **`FLASH_ACR`**| `0x00` | `0x4002 3C00` | `0x0000 0000` | 3:0 | `LATENCY[3:0]`| `RW` | Độ trễ Flash. Ở 216MHz & 3.3V, bắt buộc chọn `0110` (6 Wait States). |
 | | | | | 8 | `PRFTEN` | `RW` | Prefetch enable (`1`). |
 | | | | | 9 | `ARTEN` | `RW` | ART Accelerator enable (`1`). |
+
+---
+
+## 📐 CƠ SỞ KỸ THUẬT & LÝ DO CHỌN GIÁ TRỊ BIT (HARDWARE RATIONALE & SPECS BASIS)
+
+Theo **Quy tắc 7 trong AGENTS.md**, mọi cấu hình thanh ghi đều phải được giải thích dựa trên **Bảng Giới hạn Phần cứng (Datasheet DS10610)** và **Quy định Ép buộc / Công thức (RM0385)**:
+
+### 1. Cơ sở chọn Nguồn Xung & Thạch Anh (HSE = 25 MHz)
+* **Cơ sở thực tế:** Bo mạch **STM32F746G-Discovery** hàn sẵn thạch anh ngoài HSE $25\text{ MHz}$.
+* **Tra cứu RM0385:** *Section 5.2.1 HSE clock*. Ghi bit `HSEON = 1` trong `RCC_CR` để cấp nguồn cho bộ dao động ngoài.
+
+---
+
+### 2. Cơ sở Tính toán Thông số Bộ Nhân PLL (`PLLM`, `PLLN`, `PLLP`, `PLLQ`)
+* **Tra cứu RM0385:** *Section 5.3.2 RCC_PLLCFGR & Hình Cây Clock Tree (Trang 122)*.
+* **Các giới hạn phần cứng bắt buộc:**
+  1. **Tần số vào bộ nhân VCO ($f_{VCO\_in}$):** Bắt buộc nằm trong khoảng $1\text{ MHz} \le f_{VCO\_in} \le 2\text{ MHz}$ (khuyến nghị $1\text{ MHz}$ để tối ưu jitter).
+     $$f_{VCO\_in} = \frac{f_{HSE}}{PLLM} = \frac{25\text{ MHz}}{25} = \mathbf{1\text{ MHz}} \quad \Rightarrow \text{Chọn } PLLM = 25$$
+  2. **Tần số ra bộ nhân VCO ($f_{VCO\_out}$):** Bắt buộc nằm trong khoảng $100\text{ MHz} \le f_{VCO\_out} \le 432\text{ MHz}$.
+     $$f_{VCO\_out} = f_{VCO\_in} \times PLLN = 1\text{ MHz} \times 432 = \mathbf{432\text{ MHz}} \quad \Rightarrow \text{Chọn } PLLN = 432$$
+  3. **Tần số xung hệ thống ($f_{SYSCLK}$):** Tối đa $216\text{ MHz}$ cho dòng STM32F746.
+     $$f_{SYSCLK} = \frac{f_{VCO\_out}}{PLLP} = \frac{432\text{ MHz}}{2} = \mathbf{216\text{ MHz}} \quad \Rightarrow \text{Chọn } PLLP = 2\ (\text{bitfield } \texttt{00}b)$$
+  4. **Tần số ngoại vi 48MHz ($f_{USB/SDMMC}$):** Chuẩn USB OTG FS / SDMMC bắt buộc $48\text{ MHz}$.
+     $$f_{USB} = \frac{f_{VCO\_out}}{PLLQ} = \frac{432\text{ MHz}}{9} = \mathbf{48\text{ MHz}} \quad \Rightarrow \text{Chọn } PLLQ = 9$$
+
+---
+
+### 3. Cơ sở Chọn Bộ Chia Bus (`HPRE`, `PPRE1`, `PPRE2`)
+* **Tra cứu Datasheet DS10610:** *Table 17: General operating conditions*.
+* **Các giới hạn bus cực đại phần cứng:**
+  * **AHB Bus (HCLK):** Tối đa **$216\text{ MHz}$**.
+    $$\Rightarrow \text{Chọn } HPRE = /1\ (\text{bitfield } \texttt{0000}b) \implies 216\text{ MHz} / 1 = 216\text{ MHz}$$
+  * **APB1 Bus (PCLK1 - Ngoại vi tốc độ thấp UART/CAN/SPI2/3):** Tối đa **$54\text{ MHz}$**.
+    * Nếu chọn `/1` hoặc `/2` $\implies 216 / 2 = 108\text{ MHz} > 54\text{ MHz}$ (**Quá tải gây hỏng phần cứng!**).
+    * Bắt buộc chọn bộ chia tối thiểu **`/4`** ($\text{bitfield } \texttt{101}b = \text{0x5}$):
+      $$PCLK1 = \frac{216\text{ MHz}}{4} = \mathbf{54\text{ MHz}} \quad (\text{Vừa khớp giới hạn max})$$
+  * **APB2 Bus (PCLK2 - Ngoại vi tốc độ cao SDMMC/LTDC/SPI1):** Tối đa **$108\text{ MHz}$**.
+    * Bắt buộc chọn bộ chia tối thiểu **`/2`** ($\text{bitfield } \texttt{100}b = \text{0x4}$):
+      $$PCLK2 = \frac{216\text{ MHz}}{2} = \mathbf{108\text{ MHz}} \quad (\text{Vừa khớp giới hạn max})$$
+
+---
+
+### 4. Cơ sở Cấu hình Độ Trễ Flash (`LATENCY = 6 WS`)
+* **Tra cứu RM0385:** *Chapter 3: Embedded Flash memory -> Section 3.3.2 & Table 7: Number of wait states according to CPU clock frequency (VCC = 2.7V - 3.6V)*.
+* **Bảng quy định:**
+  - $0 < HCLK \le 30\text{ MHz} \implies 0\text{ WS}$
+  - $180 < HCLK \le 216\text{ MHz} \implies \mathbf{6\text{ Wait States}}\ (\text{bitfield } \texttt{LATENCY[3:0]} = \texttt{0110}b = \text{0x6})$.
+* **Lý do bật `ARTEN` & `PRFTEN`:** Vì Flash có 6 WS, nếu không bật ART Accelerator (`ARTEN = 1`) và Prefetch (`PRFTEN = 1`), CPU Cortex-M7 sẽ bị rảnh rỗi chờ bộ nhớ. ART đệm lệnh qua I-Cache giúp đạt hiệu năng tương đương 0 Wait State.
+
+---
+
+### 5. Cơ sở Trình tự Kích hoạt Over-drive Mode (`PWR_CR1` & `PWR_CSR1`)
+* **Tra cứu RM0385:** *Section 6.1.4 Over-drive mode*.
+* **Nguyên lý phần cứng:** Khi $SYSCLK > 180\text{ MHz}$, điện áp lõi $V_{CORE}$ mặc định không đủ duy trì tính ổn định của các transistor trong CPU.
+* **Chuỗi Handshake 2 bước ép buộc:**
+  1. Ghi `ODEN = 1` trong `PWR_CR1` $\rightarrow$ Vòng lặp chờ cờ phần cứng `PWR_CSR1` bit `ODRDY = 1`.
+  2. Ghi `ODSWEN = 1` trong `PWR_CR1` $\rightarrow$ Vòng lặp chờ cờ phần cứng `PWR_CSR1` bit `ODSWRDY = 1`.
 
 ---
 

@@ -2,6 +2,8 @@
 
 Tài liệu này hướng dẫn chi tiết cách lập trình thanh ghi bare-metal (không sử dụng thư viện HAL/LL) cho **Cấu hình Xung hệ thống 216MHz ở chế độ Over-drive** và **Đọc / Xóa lý do Reset cứng trong RCC->CSR** trên vi điều khiển **STM32F746NG (ARM Cortex-M7)**.
 
+> 💡 **Tài liệu tiên quyết cho người mới:** Nếu bạn chưa quen thuộc với Memory-mapped I/O, struct mapping, từ khóa `volatile`, phép toán bitwise hoặc Clock Tree, vui lòng đọc trước tài liệu [**`📘 [NGÀY 0] Nền tảng Cốt lõi Bare-metal & Cơ chế Thanh ghi`**](file:///d:/Project/STM32F7/docs/day00_baremetal_foundations.md).
+
 Mọi mã nguồn và hướng dẫn đều **tuân thủ tuyệt đối 7 Quy tắc Bare-metal cốt lõi** trong [`AGENTS.md`](file:///d:/Project/STM32F7/.agents/AGENTS.md).
 
 ---
@@ -165,6 +167,21 @@ Các file mã nguồn driver đã được tạo tại:
 - Header Thanh ghi: [`stm32f746xx_registers.h`](file:///d:/Project/STM32F7/drivers/inc/stm32f746xx_registers.h)
 - Driver Header: [`system_clock.h`](file:///d:/Project/STM32F7/drivers/inc/system_clock.h)
 - Driver Source: [`system_clock.c`](file:///d:/Project/STM32F7/drivers/src/system_clock.c)
+
+---
+
+## 💡 CÂU HỎI PHỎNG VẤN & THIẾT KẾ NÂNG CAO (DEEP-DIVE)
+
+### 1. Thứ tự cấu hình Flash Latency (Wait States)
+* **Câu hỏi:** *Tại sao phải tăng Flash Latency trước khi chuyển sang tần số xung cao, và giảm Flash Latency sau khi hạ tần số?*
+* **Giải thích:** Flash bộ nhớ trong chỉ đọc kịp ở tần số thấp ($0\text{ WS} \le 30\text{MHz}$). Nếu CPU tăng xung lên $216\text{MHz}$ mà Flash Latency vẫn là $0\text{ WS}$, lệnh nạp từ Flash sẽ bị lỗi thời gian truy xuất (timing violation), dẫn đến **Prefetch Buffer / HardFault Crash ngay lập tức**. Việc set trước $6\text{ WS}$ khi đang ở $16\text{MHz}$ HSI hoàn toàn an toàn (chỉ mất thêm vài nano-giây trong quá trình boot).
+
+### 2. Xử lý mất xung / Treo vòng lặp Polling (Timeout & Clock Security System - CSS)
+* **Câu hỏi:** *Nếu thạch anh ngoài HSE bị hỏng hoặc hàn hở chân, vòng lặp `while (!(RCC->CR & RCC_CR_HSERDY))` sẽ bị gì?*
+* **Hiện trạng Ngày 1:** Code sử dụng Polling trực tiếp (phù hợp học tập cơ bản). Nếu HSE hỏng, CPU sẽ đứng chờ vô tận tại đây.
+* **Giải pháp chuẩn Production / Automotive (sẽ tối ưu ở Phase 3):**
+  1. Thêm bộ đếm **Timeout Counter** (ví dụ: đếm 100,000 chu kỳ; nếu quá thời gian mà `HSERDY` chưa lên 1 thì tự động chuyển sang dùng `HSI` và kích hoạt cờ lỗi).
+  2. Kích hoạt tính năng **Clock Security System (CSS)** trong `RCC->CR` (bit `CSSON`): phần cứng tự động phát hiện HSE mất xung, tự động kích hoạt ngắt NMI (Non-Maskable Interrupt) và chuyển tức thì sang HSI để giữ cho vi điều khiển không bị treo.
 
 ---
 

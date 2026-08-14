@@ -1,4 +1,4 @@
-# 📘 [NGÀY 0] NỀN TẢNG CỐT LÕI BARE-METAL & CƠ CHẾ THANH GHI VI ĐIỀU KHIỂN
+# 📘 [NGÀY 0] NỀN TẢNG CỐT LÕI BARE-METAL & CƠ CHẾ THANH GHI VI ĐIỀU KHIỂN.
 
 > **Mục tiêu tài liệu:** Cung cấp toàn bộ kiến thức nền tảng "từ số 0" về cách CPU ARM Cortex-M7 giao tiếp với phần cứng thông qua thanh ghi (Registers), giải mã cú pháp con trỏ struct C, từ khóa `volatile`, các phép toán bitwise an toàn, phương pháp đọc Reference Manual (RM0385) và phân tích cây xung nhịp (Clock Tree). Bố cục tài liệu được tổ chức theo chuẩn **Song song Tra cứu - Bảng Thanh ghi - Cơ sở Kỹ thuật** giống Ngày 1 để bạn vừa đọc vừa tra cứu dễ dàng.
 

@@ -1,299 +1,260 @@
 # 📘 [NGÀY 0] NỀN TẢNG CỐT LÕI BARE-METAL & CƠ CHẾ THANH GHI VI ĐIỀU KHIỂN
 
-> **Mục tiêu tài liệu:** Cung cấp toàn bộ kiến thức nền tảng "từ số 0" về cách CPU giao tiếp với phần cứng thông qua thanh ghi (Registers), giải mã cú pháp con trỏ struct C, từ khóa `volatile`, các phép toán bitwise và sơ đồ cây xung nhịp (Clock Tree). Đọc xong tài liệu này, bạn sẽ tự tin đọc hiểu 100% mọi driver bare-metal từ Ngày 1 đến Ngày 8 mà không bị bỡ ngỡ.
+> **Mục tiêu tài liệu:** Cung cấp toàn bộ kiến thức nền tảng "từ số 0" về cách CPU ARM Cortex-M7 giao tiếp với phần cứng thông qua thanh ghi (Registers), giải mã cú pháp con trỏ struct C, từ khóa `volatile`, các phép toán bitwise an toàn, phương pháp đọc Reference Manual (RM0385) và phân tích cây xung nhịp (Clock Tree). Bố cục tài liệu được tổ chức theo chuẩn **Song song Tra cứu - Bảng Thanh ghi - Cơ sở Kỹ thuật** giống Ngày 1 để bạn vừa đọc vừa tra cứu dễ dàng.
 
 ---
 
-## 1. MEMORY-MAPPED I/O LÀ GÌ? TẠI SAO GHI VÀO ĐỊA CHỈ LẠI ĐIỀU KHIỂN ĐƯỢC PHẦN CỨNG?
+## 🛠️ RÀ SOÁT BỘ TỨ TÀI LIỆU BẮT BUỘC (MANDATORY DOCUMENTATION)
 
-### 1.1. Khái niệm cốt lõi: Không gian địa chỉ thống nhất (Unified Address Space)
-Trong các vi điều khiển ARM Cortex-M (như STM32F746NG - kiến trúc 32-bit), CPU có khả năng đánh địa chỉ một không gian bộ nhớ rộng $2^{32} = 4\text{ GB}$ (từ `0x0000 0000` đến `0xFFFF FFFF`).
+Để lập trình bare-metal chuẩn xác, bạn luôn làm việc với 4 tài liệu sau của hãng ST:
 
-Phần cứng ARM không phân biệt tập lệnh riêng cho bộ nhớ RAM và thiết bị ngoại vi (khác với kiến trúc x86 có lệnh `IN`/`OUT`). Thay vào đó, **mọi thứ đều là địa chỉ bộ nhớ**:
+| STT | Tài liệu | Mã hiệu STM32F746 | Nội dung chính | Khi nào tra cứu? |
+| :---: | :--- | :---: | :--- | :--- |
+| **1** | **Datasheet** | `DS10610` | Điện áp, dòng tiêu thụ, Pinout vật lý, Alternate Functions (AF), Tần số Bus tối đa (Max APB1=54MHz, APB2=108MHz, SYSCLK=216MHz). | Khi chọn chân GPIO, tra giới hạn tần số bus, xem bảng AF mapping. |
+| **2** | **Reference Manual** | `RM0385` | Sơ đồ khối (Block Diagram), Nguyên lý hoạt động (Functional Description), Chuỗi khởi tạo (Sequence), Chi tiết bit thanh ghi (Register Map). | Khi viết driver, tra Base address, Offset, Bit mask, Reset value, Polling flag. |
+| **3** | **Programming Manual** | `PM0253` | Lõi ARM Cortex-M7: Tập lệnh Assembly, NVIC (Ngắt), MPU, SysTick, Bộ nhớ đệm Cache (I-Cache / D-Cache). | Khi cấu hình ưu tiên ngắt NVIC, bật Cache, cấu hình vùng nhớ MPU. |
+| **4** | **Errata Sheet** | `ES0290` | Lỗi phần cứng (Silicon Bug) từ nhà sản xuất & giải pháp né bug (Workaround). | Khi ngoại vi hoạt động sai khác tài liệu hoặc bị treo bất thường. |
+
+---
+
+## 🔍 CHI TIẾT CÁC KHỐI KIẾN THỨC BARE-METAL & CƠ SỞ TRA CỨU RM/DS
+
+---
+
+### 1. Memory-Mapped I/O & Bản Đồ Không Gian Địa Chỉ
+* **Tài liệu tra cứu:** Reference Manual **RM0385** -> *Chapter 2: Memory map and memory interface -> Section 2.2: Memory map and register boundary addresses* (Trang 86).
+* **Từ khóa (`Ctrl + F`):** `Register boundary addresses` hoặc `Memory map`.
+* **Công thức địa chỉ:** `Absolute Address = Peripheral Base Address + Register Offset`
+
+#### 🗺️ Bảng Phân Vùng Không Gian Bộ Nhớ 4GB Cortex-M7
+| Vùng Bộ Nhớ | Dải Địa Chỉ | Bus Giao Tiếp | Chức năng & Ngoại vi kết nối |
+| :--- | :---: | :---: | :--- |
+| **System Control / NVIC** | `0xE000 0000 - 0xFFFF FFFF` | PPB (Private Periph Bus) | NVIC (Ngắt), SysTick, MPU, Core Debug |
+| **External Memory (FMC)**| `0x6000 0000 - 0xDFFF FFFF` | AHB3 Bus | SDRAM, NOR/NAND Flash ngoài |
+| **AHB2 / AHB3 Peripherals**| `0x5000 0000 - 0x5FFF FFFF` | AHB2 / AHB3 | USB OTG FS/HS, Camera DCMI, Crypto |
+| **AHB1 Peripherals** | `0x4002 0000 - 0x4007 FFFF` | AHB1 Bus | RCC, GPIOA..K, DMA1, DMA2, Flash Interface |
+| **APB2 Peripherals** | `0x4001 0000 - 0x4001 7FFF` | APB2 Bus (Max 108MHz) | USART1/6, SPI1/4/5/6, SDMMC1, TIM1/8/9/10/11 |
+| **APB1 Peripherals** | `0x4000 0000 - 0x4000 7FFF` | APB1 Bus (Max 54MHz) | USART2/3, UART4/5/7/8, CAN1/2, I2C1..4, SPI2/3, PWR |
+| **Internal SRAM** | `0x2000 0000 - 0x2004 FFFF` | AXI / AHB Matrix | RAM bộ nhớ trong (SRAM1, SRAM2, DTCM/ITCM) |
+| **Internal Flash** | `0x0800 0000 - 0x081F FFFF` | ITCM / AXI Matrix | Bộ nhớ Flash chứa mã code thực thi |
+
+#### 📐 Cơ sở Kỹ thuật & Bản chất Phần cứng
+1. **Khái niệm Unified Address Space:** Kiến trúc ARM Cortex-M không dùng tập lệnh `IN`/`OUT` riêng cho cổng I/O như x86. Mọi thanh ghi điều khiển của GPIO, UART, Timer đều được ánh xạ thành các ô nhớ 32-bit (4 bytes) thông thường trong không gian địa chỉ $2^{32} = 4\text{ GB}$.
+2. **Cơ chế truyền động phần cứng (Transistor Output Driver):**
+   ```text
+   Lệnh C: *(uint32_t *)0x40020014 = 0x0001; (Ghi vào GPIOA->ODR)
+      │
+      ▼ CPU phát địa chỉ 0x40020014 lên AHB1 Bus Matrix
+   [Bus Decoder nhận diện ngoại vi GPIOA]
+      │
+      ▼ Dữ liệu 0x0001 chốt vào Flip-Flop bit 0 của thanh ghi ODR
+   [Mạch đệm Output Driver kích hoạt Transistor]
+      │
+      ▼
+   Chân vật lý PA0 được kéo lên 3.3V ──► Đèn LED sáng!
+   ```
+   > **Kết luận:** Thanh ghi thực chất là mạch chốt điện tử (Flip-Flops) nằm trong ngoại vi. Ghi ô nhớ chính là điều khiển mạch điện!
+
+---
+
+### 2. C Struct Mapping & Cơ Chế Tính Offset Thanh Ghi
+* **Tài liệu tra cứu:** Reference Manual **RM0385** -> *Chapter 5: Reset and clock control (RCC) -> Section 5.3: RCC register map* (Trang 174) & *Chapter 6: GPIO -> Section 6.4: GPIO register map*.
+* **Từ khóa (`Ctrl + F`):** `<Tên_Ngoại_Vi> register map` (ví dụ: `RCC register map`).
+
+#### Bảng Đối Chiếu 1-1 giữa Reference Manual và C Struct
+| Tên Thanh ghi trong RM | Offset trong RM | Struct Field trong C | Kích thước | Địa chỉ Tuyệt đối (RCC_BASE = 0x4002 3800) |
+| :--- | :---: | :--- | :---: | :---: |
+| **`RCC_CR`** | `0x00` | `volatile uint32_t CR;` | 4 bytes | `0x4002 3800` |
+| **`RCC_PLLCFGR`** | `0x04` | `volatile uint32_t PLLCFGR;` | 4 bytes | `0x4002 3804` |
+| **`RCC_CFGR`** | `0x08` | `volatile uint32_t CFGR;` | 4 bytes | `0x4002 3808` |
+| **`RCC_CIR`** | `0x0C` | `volatile uint32_t CIR;` | 4 bytes | `0x4002 380C` |
+| **`RCC_AHB1RSTR`** | `0x10` | `volatile uint32_t AHB1RSTR;` | 4 bytes | `0x4002 3810` |
+| *Vùng trống phần cứng* | `0x1C` | `uint32_t RESERVED0;` | 4 bytes | `0x4002 381C` (**BẮT BUỘC ĐỆM ĐỂ KHÔNG LỆCH OFFSET**) |
+| **`RCC_APB1RSTR`** | `0x20` | `volatile uint32_t APB1RSTR;` | 4 bytes | `0x4002 3820` |
+
+#### 📐 Cơ sở Kỹ thuật & Cú pháp Ép Kiểu Con Trỏ
+1. **Quy tắc bộ nhớ trong Struct C:** Trong chuẩn C, các thành viên `uint32_t` trong struct luôn được cấp phát tuần tự và cách nhau đúng 4 bytes ($32\text{ bits}$).
+2. **Công thức Compiler tính toán địa chỉ:**
+   $$\text{Địa chỉ mục tiêu} = \text{Base Address} + \text{Offset của trường trong Struct}$$
+3. **Định nghĩa Macro chuẩn Bare-metal:**
+   ```c
+   #define RCC_BASE        (0x40023800UL)
+   #define RCC             ((RCC_TypeDef *)RCC_BASE)
+   
+   // Khi gọi: RCC->CFGR = 0x1234;
+   // Compiler tự động tính: 0x40023800 + 0x08 = 0x40023808 để phát lệnh STR ra bus!
+   ```
+
+---
+
+### 3. Từ Khóa `volatile` & Cơ Chế Cờ Trạng Thái Phần Cứng
+* **Tài liệu tra cứu:** Reference Manual **RM0385** -> *Chapter 5: RCC -> Section 5.3.1: RCC clock control register (RCC_CR)*.
+* **Từ khóa (`Ctrl + F`):** `RCC_CR` hoặc `HSERDY`.
+
+#### Bảng Thanh ghi `RCC_CR` (Minh họa Bit Polling)
+| Thanh ghi | Offset | Reset Value | Bit | Tên Bit | Access | Ý nghĩa Phần cứng |
+| :--- | :---: | :---: | :---: | :--- | :---: | :--- |
+| **`RCC_CR`** | `0x00` | `0x0000 0083` | 16 | `HSEON` | `RW` | Phần mềm ghi `1` để kích hoạt thạch anh ngoài. |
+| | | | 17 | `HSERDY` | `RO` | **Phần cứng tự động bật `1`** sau vài mili-giây khi dao động ổn định. |
+
+#### 📐 Cơ sở Kỹ thuật & Lỗi Tối Ưu Hóa Trình Biên Dịch (Compiler Bug)
+1. **Hiểm họa khi KHÔNG dùng `volatile`:**
+   ```c
+   uint32_t *cr_ptr = (uint32_t *)0x40023800;
+   *cr_ptr |= (1 << 16); // Bật HSEON
+   
+   while (!(*cr_ptr & (1 << 17))) {
+       // Compiler thấy trong thân vòng lặp không có lệnh sửa *cr_ptr
+       // Compiler tối ưu hóa: Copy *cr_ptr vào thanh ghi CPU R0 một lần duy nhất
+       // Kết quả: Vòng lặp kiểm tra R0 liên tục -> TREO VĨNH VIỄN (Infinite Loop)!
+   }
+   ```
+2. **Vai trò của `volatile`:** Ép Compiler phải phát lệnh đọc trực tiếp (`LDR`) từ địa chỉ bộ nhớ trên Bus thật ở **mọi lần lặp**, cấm tuyệt đối tối ưu hóa lưu biến vào thanh ghi CPU nội.
+3. **Khai báo chuẩn:**
+   ```c
+   typedef struct {
+       volatile uint32_t CR; // Bắt buộc volatile cho mọi thanh ghi ngoại vi!
+       ...
+   } RCC_TypeDef;
+   ```
+
+---
+
+### 4. Bậc Thầy Bitwise & Phân Biệt Quyền Truy Cập Thanh Ghi (Access Types)
+* **Tài liệu tra cứu:** Reference Manual **RM0385** -> *Section 1.1: List of abbreviations for registers* (Trang 48), *Chapter 30: USART -> Section 30.8.8: USART_ICR*, *Chapter 24: DMA -> Section 24.5.3: DMA_LIFCR*.
+* **Từ khóa (`Ctrl + F`):** `List of abbreviations for registers`, `USART_ICR`, `DMA_LIFCR`.
+
+#### Bảng Phân Biệt 4 Kiểu Truy Cập Thanh Ghi (Access Types)
+| Ký hiệu trong RM | Tên đầy đủ | Đặc tính phần cứng | Cú pháp C Chuẩn | Cấm Tuyệt Đối |
+| :---: | :--- | :--- | :--- | :--- |
+| **`rw` / `RW`** | Read / Write | Đọc và ghi tự do không giới hạn. | `REG \|= (1 << POS);`<br>`REG &= ~(1 << POS);` | Không có |
+| **`ro` / `RO`** | Read Only | Chỉ đọc, phần cứng cập nhật trạng thái. | `if (REG & FLAG) {...}` | Không được ghi đè |
+| **`rc_w1` / `w1c`**| Write 1 to Clear | Phần cứng bật 1 khi có sự kiện. Phần mềm ghi `1` để xóa cờ về `0`. | `REG = FLAG;` *(Ghi trực tiếp)* | **CẤM DÙNG `\|= `** |
+| **`w` (ICR)** | Write-only Clear | Thanh ghi chuyên dụng để xóa cờ ngắt. Ghi `1` để xóa. | `USART1->ICR = MASK;` | **CẤM DÙNG `\|= `** |
+
+#### 📐 Cơ sở Kỹ thuật: 4 Thao Tác Bitwise Cốt Lõi
+1. **Bật bit (Set Bit):** `REG |= (1U << POS);`
+2. **Tắt bit (Clear Bit):** `REG &= ~(1U << POS);`
+3. **Mẫu Clear-then-Set cho trường nhiều bit (Multi-bit RMW):**
+   ```c
+   // Cấu hình trường PLLM[5:0] chiếm 6 bits:
+   #define PLLM_MASK   (0x3FU << 0)
+   RCC->PLLCFGR &= ~PLLM_MASK;       // Bước 1: Xóa sạch 6 bits về 0
+   RCC->PLLCFGR |=  (25U << 0);       // Bước 2: Gán giá trị mong muốn (25)
+   ```
+4. **QUY TẮC SỐNG CÒN: Không bao giờ dùng `|=` trên thanh ghi cờ W1C / ICR:**
+   ```c
+   // ❌ SAI: DMA2->LIFCR |= DMA_LIFCR_CTCIF0;
+   // CPU đọc toàn bộ cờ đang có (kể cả cờ lỗi của kênh khác) rồi ghi ngược lại -> XÓA NHẦM CỜ LỖI!
+   
+   // ✅ ĐÚNG: Ghi trực tiếp giá trị cần xóa
+   DMA2->LIFCR = DMA_LIFCR_CTCIF0;   // Chỉ xóa cờ kênh 0
+   USART1->ICR = USART_ICR_ORECF;    // Chỉ xóa cờ Overrun UART
+   ```
+
+---
+
+### 5. Phương Pháp Bóc Tách Cơ Chế Hoạt Động Ngoại Vi trong RM0385 (Functional Description Deep-Dive)
+* **Tài liệu tra cứu:** Reference Manual **RM0385** -> *Chapter 30: Universal synchronous asynchronous receiver transmitter (USART)* (Trang 876).
+* **Từ khóa (`Ctrl + F`):** `USART block diagram`, `Character transmission procedure`, `Baud rate generation`.
+
+#### 5 Khối Phần Cứng Cốt Lõi Cần Bóc Tách trong Mọi Ngoại Vi:
+
+```mermaid
+graph TD
+    A["1. Block Diagram (Sơ đồ khối)"] --> B["2. Shadow vs Programmer Registers"]
+    B --> C["3. Timing Diagrams & Sampling Points"]
+    C --> D["4. Hardware FSM & Handshake Sequence"]
+    D --> E["5. Write Restrictions & Interrupt Clear Policy"]
+```
+
+#### 🏛️ 1. Khối Thanh ghi Bóng vs Thanh ghi Lập trình (Shadow vs Programmer Registers)
+* **Khối truyền (Transmitter):**
+  - `USART_TDR` (Programmer Register): Nơi CPU ghi byte cần truyền.
+  - `Transmit Shift Register` (Shadow Register): Mạch dịch từng bit đẩy ra chân TX.
+  - **Cờ `TXE` (TDR Empty):** Bật lên `1` ngay khi byte từ `TDR` chuyển sang `Shift Register`. CPU có thể nạp ngay byte tiếp theo vào `TDR` mà **không cần chờ** byte trước truyền xong ra dây TX (Zero Gap Transmission).
+  - **Cờ `TC` (Transmission Complete):** Chỉ bật lên `1` khi bit Stop cuối cùng đã rời khỏi chân TX. Dùng khi muốn tắt UART hoặc đảo chiều chip RS-485.
+* **Khối nhận (Receiver):**
+  - Chân RX $\rightarrow$ `Receive Shift Register` $\rightarrow$ `USART_RDR` $\rightarrow$ Bật cờ `RXNE`.
+  - Nếu CPU không đọc `RDR` kịp mà byte tiếp theo tràn vào $\rightarrow$ Kích hoạt cờ lỗi **`ORE` (Overrun Error)**!
+
+#### ⏱️ 2. Sơ đồ Thời gian (Timing Diagrams)
+* RM mô tả dạng sóng chuẩn: Khung 8-N-1 gồm 1 Start bit (`0`), 8 Data bits (LSB $\rightarrow$ MSB), 1 Stop bit (`1`).
+* **Lấy mẫu chống nhiễu ($16\times$ Oversampling):** Khối nhận lấy mẫu 3 lần tại chu kỳ xung thứ 8, 9, 10 ở tâm mỗi bit theo luật đa số thắng thiểu số (Majority Vote).
+
+#### 🔄 3. Máy Trạng thái Phần cứng & Chuỗi Khởi tạo Bắt buộc (Sequence)
+* RM0385 quy định 7 bước khởi tạo USART tuần tự:
+  1. Cấp clock `RCC_APB2ENR` (bit `USART1EN`).
+  2. Cấu hình chân GPIO PA9 (TX), PA10 (RX) sang chế độ Alternate Function `AF7`.
+  3. Cấu hình `USART_CR1` (8 data bits, Parity disabled).
+  4. Cấu hình `USART_CR2` (1 Stop bit).
+  5. Tính toán và nạp giá trị vào `USART_BRR`.
+  6. Bật bit `TE` và `RE` trong `USART_CR1`.
+  7. Bật bit `UE = 1` để kích hoạt module.
+
+#### 🚫 4. Ràng buộc Ghi Phần cứng (Hardware Write Restrictions)
+* **Lưu ý in nghiêng trong RM:** *"This bit can be written only when the peripheral is disabled (UE = 0 / PLLON = 0 / INRQ = 1)"*.
+* Nếu cố tình ghi vào thanh ghi khi module đang bật, mạch logic phần cứng sẽ khóa và bỏ qua lệnh ghi!
+
+#### 🔢 5. Công thức Tính Baudrate (USARTDIV)
+* Tần số bus APB2 $f_{CK} = 108\text{ MHz}$, Baudrate $115200\text{ bps}$:
+  $$\text{USARTDIV} = \frac{f_{CK}}{\text{Baud Rate}} = \frac{108,000,000}{115200} = 937.5$$
+  $$\text{Phần nguyên} = 937 = \mathbf{\text{0x3A9}}, \quad \text{Phần thập phân} = 0.5 \times 16 = 8 = \mathbf{\text{0x8}} \implies \text{Ghi } \mathbf{\text{0x3A98}} \text{ vào } \texttt{USART1->BRR}!$$
+
+---
+
+### 6. Cây Xung Nhịp (Clock Tree) & Giới Hạn Tần Số Phần Cứng
+* **Tài liệu tra cứu:**
+  * Reference Manual **RM0385** -> *Chapter 5: Reset and clock control (RCC) -> Section 5.2: Clocks* (Trang 118).
+  * Datasheet **DS10610** -> *Chapter 5: Electrical characteristics -> Table 17: General operating conditions* (Trang 103).
+* **Từ khóa (`Ctrl + F`):** `Clock tree`, `General operating conditions`.
+
+#### Bảng Giới Hạn Tần Số Tối Đa của Từng Bus (Datasheet DS10610)
+| Tên Bus / Clock | Giới hạn Tối đa | Cấp nguồn cho các Khối / Ngoại vi | Prescaler cấu hình trong `RCC_CFGR` |
+| :--- | :---: | :--- | :---: |
+| **$f_{SYSCLK}$** | **$216\text{ MHz}$** | Lõi Cortex-M7 Core (khi bật Over-drive Mode) | `SW[1:0]` (Chọn nguồn PLL) |
+| **$f_{HCLK}$ (AHB Bus)** | **$216\text{ MHz}$** | AXI Matrix, AHB1/2/3, Flash Interface, SRAM, DMA1/2 | `HPRE[3:0] = /1` |
+| **$f_{PCLK1}$ (APB1 Bus)**| **$54\text{ MHz}$** | USART2/3, UART4/5/7/8, CAN1/2, I2C1..4, SPI2/3, PWR | `PPRE1[2:0] = /4` |
+| **$f_{PCLK2}$ (APB2 Bus)**| **$108\text{ MHz}$**| USART1/6, SPI1/4/5/6, SDMMC1, TIM1/8/9/10/11 | `PPRE2[2:0] = /2` |
+| **$f_{USB}$ (48MHz)** | **$48\text{ MHz}$** (Cố định)| USB OTG FS, SDMMC, True RNG | `PLLQ[3:0] = /9` |
 
 ```text
-+-----------------------+ 0xFFFF FFFF
-| System Control / NVIC | (Bộ điều khiển ngắt, SysTick...)
-+-----------------------+ 0xE000 0000
-|                       |
-+-----------------------+ 0x6000 0000
-| External Memory / FMC | (SDRAM, Flash ngoài...)
-+-----------------------+ 0x5000 0000
-| AHB2 / AHB3 Periph    | (USB OTG, DCMI...)
-+-----------------------+ 0x4000 0000  <--- VÙNG NGOẠI VI (PERIPHERALS: RCC, GPIO, UART, CAN...)
-| Peripherals (APB/AHB) |      Mỗi thanh ghi phần cứng là 1 ô nhớ 32-bit (4 bytes)
-+-----------------------+ 0x2000 0000  <--- VÙNG BỘ NHỚ RAM (SRAM)
-| Internal SRAM (RAM)   |      Chứa biến, stack, heap của chương trình
-+-----------------------+ 0x0800 0000  <--- VÙNG FLASH CODE
-| Internal Flash        |      Chứa mã máy (firmware code) sau khi nạp
-+-----------------------+ 0x0000 0000
-```
-
-### 1.2. Bên dưới phần cứng thực sự xảy ra điều gì?
-Khi bạn viết một biến thông thường trong C:
-```c
-uint32_t a = 5; // Ghi vào SRAM tại địa chỉ 0x2000 0000
-```
-CPU phát tín hiệu qua Bus Matrix tới chip nhớ SRAM, các transistor flip-flop trong RAM lưu giá trị `5`.
-
-Nhưng khi bạn ghi vào địa chỉ thuộc vùng Ngoại vi (ví dụ: `0x4002 0014` - thanh ghi `GPIOA->ODR`):
-```c
-*(uint32_t *)0x40020014 = 0x0001; // Ghi vào thanh ghi ODR của GPIOA
-```
-1. CPU phát địa chỉ `0x4002 0014` lên bus AHB1.
-2. Bus Decoder nhận diện địa chỉ này không dẫn tới RAM, mà dẫn thẳng tới module phần cứng **GPIO Port A**.
-3. Đầu ra của ô nhớ này được nối dây điện trực tiếp tới mạch đệm cổng logic (Output Driver).
-4. Mạch đệm kích hoạt transistor kéo chân vật lý **PA0** lên mức cao ($3.3\text{V}$) $\rightarrow$ Đèn LED nối chân PA0 sáng lên!
-
-> **Tóm lại:** **Thanh ghi (Register)** bản chất là các mạch chốt dữ liệu (Flip-Flops/Latches) vật lý của khối phần cứng (UART, CAN, Timer, PLL...), nhưng được gán (map) vào một địa chỉ cụ thể trên bus hệ thống. Đọc/ghi thanh ghi chính là đo/điều khiển mạch điện thông qua thao tác bộ nhớ!
-
----
-
-## 2. STRUCT C ÁNH XẠ THANH GHI HOẠT ĐỘNG NHƯ THẾ NÀO?
-
-Trong code driver Ngày 1, bạn thấy cú pháp:
-```c
-RCC->CR |= RCC_CR_HSEON;
-```
-Tại sao một cấu trúc C (`struct`) lại có thể trỏ chính xác từng milimet vào các thanh ghi của vi điều khiển?
-
-### 2.1. Bản chất bộ nhớ của C `struct`
-Trong ngôn ngữ C chuẩn, các trường trong `struct` được sắp xếp **tuần tự, liên tục** trong bộ nhớ từ địa chỉ thấp đến cao. Mỗi biến kiểu `uint32_t` chiếm đúng 4 bytes ($32\text{ bits}$).
-
-Hãy quan sát struct của khối RCC:
-```c
-typedef struct {
-    volatile uint32_t CR;         // Offset: 0x00 (Chiếm 4 bytes: 0x00 - 0x03)
-    volatile uint32_t PLLCFGR;    // Offset: 0x04 (Chiếm 4 bytes: 0x04 - 0x07)
-    volatile uint32_t CFGR;       // Offset: 0x08 (Chiếm 4 bytes: 0x08 - 0x0B)
-    volatile uint32_t CIR;        // Offset: 0x0C (Chiếm 4 bytes: 0x0C - 0x0F)
-    volatile uint32_t AHB1RSTR;   // Offset: 0x10 (Chiếm 4 bytes: 0x10 - 0x13)
-    volatile uint32_t AHB2RSTR;   // Offset: 0x14 (Chiếm 4 bytes: 0x14 - 0x17)
-    volatile uint32_t AHB3RSTR;   // Offset: 0x18 (Chiếm 4 bytes: 0x18 - 0x1B)
-    uint32_t RESERVED0;           // Offset: 0x1C (Chiếm 4 bytes đệm để không lệch offset!)
-    volatile uint32_t APB1RSTR;   // Offset: 0x20 (Chiếm 4 bytes: 0x20 - 0x23)
-    ...
-} RCC_TypeDef;
-```
-
-### 2.2. Ma thuật ép kiểu con trỏ: `((RCC_TypeDef *)RCC_BASE)`
-Giả sử Reference Manual quy định khối RCC bắt đầu từ địa chỉ cơ sở `RCC_BASE = 0x40023800UL`.
-Ta định nghĩa macro:
-```c
-#define RCC ((RCC_TypeDef *)0x40023800UL)
-```
-
-Khi bạn viết `RCC->CFGR = 0x1234;`, Compiler sẽ tính toán địa chỉ như sau:
-$$\text{Địa chỉ mục tiêu} = \text{Địa chỉ cơ sở (RCC)} + \text{Độ lệch (Offset của trường CFGR)}$$
-$$\text{Địa chỉ mục tiêu} = \text{0x4002 3800} + \text{0x08} = \mathbf{\text{0x4002 3808}}$$
-
-```text
-  Địa chỉ RAM/Bus        Struct Field           Tên Thanh ghi Phần cứng
-  +------------------+  ------------------     -------------------------
-  | 0x4002 3800      |  RCC->CR                RCC Clock Control Register
-  +------------------+  ------------------     -------------------------
-  | 0x4002 3804      |  RCC->PLLCFGR           RCC PLL Configuration Register
-  +------------------+  ------------------     -------------------------
-  | 0x4002 3808      |  RCC->CFGR              RCC Clock Configuration Register
-  +------------------+  ------------------     -------------------------
-  | 0x4002 380C      |  RCC->CIR               RCC Clock Interrupt Register
-  +------------------+  ------------------     -------------------------
-  | 0x4002 381C      |  RCC->RESERVED0         (Vùng trống phần cứng không dùng)
-  +------------------+  ------------------     -------------------------
-  | 0x4002 3820      |  RCC->APB1RSTR          RCC APB1 Peripheral Reset Register
-```
-
-> **Cảnh báo cực kỳ quan trọng:** Nếu nhà sản xuất để trống một ô nhớ giữa các thanh ghi (ví dụ offset `0x1C` không có thanh ghi nào), ta **bắt buộc** phải khai báo một biến `uint32_t RESERVED` vào struct. Nếu quên, tất cả các thanh ghi phía sau sẽ bị dịch lên 4 bytes và ghi đè sai thanh ghi trong thực tế!
-
----
-
-## 3. TẠI SAO BẮT BUỘC PHẢI DÙNG TỪ KHÓA `volatile`?
-
-### 3.1. Compiler Optimization (Trình biên dịch tối ưu hóa mã như thế nào?)
-Trình biên dịch C (GCC/Clang) luôn cố gắng tối ưu mã nguồn để chạy nhanh nhất. Khi đọc một biến nhiều lần liên tiếp, compiler giả định: *"Biến này ở trong RAM, trong vòng lặp ta không sửa nó, vậy giá trị của nó không thể tự đổi. Hãy copy nó vào 1 thanh ghi CPU (R0, R1) để đọc cho nhanh thay vì phải phát tín hiệu ra bus RAM liên tục!"*
-
-### 3.2. Hiểm họa chết người với Bare-metal Register
-Hãy xem xét vòng lặp chờ thạch anh ngoài HSE khởi động ổn định:
-```c
-// Giả sử KHÔNG có từ khóa volatile:
-uint32_t *cr_ptr = (uint32_t *)0x40023800;
-
-RCC->CR |= (1 << 16); // Bật HSEON
-
-// Chờ bit HSERDY (bit 17) bật lên 1 bởi phần cứng
-while (!(*cr_ptr & (1 << 17))) {
-    // Vòng lặp chờ
-}
-```
-
-**Compiler nhìn thấy đoạn code trên và suy luận:**
-1. CPU đọc `*cr_ptr` lần đầu tiên $\rightarrow$ bit 17 đang là `0` (vì thạch anh cần vài mili-giây mới dao động ổn định).
-2. Bên trong thân vòng lặp `{ }` không có lệnh nào sửa đổi giá trị của `*cr_ptr`.
-3. Compiler kết luận: `*cr_ptr` sẽ mãi mãi bằng `0`, điều kiện vòng lặp luôn đúng (`while(1)`).
-4. Compiler tối ưu hóa mã máy thành: **Vòng lặp vô tận treo vĩnh viễn (Infinite Hang)!**
-
-### 3.3. `volatile` giải quyết vấn đề như thế nào?
-Từ khóa `volatile` là một lời cảnh báo dứt khoát gửi tới Compiler:
-> *"Giá trị tại địa chỉ ô nhớ này có thể bị thay đổi bất ngờ bởi phần cứng bên ngoài (hoặc ngắt ISR) mà trình biên dịch không thể nhìn thấy trong luồng code C thông thường. BẮT BUỘC mỗi lần kiểm tra phải tạo lệnh đọc trực tiếp từ địa chỉ phần cứng thật trên bus, TUYỆT ĐỐI KHÔNG ĐƯỢC TỐI ƯU HÓA!"*
-
-Do đó, mọi thanh ghi vi điều khiển luôn phải được khai báo dạng:
-```c
-volatile uint32_t CR;
+[Thạch anh ngoài HSE 25MHz] ──► [Bộ nhân Main PLL (/M -> *N -> /P)] ──► [SYSCLK 216MHz]
+                                                                             │
+                                              ┌──────────────────────────────┴──────────────────────────────┐
+                                              ▼                                                             ▼
+                                     [AHB Bus HCLK: 216MHz]                                       [USB / SDMMC: 48MHz]
+                                              │                                                        (Qua PLLQ)
+                                 ┌────────────┴────────────┐
+                                 ▼                         ▼
+                       [APB1 Bus: Max 54MHz]     [APB2 Bus: Max 108MHz]
+                       (Bộ chia PPRE1 = /4)      (Bộ chia PPRE2 = /2)
 ```
 
 ---
 
-## 4. BẬC THẦY BITWISE: CÁC PHÉP TOÁN BẢN LỀ TRÊN THANH GHI
+### 7. Bài Tập Thực Hành: Tự Tay Tính Toán Bộ Số PLL 216MHz
+* **Tài liệu tra cứu:** RM0385 -> *Section 5.3.2: RCC PLL configuration register (RCC_PLLCFGR)*.
+* **Từ khóa (`Ctrl + F`):** `Main PLL configuration register` hoặc `PLLM`.
 
-Một thanh ghi 32-bit gồm 32 công tắc riêng lẻ (từ bit 0 đến bit 31). Để điều khiển từng công tắc mà không làm ảnh hưởng đến các công tắc bên cạnh, bạn phải thành thạo 4 thao tác Bitwise sau:
-
-### 4.1. Bật bit lên 1 (Set Bit) $\rightarrow$ Dùng phép `OR` (`|`)
-- **Nguyên lý:** `X | 1 = 1`, `X | 0 = X` (Giữ nguyên các bit khác).
-- **Cú pháp:**
-  ```c
-  REG |= (1U << POS);
-  // Ví dụ: Bật bit HSEON (Bit 16) trong RCC->CR
-  RCC->CR |= (1U << 16);
-  ```
-
-### 4.2. Tắt bit về 0 (Clear Bit) $\rightarrow$ Dùng phép `AND` với đảo bit (`& ~`)
-- **Nguyên lý:** `X & 0 = 0`, `X & 1 = X` (Giữ nguyên các bit khác).
-- **Cú pháp:**
-  ```c
-  REG &= ~(1U << POS);
-  // Ví dụ: Tắt bit PLLON (Bit 24) trong RCC->CR
-  RCC->CR &= ~(1U << 24);
-  ```
-
-### 4.3. Cấu hình trường nhiều bit (Multi-Bit Bitfield RMW Pattern)
-Khi một thông số chiếm nhiều bit (ví dụ bộ chia `PLLM[5:0]` chiếm 6 bits từ bit 0 đến 5):
-- **Tuyệt đối không được ghi đè trực tiếp:** `REG |= (25 << 0);` $\rightarrow$ Nếu giá trị cũ đang là `0x3F` (`111111`b), phép OR sẽ cho ra giá trị rác sai hoàn toàn!
-- **Mẫu chuẩn RMW (Read - Modify - Write): Xóa sạch trước $\rightarrow$ Gán giá trị sau:**
-  ```c
-  #define PLLM_MASK   (0x3FU << 0) // Mặt nạ bao phủ 6 bit (111111b)
-  
-  // Bước 1: Xóa sạch 6 bit đó về 000000b
-  RCC->PLLCFGR &= ~PLLM_MASK;
-  
-  // Bước 2: Gán giá trị mong muốn (ví dụ: 25 = 0x19)
-  RCC->PLLCFGR |= (25U << 0);
-  ```
-
-### 4.4. Kiểm tra trạng thái cờ (Polling Flag)
-- **Cú pháp:**
-  ```c
-  // Chờ cho đến khi bit HSERDY (bit 17) nhảy lên 1
-  while (!(RCC->CR & (1U << 17))) {
-      // Chờ đợi phần cứng khóa xung
-  }
-  ```
-
-### 4.5. QUY TẮC SỐNG CÒN: Không bao giờ dùng `|=` trên thanh ghi cờ W1C / ICR
-Nhiều ngoại vi (DMA, UART, CAN, Timer) chứa các thanh ghi cờ ngắt có cơ chế **W1C (Write 1 to Clear)** hoặc thanh ghi xóa cờ **ICR (Interrupt Flag Clear Register)**:
-
-- **Bản chất của W1C:** Khi sự kiện ngắt xảy ra, phần cứng tự bật bit cờ lên `1`. Để xóa cờ đó, phần mềm phải **ghi giá trị `1`** vào đúng bit đó.
-- **Hiểm họa khi dùng phép `|=`:**
-  ```c
-  // ❌ SAI LẦM KINH ĐIỂN:
-  DMA2->LIFCR |= DMA_LIFCR_CTCIF0; // Muốn xóa cờ truyền xong kênh 0
-  ```
-  Khi bạn viết `DMA2->LIFCR |= FLAG;`:
-  1. CPU sẽ đọc toàn bộ giá trị hiện tại của thanh ghi (có thể lúc này cờ lỗi truyền TCIF1, TEIF0 của các kênh khác cũng đang bằng `1`).
-  2. Phép OR giữ nguyên các số `1` đó và CPU ghi toàn bộ ngược lại vào thanh ghi.
-  3. **Hậu quả:** Bạn đã vô tình **xóa sạch toàn bộ cờ ngắt và cờ báo lỗi của các kênh khác** trước khi trình xử lý ngắt (ISR) kịp đọc!
-- **Cách xử lý chuẩn (Ghi gán trực tiếp `=` thay vì `|=`):**
-  ```c
-  // ✅ ĐÚNG: Ghi trực tiếp giá trị bit cần xóa (Direct Assignment)
-  DMA2->LIFCR = DMA_LIFCR_CTCIF0;         // Chỉ xóa đúng cờ Channel 0
-  USART1->ICR = USART_ICR_ORECF;          // Chỉ xóa đúng cờ Overrun Error (Ngày 2)
-  ```
-
-> 📌 **Lưu ý đặc biệt về `RCC->CSR` ở Ngày 1:**
-> Trong hàm xóa cờ Reset `System_ClearResetFlags()`, ta viết `RCC->CSR |= RCC_CSR_RMVF;` vẫn an toàn tuyệt đối là vì: các cờ reset xung quanh (Bit 25..31) đều là kiểu **`RO` (Read-Only)**, phần cứng bỏ qua mọi lệnh ghi vào bit RO. Tuy nhiên, đây là trường hợp ngoại lệ. Với các thanh ghi ngắt thực thụ như **UART (cờ ORE/FE)** hay **DMA (cờ TCIF/TEIF)** ở **Ngày 2**, bạn **BẮT BUỘC** phải dùng phép gán trực tiếp `=`!
+#### Bảng Tham Số Khối Main PLL
+| Tham số | Giới hạn Phần cứng RM0385 | Công thức tính toán | Giá trị cấu hình cho STM32F746 (HSE 25MHz) |
+| :--- | :---: | :---: | :---: |
+| **`PLLM`** | $1\text{ MHz} \le f_{VCO\_in} \le 2\text{ MHz}$ | $f_{VCO\_in} = \frac{f_{HSE}}{PLLM} = \frac{25}{25}$ | $\mathbf{PLLM = 25}$ |
+| **`PLLN`** | $100\text{ MHz} \le f_{VCO\_out} \le 432\text{ MHz}$ | $f_{VCO\_out} = f_{VCO\_in} \times PLLN = 1 \times 432$ | $\mathbf{PLLN = 432}$ |
+| **`PLLP`** | $f_{SYSCLK} \le 216\text{ MHz}$ | $f_{SYSCLK} = \frac{f_{VCO\_out}}{PLLP} = \frac{432}{2}$ | $\mathbf{PLLP = 2\ (\text{bitfield } \texttt{00}b)}$ |
+| **`PLLQ`** | $f_{USB} = 48\text{ MHz}$ (Chuẩn USB) | $f_{USB} = \frac{f_{VCO\_out}}{PLLQ} = \frac{432}{9}$ | $\mathbf{PLLQ = 9}$ |
 
 ---
 
-## 5. BỨC TRANH TOÀN CẢNH: HỆ THỐNG CÂY XUNG NHỊP (CLOCK TREE)
+## 8. TỔNG KẾT VÀ BƯỚC TIẾP THEO
 
-Vi điều khiển giống như một cơ thể sống, và **Clock** chính là nhịp tim. Nếu không có xung nhịp nhấp nháy, các flip-flop bên trong chip không thể chuyển trạng thái.
+Bạn đã nắm vững toàn bộ nền tảng cốt lõi:
+1. **Memory-Mapped I/O:** Hiểu cách CPU điều khiển transistor phần cứng qua địa chỉ ô nhớ.
+2. **Struct Mapping & Alignment:** Cách ánh xạ struct C vào bảng thanh ghi RM không bị lệch offset.
+3. **Từ khóa `volatile`:** Chống lỗi compiler optimize vòng lặp kiểm tra cờ phần cứng.
+4. **Quy tắc Bitwise & Quyền truy cập:** Nắm chắc Clear-Set RMW và tránh bẫy `|=` trên cờ W1C/ICR.
+5. **Kỹ năng Đọc RM0385 & DS10610:** Bóc tách trọn vẹn 5 khối phần cứng từ sơ đồ khối đến timing và handshake.
+6. **Cây Xung Nhịp (Clock Tree):** Nắm vững giới hạn bus và công thức tính toán bộ số PLL 216MHz.
 
-### 5.1. Sơ đồ phân phối xung tổng quát
-```text
-[Thạch anh ngoài HSE 25MHz] hoặc [Nội HSI 16MHz]
-                 │
-                 ▼
-      ┌─────────────────────┐
-      │   Bộ nhân Main PLL  │  (Chia M -> Nhân N -> Chia P)
-      └─────────────────────┘
-                 │
-                 ▼
-      [ SYSCLK: Tối đa 216 MHz ]  <--- Xung nhịp trung tâm hệ thống
-                 │
-                 ▼ (AHB Prescaler: HPRE)
-      [ HCLK / AHB Bus: 216 MHz ] ───► Cấp cho CPU Cortex-M7 Core, SRAM, DMA
-                 │
-        ┌────────┴────────────────────┐
-        │ (APB1 Prescaler: PPRE1)     │ (APB2 Prescaler: PPRE2)
-        ▼                             ▼
- [ APB1 Bus: Max 54 MHz ]     [ APB2 Bus: Max 108 MHz ]
-  (UART2-8, CAN1-2, I2C, SPI2-3)   (UART1/6, SPI1/4-6, SDMMC, Timers cao tốc)
-        │                             │
-        ▼ (Nhân đôi nếu PPRE1 ≠ 1)    ▼ (Nhân đôi nếu PPRE2 ≠ 1)
- [ Timer Clocks: 108 MHz ]     [ Timer Clocks: 216 MHz ]
-  (TIM2, TIM3, TIM4, TIM5...)   (TIM1, TIM8, TIM9, TIM10...)
-```
-
-### 5.2. Các thuật ngữ quan trọng cần ghi nhớ:
-1. **HSI (High-Speed Internal):** Xung RC nội bên trong chip (~16MHz). Sai số cao theo nhiệt độ, dùng để khởi động ban đầu.
-2. **HSE (High-Speed External):** Thạch anh gắn ngoài bo mạch (Board Discovery dùng 25MHz). Độ chính xác cực cao, bắt buộc dùng cho CAN, USB, UART baudrate chuẩn.
-3. **PLL (Phase-Locked Loop):** Mạch nhân tần số phần cứng. Biến xung 25MHz thành xung siêu cao tốc 216MHz.
-4. **SYSCLK (System Clock):** Xung chính cấp vào lõi vi điều khiển.
-5. **HCLK (AHB Bus Clock):** Cấp cho đường truyền dữ liệu cao tốc giữa CPU, bộ nhớ Flash, SRAM, DMA.
-6. **PCLK1 (APB1 Peripheral Clock):** Xung cấp cho các ngoại vi tốc độ trung bình (Max 54MHz trên F7).
-7. **PCLK2 (APB2 Peripheral Clock):** Xung cấp cho các ngoại vi tốc độ cao (Max 108MHz trên F7).
-
----
-
-## 6. BÀI TẬP DẪN DẮT: TỰ TAY TÍNH TOÁN BỘ SỐ PLL CHO STM32F746
-
-Hãy cùng giải bài toán thực tế của **Ngày 1**:
-> **Đề bài:** Thiết kế hệ thống xung nhịp STM32F746 chạy hết công suất $f_{SYSCLK} = 216\text{ MHz}$ và cấp đúng chuẩn $48\text{ MHz}$ cho USB từ thạch anh ngoài $f_{HSE} = 25\text{ MHz}$.
-
-### Bước 1: Tính bộ chia đầu vào `PLLM`
-- RM0385 quy định tần số ngõ vào khối nhân tần VCO phải nằm trong khoảng $1\text{ MHz} \le f_{VCO\_in} \le 2\text{ MHz}$ (nhà sản xuất khuyến nghị chọn đúng $1\text{ MHz}$ để PLL ít nhiễu pha jitter nhất).
-$$f_{VCO\_in} = \frac{f_{HSE}}{PLLM} = \frac{25\text{ MHz}}{PLLM} = 1\text{ MHz} \implies \mathbf{PLLM = 25}$$
-
-### Bước 2: Tính bộ nhân `PLLN` và bộ chia hệ thống `PLLP`
-- Tần số ngõ ra của VCO: $f_{VCO\_out} = f_{VCO\_in} \times PLLN = 1\text{ MHz} \times PLLN$.
-- Tần số hệ thống: $f_{SYSCLK} = \frac{f_{VCO\_out}}{PLLP} = \frac{1\text{ MHz} \times PLLN}{PLLP} = 216\text{ MHz}$.
-- Theo RM0385, $PLLP \in \{2, 4, 6, 8\}$. Chọn $PLLP = 2$ (mã bit `00`b) để đạt tần số cao nhất:
-$$1\text{ MHz} \times PLLN = 216\text{ MHz} \times 2 = 432\text{ MHz} \implies \mathbf{PLLN = 432}$$
-- *Kiểm tra giới hạn phần cứng:* RM0385 quy định $100\text{ MHz} \le f_{VCO\_out} \le 432\text{ MHz}$. Giá trị $432\text{ MHz}$ hoàn toàn hợp lệ!
-
-### Bước 3: Tính bộ chia ngõ ra USB `PLLQ`
-- Ngoại vi USB yêu cầu xung clock cố định chính xác $48\text{ MHz}$:
-$$f_{USB} = \frac{f_{VCO\_out}}{PLLQ} = \frac{432\text{ MHz}}{PLLQ} = 48\text{ MHz} \implies \mathbf{PLLQ = \frac{432}{48} = 9}$$
-
-### Bước 4: Tính bộ chia các Bus (`AHB`, `APB1`, `APB2`)
-- **AHB Bus:** Hỗ trợ tối đa 216MHz $\rightarrow$ Chọn chia 1 (`HPRE = /1`) $\implies HCLK = 216\text{ MHz}$.
-- **APB1 Bus:** Hỗ trợ tối đa **54MHz** (Datasheet DS10610).
-  $$\text{Nếu chia 2} \implies 216 / 2 = 108\text{ MHz} > 54\text{ MHz} \text{ (HỎNG PHẦN CỨNG!)}$$
-  $$\implies \text{Bắt buộc chọn chia 4 } (\texttt{PPRE1 = /4}) \implies PCLK1 = \frac{216}{4} = \mathbf{54\text{ MHz}}.$$
-- **APB2 Bus:** Hỗ trợ tối đa **108MHz** (Datasheet DS10610).
-  $$\implies \text{Bắt buộc chọn chia 2 } (\texttt{PPRE2 = /2}) \implies PCLK2 = \frac{216}{2} = \mathbf{108\text{ MHz}}.$$
-
-🎉 **Kết luận:** Bộ số hoàn hảo được cấu hình vào thanh ghi `RCC_PLLCFGR` và `RCC_CFGR`:
-$$\mathbf{PLLM=25, PLLN=432, PLLP=2, PLLQ=9, HPRE=/1, PPRE1=/4, PPRE2=/2}$$
-
----
-
-## 7. TỔNG KẾT VÀ BƯỚC TIẾP THEO
-
-Bạn đã nắm vững toàn bộ các khái niệm:
-1. **Memory-Mapped I/O:** Thanh ghi là ô nhớ vật lý gắn với dây điều khiển.
-2. **Struct Mapping:** Ép kiểu địa chỉ thành con trỏ struct để truy xuất thanh ghi theo offset tự động.
-3. **`volatile`:** Bắt buộc compiler đọc/ghi giá trị thực từ phần cứng, không tối ưu hóa mất vòng lặp.
-4. **Bitwise Operations:** Kỹ thuật Clear-then-Set (RMW) an toàn cho thanh ghi đa bit.
-5. **Clock Tree & PLL:** Công thức phân phối xung nhịp tới từng bus ngoại vi.
-
-👉 **Bây giờ bạn đã sẵn sàng:** Hãy mở file [`day01_system_clock_reset.md`](file:///d:/Project/STM32F7/docs/day01_system_clock_reset.md) để đọc chi tiết bảng thanh ghi và mã nguồn driver Ngày 1!
+👉 **Bắt đầu thực hành driver đầu tiên:** Mở ngay file [**`day01_system_clock_reset.md`**](file:///d:/Project/STM32F7/docs/day01_system_clock_reset.md) để xem chi tiết mã nguồn driver cấu hình xung nhịp 216MHz Over-Drive và chẩn đoán cờ Reset!

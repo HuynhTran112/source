@@ -315,14 +315,55 @@ typedef struct {
 #define PWR_CSR1_ODSWRDY_Pos         (17U)
 #define PWR_CSR1_ODSWRDY             (0x1U << PWR_CSR1_ODSWRDY_Pos)
 
-/* Flash Latency (Bits 3:0) */
+/* --- RCC_CR Bits (Bật HSE & PLL) --- */
+#define RCC_CR_HSEON_Pos             (16U)
+#define RCC_CR_HSEON                 (0x1U << RCC_CR_HSEON_Pos)
+#define RCC_CR_HSERDY_Pos            (17U)
+#define RCC_CR_HSERDY                (0x1U << RCC_CR_HSERDY_Pos)
+#define RCC_CR_PLLON_Pos             (24U)
+#define RCC_CR_PLLON                 (0x1U << RCC_CR_PLLON_Pos)
+#define RCC_CR_PLLRDY_Pos            (25U)
+#define RCC_CR_PLLRDY                (0x1U << RCC_CR_PLLRDY_Pos)
+
+/* --- RCC_PLLCFGR Bits (Tham số PLL) --- */
+#define RCC_PLLCFGR_PLLM_Pos         (0U)
+#define RCC_PLLCFGR_PLLM_Msk         (0x3FU << RCC_PLLCFGR_PLLM_Pos)
+#define RCC_PLLCFGR_PLLN_Pos         (6U)
+#define RCC_PLLCFGR_PLLN_Msk         (0x1FFU << RCC_PLLCFGR_PLLN_Pos)
+#define RCC_PLLCFGR_PLLP_Pos         (16U)
+#define RCC_PLLCFGR_PLLP_Msk         (0x3U << RCC_PLLCFGR_PLLP_Pos)
+#define RCC_PLLCFGR_PLLP_DIV2        (0x0U << RCC_PLLCFGR_PLLP_Pos) /* 00b = /2 */
+#define RCC_PLLCFGR_PLLSRC_Pos       (22U)
+#define RCC_PLLCFGR_PLLSRC_Msk       (0x1U << RCC_PLLCFGR_PLLSRC_Pos)
+#define RCC_PLLCFGR_PLLSRC_HSE       (0x1U << RCC_PLLCFGR_PLLSRC_Pos)
+#define RCC_PLLCFGR_PLLQ_Pos         (24U)
+#define RCC_PLLCFGR_PLLQ_Msk         (0xFU << RCC_PLLCFGR_PLLQ_Pos)
+
+/* --- RCC_CFGR Bits (Bộ chia Bus & Switch nguồn clock) --- */
+#define RCC_CFGR_SW_Pos              (0U)
+#define RCC_CFGR_SW_Msk              (0x3U << RCC_CFGR_SW_Pos)
+#define RCC_CFGR_SW_PLL              (0x2U << RCC_CFGR_SW_Pos) /* 10b: PLL làm SYSCLK */
+#define RCC_CFGR_SWS_Pos             (2U)
+#define RCC_CFGR_SWS_Msk             (0x3U << RCC_CFGR_SWS_Pos)
+#define RCC_CFGR_SWS_PLL             (0x2U << RCC_CFGR_SWS_Pos) /* 10b: Đang dùng PLL */
+#define RCC_CFGR_HPRE_Pos            (4U)
+#define RCC_CFGR_HPRE_Msk            (0xFU << RCC_CFGR_HPRE_Pos)
+#define RCC_CFGR_HPRE_DIV1           (0x0U << RCC_CFGR_HPRE_Pos) /* AHB div 1 */
+#define RCC_CFGR_PPRE1_Pos           (10U)
+#define RCC_CFGR_PPRE1_Msk           (0x7U << RCC_CFGR_PPRE1_Pos)
+#define RCC_CFGR_PPRE1_DIV4          (0x5U << RCC_CFGR_PPRE1_Pos) /* 101b: APB1 div 4 */
+#define RCC_CFGR_PPRE2_Pos           (13U)
+#define RCC_CFGR_PPRE2_Msk           (0x7U << RCC_CFGR_PPRE2_Pos)
+#define RCC_CFGR_PPRE2_DIV2          (0x4U << RCC_CFGR_PPRE2_Pos) /* 100b: APB2 div 2 */
+
+/* --- Flash Latency (Bits 3:0) --- */
 #define FLASH_ACR_LATENCY_Pos        (0U)
 #define FLASH_ACR_LATENCY_Msk        (0xFU << FLASH_ACR_LATENCY_Pos)
 #define FLASH_ACR_LATENCY_6WS        (0x6U << FLASH_ACR_LATENCY_Pos) /* 6 Wait States */
 #define FLASH_ACR_PRFTEN             (0x1U << 8U)
 #define FLASH_ACR_ARTEN              (0x1U << 9U)
 
-/* RCC_CSR Reset Flags (Bits 24..31) */
+/* --- RCC_CSR Reset Flags (Bits 24..31) --- */
 #define RCC_CSR_RMVF                 (0x1U << 24U)
 #define RCC_CSR_BORRSTF              (0x1U << 25U)
 #define RCC_CSR_PINRSTF              (0x1U << 26U)

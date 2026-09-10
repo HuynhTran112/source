@@ -200,108 +200,341 @@ Mở file PDF `RM0385` và tra cứu 5 khu vực trọng yếu:
 ---
 
 # 💻 BƯỚC 3: GÕ CODE (IMPLEMENTATION & BUG SCENARIOS)
-*Quy trình 7 bước, khung Pseudocode và chẩn đoán lỗi phần cứng.*
+*Quy trình 4 tầng định nghĩa thanh ghi, 7 bước cấu hình xung nhịp và chương trình test hoàn chỉnh.*
 
-### 3.1. Sơ đồ Luồng Thuật toán 7 Bước chuẩn Phần cứng
+```text
+┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                      KIẾN TRÚC PHÂN TẦNG 4 FILE TRONG THỰC TẾ NGÀY 1                            │
+├────────────────────────────────┬────────────────────────────────────────────────────────────────┤
+│ 1. stm32f746xx_registers.h     │ Base Address, Struct ánh xạ thanh ghi, Macro con trỏ & Bitmask │
+│ 2. system_clock.h              │ Khai báo nguyên mẫu hàm (API) & Enum lý do Reset               │
+│ 3. system_clock.c              │ Triển khai 7 bước cấu hình 216MHz & Hàm đọc/xóa cờ Reset       │
+│ 4. main.c                      │ Ứng dụng kiểm thử: Gọi cấu hình, đọc hộp đen Reset & Test nhịp │
+└────────────────────────────────┴────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 3.1. Tự tay thiết kế File Header Thanh ghi (`stm32f746xx_registers.h`)
+*Trước khi viết hàm cấu hình, ta phải tạo ra các "công cụ" để tương tác với thanh ghi mà không dùng thư viện hãng.*
+
+File [`stm32f746xx_registers.h`](file:///d:/Project/STM32F7/drivers/inc/stm32f746xx_registers.h) được xây dựng theo **4 tầng kiến trúc chuẩn công nghiệp (CMSIS standard)**:
+
+#### 🔹 Tầng 1: Địa chỉ gốc ngoại vi (Peripheral Base Addresses)
+*RM0385 -> Chapter 2: Memory map -> Table 1 (Register boundary addresses)*:
+```c
+#include <stdint.h>
+
+#define PERIPH_BASE           (0x40000000UL)
+#define APB1PERIPH_BASE       (PERIPH_BASE)
+#define APB2PERIPH_BASE       (PERIPH_BASE + 0x00010000UL)
+#define AHB1PERIPH_BASE       (PERIPH_BASE + 0x00020000UL)
+
+/* Địa chỉ Base của từng ngoại vi cụ thể */
+#define PWR_BASE              (APB1PERIPH_BASE + 0x7000UL) /* 0x4000 7000 */
+#define RCC_BASE              (AHB1PERIPH_BASE + 0x3800UL) /* 0x4002 3800 */
+#define FLASH_R_BASE          (AHB1PERIPH_BASE + 0x3C00UL) /* 0x4002 3C00 */
+```
+
+#### 🔹 Tầng 2: Cấu trúc Struct ánh xạ thanh ghi (Peripheral Structs)
+Mỗi thanh ghi 32-bit chiếm đúng **4 bytes** địa chỉ. Mọi thành viên struct **bắt buộc phải có từ khóa `volatile`**:
+
+```c
+typedef struct {
+    volatile uint32_t CR1;   /**< Offset: 0x00 */
+    volatile uint32_t CSR1;  /**< Offset: 0x04 */
+    volatile uint32_t CR2;   /**< Offset: 0x08 */
+    volatile uint32_t CSR2;  /**< Offset: 0x0C */
+} PWR_TypeDef;
+```
+
+> ⚠️ **BÀI HỌC VÀNG VỀ `RESERVED` PADDING (CÂU HỎI PHỎNG VẤN HAY GẶP):**  
+> Trong struct `RCC_TypeDef`, hãy chú ý các thanh ghi không nằm sát nhau:
+> - `AHB3RSTR` nằm ở offset **`0x18`**
+> - Thanh ghi kế tiếp `APB1RSTR` lại nằm ở offset **`0x20`**
+> 
+> Khoảng cách: $0x20 - 0x18 = 8\text{ bytes}$. Thanh ghi `AHB3RSTR` đã chiếm 4 bytes (`0x18..0x1B`). Như vậy còn trống 4 bytes (`0x1C..0x1F`).  
+> 👉 **Bắt buộc phải chèn `uint32_t RESERVED0;` vào giữa!** Nếu bạn quên, toàn bộ các thanh ghi phía sau (`APB1RSTR`, `AHB1ENR`, `RCC_CSR`...) sẽ bị dịch lùi 4 bytes $\implies$ Khi ghi vào `RCC->APB1ENR`, CPU sẽ ghi nhầm vào vùng nhớ rác làm MCU crash ngay lập tức!
+>
+> Tương tự: giữa `APB2RSTR` (`0x24`) và `AHB1ENR` (`0x30`) trống 8 bytes $\implies$ Phải đệm `uint32_t RESERVED1[2];`.
+
+```c
+typedef struct {
+    volatile uint32_t CR;         /**< Offset: 0x00 */
+    volatile uint32_t PLLCFGR;    /**< Offset: 0x04 */
+    volatile uint32_t CFGR;       /**< Offset: 0x08 */
+    volatile uint32_t CIR;        /**< Offset: 0x0C */
+    volatile uint32_t AHB1RSTR;   /**< Offset: 0x10 */
+    volatile uint32_t AHB2RSTR;   /**< Offset: 0x14 */
+    volatile uint32_t AHB3RSTR;   /**< Offset: 0x18 */
+    uint32_t RESERVED0;           /**< Padding 0x1C (4 bytes) */
+    volatile uint32_t APB1RSTR;   /**< Offset: 0x20 */
+    volatile uint32_t APB2RSTR;   /**< Offset: 0x24 */
+    uint32_t RESERVED1[2];        /**< Padding 0x28-0x2C (8 bytes) */
+    volatile uint32_t AHB1ENR;    /**< Offset: 0x30 */
+    volatile uint32_t AHB2ENR;    /**< Offset: 0x34 */
+    volatile uint32_t AHB3ENR;    /**< Offset: 0x38 */
+    uint32_t RESERVED2;           /**< Padding 0x3C (4 bytes) */
+    volatile uint32_t APB1ENR;    /**< Offset: 0x40 */
+    volatile uint32_t APB2ENR;    /**< Offset: 0x44 */
+    uint32_t RESERVED3[2];        /**< Padding 0x48-0x4C (8 bytes) */
+    /* ... các thanh ghi LPENR ... */
+    volatile uint32_t BDCR;       /**< Offset: 0x70 */
+    volatile uint32_t CSR;        /**< Offset: 0x74 (Hộp đen Reset) */
+} RCC_TypeDef;
+```
+
+#### 🔹 Tầng 3: Macro ép kiểu con trỏ phần cứng
+Ép địa chỉ Base thành con trỏ struct để truy xuất dạng `CON_TRỎ->THANH_GHI`:
+```c
+#define PWR     ((PWR_TypeDef *) PWR_BASE)
+#define RCC     ((RCC_TypeDef *) RCC_BASE)
+#define FLASH   ((FLASH_TypeDef *) FLASH_R_BASE)
+```
+
+#### 🔹 Tầng 4: Bộ Macro Bit Position (`_Pos`), Mask (`_Msk`) và Giá trị cấu hình
+Áp dụng công thức chuẩn: `_Msk = (KÍCH_THƯỚC_MASK << _Pos)`:
+```c
+/* RCC_APB1ENR bit PWREN (Bit 28) */
+#define RCC_APB1ENR_PWREN_Pos        (28U)
+#define RCC_APB1ENR_PWREN_Msk        (0x1U << RCC_APB1ENR_PWREN_Pos)
+#define RCC_APB1ENR_PWREN            RCC_APB1ENR_PWREN_Msk
+
+/* PWR_CR1 trường VOS[1:0] (Bits 15:14) */
+#define PWR_CR1_VOS_Pos              (14U)
+#define PWR_CR1_VOS_Msk              (0x3U << PWR_CR1_VOS_Pos)
+#define PWR_CR1_VOS_SCALE1           (0x3U << PWR_CR1_VOS_Pos) /* 11b = Scale 1 */
+
+/* Over-drive Bits trong PWR */
+#define PWR_CR1_ODEN_Pos             (16U)
+#define PWR_CR1_ODEN                 (0x1U << PWR_CR1_ODEN_Pos)
+#define PWR_CSR1_ODRDY_Pos           (16U)
+#define PWR_CSR1_ODRDY               (0x1U << PWR_CSR1_ODRDY_Pos)
+#define PWR_CR1_ODSWEN_Pos           (17U)
+#define PWR_CR1_ODSWEN               (0x1U << PWR_CR1_ODSWEN_Pos)
+#define PWR_CSR1_ODSWRDY_Pos         (17U)
+#define PWR_CSR1_ODSWRDY             (0x1U << PWR_CSR1_ODSWRDY_Pos)
+
+/* Flash Latency (Bits 3:0) */
+#define FLASH_ACR_LATENCY_Pos        (0U)
+#define FLASH_ACR_LATENCY_Msk        (0xFU << FLASH_ACR_LATENCY_Pos)
+#define FLASH_ACR_LATENCY_6WS        (0x6U << FLASH_ACR_LATENCY_Pos) /* 6 Wait States */
+#define FLASH_ACR_PRFTEN             (0x1U << 8U)
+#define FLASH_ACR_ARTEN              (0x1U << 9U)
+
+/* RCC_CSR Reset Flags (Bits 24..31) */
+#define RCC_CSR_RMVF                 (0x1U << 24U)
+#define RCC_CSR_BORRSTF              (0x1U << 25U)
+#define RCC_CSR_PINRSTF              (0x1U << 26U)
+#define RCC_CSR_PORRSTF              (0x1U << 27U)
+#define RCC_CSR_SFTRSTF              (0x1U << 28U)
+#define RCC_CSR_IWDGRSTF             (0x1U << 29U)
+#define RCC_CSR_WWDGRSTF             (0x1U << 30U)
+#define RCC_CSR_LPWRRSTF             (0x1U << 31U)
+```
+
+---
+
+### 3.2. Thiết kế File Header Giao diện Driver (`system_clock.h`)
+File [`system_clock.h`](file:///d:/Project/STM32F7/drivers/inc/system_clock.h) cung cấp giao diện API công khai cho ứng dụng:
+
+```c
+#ifndef SYSTEM_CLOCK_H
+#define SYSTEM_CLOCK_H
+
+#include <stdint.h>
+#include "stm32f746xx_registers.h"
+
+/**
+ * @brief Enum định danh lý do Reset cứng của hệ thống
+ */
+typedef enum {
+    RESET_REASON_UNKNOWN = 0,
+    RESET_REASON_POR,       /**< Power-on / Power-down Reset (Cắm nguồn) */
+    RESET_REASON_PIN,       /**< External Pin Reset (Bấm nút B1 NRST) */
+    RESET_REASON_SOFTWARE,  /**< Software Reset (NVIC_SystemReset) */
+    RESET_REASON_IWDG,      /**< Independent Watchdog Reset */
+    RESET_REASON_WWDG,      /**< Window Watchdog Reset */
+    RESET_REASON_LOW_POWER, /**< Low-Power Management Reset */
+    RESET_REASON_BOR        /**< Brown-out Reset (Sụt nguồn) */
+} SystemResetReason_t;
+
+/* Khai báo nguyên mẫu hàm (Prototypes) */
+void SystemClock_Config_216MHz(void);
+SystemResetReason_t System_GetResetReason(void);
+const char* System_GetResetReasonString(SystemResetReason_t reason);
+void System_ClearResetFlags(void);
+
+#endif /* SYSTEM_CLOCK_H */
+```
+
+---
+
+### 3.3. Sơ đồ Luồng Thuật toán 7 Bước & Triển khai Code (`system_clock.c`)
 
 ```mermaid
 graph TD
     S1["BƯỚC 1: Cấp clock cho PWR<br/>(RCC_APB1ENR bit PWREN = 1)"] --> S2["BƯỚC 2: Cài đặt VOS = Scale 1 (1.2V)<br/>(PWR_CR1 bit VOS[1:0] = 11b)"]
     S2 --> S3["BƯỚC 3: Bật thạch anh ngoài HSE 25MHz<br/>(RCC_CR: HSEON = 1, Chờ HSERDY = 1)"]
     S3 --> S4["BƯỚC 4: TĂNG FLASH WAIT STATES LÊN 6 WS<br/>(FLASH_ACR: LATENCY = 6, bật ARTEN & PRFTEN)"]
-    S4 --> S5["BƯỚC 5: Thiết lập bộ chia Bus & Tham số PLL<br/>(RCC_CFGR: AHB/1, APB1/4, APB2/2)<br/>(RCC_PLLCFGR: M=25, N=432, P=2, Q=9)"]
-    S5 --> S6["BƯỚC 6: Bật PLL & Handshake Over-Drive<br/>(Chờ PLLRDY -> Bật ODEN -> Chờ ODRDY -> Bật ODSWEN -> Chờ ODSWRDY)"]
+    S4 --> S5["BƯỚC 5: Thiết lập bộ chia Bus & Tham số PLL<br/>(RCC_CFGR: AHB/1, APB1/4, APB2/2)<br/>(RCC_PLLCFGR: M=25, N=432, P=2, Q=9, SRC=HSE)"]
+    S5 --> S6["BƯỚC 6: Bật PLL & Handshake Over-Drive<br/>(Chờ PLLRDY -> ODEN -> Chờ ODRDY -> ODSWEN -> Chờ ODSWRDY)"]
     S6 --> S7["BƯỚC 7: Chuyển SYSCLK sang nguồn PLL<br/>(RCC_CFGR: SW = 10b, Chờ SWS = 10b)"]
 ```
 
----
-
-### 3.2. Khung Pseudocode Skeleton (Tự tay điền vào `system_clock.c`)
-
-Mở file [`system_clock.c`](file:///d:/Project/STM32F7/drivers/src/system_clock.c) và tự tay hoàn thiện các khối `TODO`:
+Mở file [`system_clock.c`](file:///d:/Project/STM32F7/drivers/src/system_clock.c) và tự tay gõ từng bước:
 
 ```c
-#include "stm32f746xx_registers.h"
-#include "system_clock.h"
+#include "../inc/system_clock.h"
 
 void SystemClock_Config_216MHz(void)
 {
-    /* BƯỚC 1: Cấp xung nhịp cho PWR (RCC->APB1ENR bit PWREN) */
-    // TODO: RCC->APB1ENR |= RCC_APB1ENR_PWREN;
+    /* ------------------------------------------------------------------------
+     * BƯỚC 1: Cấp Clock cho Power Controller (PWR)
+     * ------------------------------------------------------------------------ */
+    RCC->APB1ENR |= RCC_APB1ENR_PWREN;
 
-    /* BƯỚC 2: Chọn Scale 1 mode (PWR->CR1 trường VOS[1:0] = 11b) */
-    // TODO: PWR->CR1 &= ~PWR_CR1_VOS_Msk;
-    // TODO: PWR->CR1 |= PWR_CR1_VOS_SCALE1;
+    /* ------------------------------------------------------------------------
+     * BƯỚC 2: Thiết lập điện áp lõi VOS = Scale 1 (1.2V)
+     * Clear-then-Set cho trường VOS[1:0]
+     * ------------------------------------------------------------------------ */
+    PWR->CR1 &= ~(PWR_CR1_VOS_Msk);
+    PWR->CR1 |= PWR_CR1_VOS_SCALE1;
 
-    /* BƯỚC 3: Bật thạch anh ngoài HSE 25MHz (RCC->CR bit HSEON, chờ HSERDY) */
-    // TODO: RCC->CR |= RCC_CR_HSEON;
-    // TODO: while (!(RCC->CR & RCC_CR_HSERDY));
+    /* ------------------------------------------------------------------------
+     * BƯỚC 3: Bật thạch anh ngoài HSE 25MHz & Chờ ổn định
+     * ------------------------------------------------------------------------ */
+    RCC->CR |= RCC_CR_HSEON;
+    while (!(RCC->CR & RCC_CR_HSERDY)) {
+        /* Chờ cờ HSERDY = 1 */
+    }
 
-    /* BƯỚC 4: TĂNG FLASH LATENCY LÊN 6 WS (FLASH->ACR: LATENCY=6, PRFTEN, ARTEN) */
-    // TODO: FLASH->ACR &= ~FLASH_ACR_LATENCY_Msk;
-    // TODO: FLASH->ACR |= (FLASH_ACR_LATENCY_6WS | FLASH_ACR_PRFTEN | FLASH_ACR_ARTEN);
+    /* ------------------------------------------------------------------------
+     * BƯỚC 4: TĂNG FLASH LATENCY LÊN 6 WAIT STATES TRƯỚC KHI TĂNG XUNG!
+     * Bật kèm đệm lệnh Prefetch và bộ tăng tốc ART Accelerator
+     * ------------------------------------------------------------------------ */
+    FLASH->ACR &= ~(FLASH_ACR_LATENCY_Msk);
+    FLASH->ACR |= (FLASH_ACR_LATENCY_6WS | FLASH_ACR_PRFTEN | FLASH_ACR_ARTEN);
 
-    /* BƯỚC 5: Cấu hình bộ chia Bus (RCC->CFGR) & Tham số PLL (RCC->PLLCFGR)
-     * AHB div 1, APB1 div 4, APB2 div 2. M=25, N=432, P=00b (/2), Q=9, PLLSRC=HSE */
-    // TODO: RCC->CFGR &= ~(RCC_CFGR_HPRE_Msk | RCC_CFGR_PPRE1_Msk | RCC_CFGR_PPRE2_Msk);
-    // TODO: RCC->CFGR |= (RCC_CFGR_HPRE_DIV1 | RCC_CFGR_PPRE1_DIV4 | RCC_CFGR_PPRE2_DIV2);
-    // TODO: RCC->PLLCFGR = ... (Điền M, N, P, Q và PLLSRC)
+    /* ------------------------------------------------------------------------
+     * BƯỚC 5: Cấu hình bộ nhân Main PLL (M=25, N=432, P=2, Q=9, PLLSRC=HSE)
+     * Áp dụng Clear-then-Set đồng thời cho toàn bộ các trường trong RCC->PLLCFGR
+     * ------------------------------------------------------------------------ */
+    RCC->PLLCFGR &= ~(RCC_PLLCFGR_PLLM_Msk | 
+                      RCC_PLLCFGR_PLLN_Msk | 
+                      RCC_PLLCFGR_PLLP_Msk | 
+                      RCC_PLLCFGR_PLLSRC_Msk | 
+                      RCC_PLLCFGR_PLLQ_Msk);
 
-    /* BƯỚC 6: Bật PLL & Handshake Over-Drive */
-    // TODO: RCC->CR |= RCC_CR_PLLON;
-    // TODO: while (!(RCC->CR & RCC_CR_PLLRDY));
-    // TODO: PWR->CR1 |= PWR_CR1_ODEN;
-    // TODO: while (!(PWR->CSR1 & PWR_CSR1_ODRDY));
-    // TODO: PWR->CR1 |= PWR_CR1_ODSWEN;
-    // TODO: while (!(PWR->CSR1 & PWR_CSR1_ODSWRDY));
+    RCC->PLLCFGR |= ((25U << RCC_PLLCFGR_PLLM_Pos) |
+                     (432U << RCC_PLLCFGR_PLLN_Pos) |
+                     RCC_PLLCFGR_PLLP_DIV2 |           /* 00b: chia 2 */
+                     RCC_PLLCFGR_PLLSRC_HSE |          /* 1b: chọn HSE */
+                     (9U << RCC_PLLCFGR_PLLQ_Pos));
 
-    /* BƯỚC 7: Chuyển SYSCLK sang nguồn PLL (RCC->CFGR bit SW = 10b, chờ SWS) */
-    // TODO: RCC->CFGR &= ~RCC_CFGR_SW_Msk;
-    // TODO: RCC->CFGR |= RCC_CFGR_SW_PLL;
-    // TODO: while ((RCC->CFGR & RCC_CFGR_SWS_Msk) != RCC_CFGR_SWS_PLL);
+    /* ------------------------------------------------------------------------
+     * BƯỚC 6: Bật PLL & Thực hiện Handshake Over-Drive 2 bước
+     * ------------------------------------------------------------------------ */
+    RCC->CR |= RCC_CR_PLLON;
+    while (!(RCC->CR & RCC_CR_PLLRDY)) {
+        /* Chờ PLL khóa pha */
+    }
+
+    /* Handshake Over-drive: Bước a & b: Kích hoạt ODEN và chờ ODRDY */
+    PWR->CR1 |= PWR_CR1_ODEN;
+    while (!(PWR->CSR1 & PWR_CSR1_ODRDY));
+
+    /* Handshake Over-drive: Bước c & d: Chuyển mạch ODSWEN và chờ ODSWRDY */
+    PWR->CR1 |= PWR_CR1_ODSWEN;
+    while (!(PWR->CSR1 & PWR_CSR1_ODSWRDY));
+
+    /* ------------------------------------------------------------------------
+     * BƯỚC 7: Cấu hình Bus Prescalers & Chuyển nguồn SYSCLK sang PLL
+     * AHB /1 (216MHz), APB1 /4 (54MHz), APB2 /2 (108MHz)
+     * ------------------------------------------------------------------------ */
+    RCC->CFGR &= ~(RCC_CFGR_HPRE_Msk | RCC_CFGR_PPRE1_Msk | RCC_CFGR_PPRE2_Msk);
+    RCC->CFGR |= (RCC_CFGR_HPRE_DIV1 | RCC_CFGR_PPRE1_DIV4 | RCC_CFGR_PPRE2_DIV2);
+
+    /* Chuyển SYSCLK sang PLL (SW = 10b) */
+    RCC->CFGR &= ~(RCC_CFGR_SW_Msk);
+    RCC->CFGR |= RCC_CFGR_SW_PLL;
+    while ((RCC->CFGR & RCC_CFGR_SWS_Msk) != RCC_CFGR_SWS_PLL) {
+        /* Chờ trạng thái phần cứng SWS chuyển sang PLL thành công */
+    }
+}
+
+/* ----------------------------------------------------------------------------
+ * TRIỂN KHAI CÁC HÀM QUẢN LÝ HỘP ĐEN RESET REASON (RCC_CSR)
+ * ---------------------------------------------------------------------------- */
+
+SystemResetReason_t System_GetResetReason(void)
+{
+    uint32_t csr = RCC->CSR; /* Snapshot bất biến */
+
+    if (csr & RCC_CSR_LPWRRSTF)       return RESET_REASON_LOW_POWER;
+    else if (csr & RCC_CSR_WWDGRSTF)  return RESET_REASON_WWDG;
+    else if (csr & RCC_CSR_IWDGRSTF)  return RESET_REASON_IWDG;
+    else if (csr & RCC_CSR_SFTRSTF)   return RESET_REASON_SOFTWARE;
+    else if (csr & RCC_CSR_PORRSTF)   return RESET_REASON_POR;
+    else if (csr & RCC_CSR_BORRSTF)   return RESET_REASON_BOR;
+    else if (csr & RCC_CSR_PINRSTF)   return RESET_REASON_PIN;
+
+    return RESET_REASON_UNKNOWN;
+}
+
+const char* System_GetResetReasonString(SystemResetReason_t reason)
+{
+    switch (reason) {
+        case RESET_REASON_POR:         return "Power-on / Power-down Reset (POR/PDR)";
+        case RESET_REASON_PIN:         return "External Reset Pin (NRST Button)";
+        case RESET_REASON_SOFTWARE:   return "Software Reset (NVIC_SystemReset)";
+        case RESET_REASON_IWDG:       return "Independent Watchdog Reset (IWDG)";
+        case RESET_REASON_WWDG:       return "Window Watchdog Reset (WWDG)";
+        case RESET_REASON_LOW_POWER:  return "Low-Power Management Reset";
+        case RESET_REASON_BOR:         return "Brown-Out Reset (BOR)";
+        default:                       return "Unknown Reset Reason";
+    }
+}
+
+void System_ClearResetFlags(void)
+{
+    /* Bit RMVF là kiểu RS (Ghi 1 để xóa toàn bộ cờ reset về 0) */
+    RCC->CSR |= RCC_CSR_RMVF;
 }
 ```
 
 ---
 
-### 3.3. Khung Code Đọc & Xóa Lý do Reset (`RCC_CSR`)
+### 3.4. Ứng dụng Thực chiến Kiểm thử (`main.c`)
+Tạo file [`src/main.c`](file:///d:/Project/STM32F7/src/main.c) để kiểm thử toàn bộ driver vừa viết:
 
 ```c
-typedef enum {
-    RESET_CAUSE_UNKNOWN = 0,
-    RESET_CAUSE_LOW_POWER,
-    RESET_CAUSE_WINDOW_WATCHDOG,
-    RESET_CAUSE_INDEPENDENT_WATCHDOG,
-    RESET_CAUSE_SOFTWARE,
-    RESET_CAUSE_POWER_ON,
-    RESET_CAUSE_EXTERNAL_PIN
-} ResetReason_t;
+#include "system_clock.h"
 
-ResetReason_t System_GetAndClearResetReason(void)
+int main(void)
 {
-    ResetReason_t reason = RESET_CAUSE_UNKNOWN;
+    /* 1. Đọc nguyên nhân Reset của lần khởi động trước đó */
+    SystemResetReason_t reset_reason = System_GetResetReason();
+    const char* reason_str = System_GetResetReasonString(reset_reason);
 
-    /* 1. Chụp snapshot bất biến */
-    uint32_t csr_snapshot = RCC->CSR;
+    /* 2. Xóa cờ Reset để sẵn sàng ghi nhận sự cố tiếp theo */
+    System_ClearResetFlags();
 
-    /* 2. Giải mã theo thứ tự ưu tiên */
-    if (csr_snapshot & RCC_CSR_LPWRRSTF)       reason = RESET_CAUSE_LOW_POWER;
-    else if (csr_snapshot & RCC_CSR_WWDGRSTF)  reason = RESET_CAUSE_WINDOW_WATCHDOG;
-    else if (csr_snapshot & RCC_CSR_IWDGRSTF)  reason = RESET_CAUSE_INDEPENDENT_WATCHDOG;
-    else if (csr_snapshot & RCC_CSR_SFTRSTF)   reason = RESET_CAUSE_SOFTWARE;
-    else if (csr_snapshot & RCC_CSR_PORRSTF)   reason = RESET_CAUSE_POWER_ON;
-    else if (csr_snapshot & RCC_CSR_PINRSTF)   reason = RESET_CAUSE_EXTERNAL_PIN;
+    /* 3. Nâng xung hệ thống lên cực đại 216MHz với Over-drive */
+    SystemClock_Config_216MHz();
 
-    /* 3. Xóa cờ ngay lập tức bằng bit RMVF */
-    RCC->CSR |= RCC_CSR_RMVF;
+    /* 4. Vòng lặp chính */
+    while (1) {
+        /* Hệ thống đang chạy ổn định ở tần số 216MHz! */
+    }
 
-    return reason;
+    return 0;
 }
 ```
 
 ---
 
-### 3.4. Mổ xẻ 5 Tình huống Bug Phần Cứng Kinh Điển
+### 3.5. Mổ xẻ 5 Tình huống Bug Phần Cứng Kinh Điển
 
 1. 💥 **Bug 1: HardFault ngay tại lệnh chuyển xung `SW = PLL`**
    * *Nguyên nhân:* Tăng xung nhịp CPU lên 216MHz trước khi tăng Flash Wait States lên 6 WS. Flash chưa kịp trả dữ liệu $\rightarrow$ CPU đọc phải lệnh rác $\rightarrow$ Kích hoạt `HardFault`.
@@ -316,7 +549,8 @@ ResetReason_t System_GetAndClearResetReason(void)
 
 ---
 
-### 3.5. Bảng Checklist Nghiệm thu Code (Tự kiểm tra)
+### 3.6. Bảng Checklist Nghiệm thu Code (Tự kiểm tra)
+- [ ] Struct đã có đủ các trường đệm `RESERVED` để không bị lệch byte offset thanh ghi chưa?
 - [ ] Các trường nhiều bit đã dùng `&= ~MASK` trước khi `|= VALUE` chưa?
 - [ ] Dòng cấu hình `FLASH->ACR` có nằm **TRƯỚC** dòng chuyển `SW = PLL` không?
 - [ ] Dòng `RCC->APB1ENR |= RCC_APB1ENR_PWREN` có nằm ở đầu hàm không?

@@ -10,12 +10,12 @@
 ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
 │                           LỘ TRÌNH 4 BƯỚC CHINH PHỤC NGÀY 2                                     │
 ├───────────────────┬───────────────────┬────────────────────────────┬────────────────────────────┤
-│ BƯỚC 1: KHÁI NIỆM │ BƯỚC 2: THỰC CHIẾN│ BƯỚC 3: GÕ CODE            │ BƯỚC 4: PHỎNG VẤN          │
-│ • Thùng thư & Bưu │ • Tra cứu RM0385  │ • Cấu hình GPIO AF7        │ • Bộ 5 câu hỏi vặn D-Cache │
-│   tá (Analogy)    │ • Công thức       │ • Cấu hình USART1 & BRR    │ • Hiểm họa Overrun (ORE)   │
-│ • Bộ ba hoàn hảo  │   Baudrate        │ • Cấu hình DMA2 Circular   │ • Chứng minh 0% CPU Load   │
-│   (DMA+IDLE+Ring) │ • Bảng W1C        │ • Khung Pseudocode TODO    │ • Kịch bản trả lời 60s     │
-│ • L1 D-Cache Gap  │   (Write1ToClear) │ • Mổ xẻ 5 Bug phần cứng    │   (Elevator Pitch)         │
+│ BƯỚC 1: NGUYÊN LÝ │ BƯỚC 2: THỰC CHIẾN│ BƯỚC 3: GÕ CODE            │ BƯỚC 4: PHỎNG VẤN          │
+│ • RXNE vs DMA+IDLE│ • Tra cứu RM0385  │ • Cấu hình GPIO AF7        │ • Bộ 5 câu hỏi vặn D-Cache │
+│ • Sơ đồ Bus Matrix│ • Công thức       │ • Cấu hình USART1 & BRR    │ • Hiểm họa Overrun (ORE)   │
+│ • Ring Buffer Math│   Baudrate        │ • Cấu hình DMA2 Circular   │ • Chứng minh 0% CPU Load   │
+│ • L1 D-Cache Gap  │ • Bảng W1C        │ • Khung Pseudocode TODO    │ • Kịch bản trả lời 60s     │
+│                   │   (Write1ToClear) │ • Mổ xẻ 5 Bug phần cứng    │   (Elevator Pitch)         │
 └───────────────────┴───────────────────┴────────────────────────────┴────────────────────────────┘
 ```
 
@@ -39,29 +39,55 @@
 
 ---
 
-# 🧠 BƯỚC 1: KHÁI NIỆM & CƠ CHẾ VẬT LÝ (CONCEPT & ANALOGY)
+# 🧠 BƯỚC 1: NGUYÊN LÝ PHẦN CỨNG & CƠ CHẾ VẬT LÝ (HARDWARE ARCHITECTURE)
 
-## 1.1. Khái niệm trực quan: Ẩn dụ "Thùng thư tự động"
+## 1.1. Cơ chế Phần cứng: RXNE Interrupt vs. DMA + IDLE Line Detection
 
-Hãy tưởng tượng bạn (CPU Cortex-M7) đang cần nhận thư (dữ liệu UART) từ một bưu tá (Thiết bị bên ngoài như PC/GPRS Module):
+Trong kiến trúc giao tiếp nối tiếp UART, có hai cơ chế nhận dữ liệu theo ngắt với sự khác biệt căn bản về phần cứng và tài nguyên CPU:
 
-```text
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                        SO SÁNH 3 KIẾN TRÚC NHẬN DỮ LIỆU UART                           │
-├───────────────────┬──────────────────────────────────┬─────────────────────────────────┤
-│ 1. Polling        │ Bạn liên tục chạy ra cổng mở     │ Treo CPU 100%, lãng phí năng    │
-│    (while loop)   │ hòm thư kiểm tra từng giây       │ lượng, nghẽn mọi task khác      │
-├───────────────────┼──────────────────────────────────┼─────────────────────────────────┤
-│ 2. RXNE Interrupt │ Mỗi khi có 1 lá thư nhỏ drop     │ Gây "Interrupt Thrashing" ở tốc │
-│    (Ngắt từng byte)│ bưu tá nhấn chuông cửa 1 lần.    │ độ cao (921600 bps), làm trễ    │
-│                   │ Bạn phải bỏ công việc ra mở cửa  │ các ngắt ưu tiên cao (CAN, PWM) │
-├───────────────────┼──────────────────────────────────┼─────────────────────────────────┤
-│ 3. DMA + IDLE     │ Bưu tá tự bỏ thư vào Thùng thư   │ ZERO CPU OVERHEAD khi nhận!     │
-│    (Tối ưu nhất)  │ tự động (DMA). Khi giao xong     │ CPU chỉ bị ngắt DUY NHẤT 1 LẦN  │
-│                   │ toàn bộ gói (IDLE Line), bưu tá  │ khi cả gói tin đã nằm gọn       │
-│                   │ mới nhấn chuông báo 1 lần duy nhất│ trong SRAM.                    │
-└───────────────────┴──────────────────────────────────┴─────────────────────────────────┘
-```
+### 1. Cơ chế 1: RXNE Interrupt (Ngắt từng byte dữ liệu)
+* **Thanh ghi phần cứng:** 
+  - `USART_ISR` (Bit 5 `RXNE` - Read Data Register Not Empty).
+  - `USART_CR1` (Bit 5 `RXNEIE` - RXNE Interrupt Enable).
+* **Nguyên lý hoạt động:**
+  - Khối dịch UART Shift Register dịch từng bit tín hiệu từ chân RX. Khi nhận đủ 1 khung (Start + 8 Data + Stop), 1 byte được chuyển vào thanh ghi dữ liệu nhận `USART_RDR`.
+  - Phần cứng tự động nâng cờ `RXNE = 1` và kích hoạt tín hiệu ngắt gửi tới NVIC.
+  - CPU buộc phải dừng chương trình chính, thực hiện **Context Switch** (lưu ngữ cảnh các thanh ghi `R0-R3`, `R12`, `LR`, `PC`, `xPSR` vào Stack), nhảy vào hàm `USART1_IRQHandler()`, đọc `USART_RDR` để lưu vào RAM, rồi khôi phục ngữ cảnh để quay về.
+* **Tác hại kỹ thuật (Interrupt Thrashing ở tốc độ cao):**
+  - Giả sử hệ thống chạy ở Baudrate $921,600\text{ bps}$. Thời gian truyền 1 byte ($10\text{ bits}$) chỉ mất:
+    $$T_{byte} = \frac{10}{921,600} \approx 10.85\,\mu\text{s}$$
+  - Nếu nhận một gói dữ liệu $1000\text{ bytes}$, CPU sẽ bị **ngắt 1000 lần liên tiếp**, mỗi lần cách nhau chỉ $10.85\,\mu\text{s}$!
+  - Quá trình Stacking / Unstacking (tối thiểu 24-32 chu kỳ lệnh Cortex-M7) cùng việc hủy luồng lệnh Pipeline lặp lại 1000 lần sẽ **chiếm dụng từ 30% đến 50% thời gian tính toán của CPU**, làm trễ hoặc nghẽn nghiêm trọng các tác vụ thời gian thực khắt khe (Real-time Deadlines) như vòng lặp điều khiển Motor FOC (20 kHz) hoặc ngắt CAN-Bus.
+
+---
+
+### 2. Cơ chế 2: DMA Circular + IDLE Line Detection (Truy cập bộ nhớ trực tiếp & Ngắt khung rảnh)
+* **Thanh ghi phần cứng:**
+  - `USART_CR3` (Bit 6 `DMAR` - DMA Enable Receiver).
+  - `USART_CR1` (Bit 4 `IDLEIE` - IDLE Interrupt Enable).
+  - `USART_ISR` (Bit 4 `IDLE` - Idle Line Detected Flag).
+  - `DMA2_Stream2->CR` (Bộ điều khiển kênh DMA nhận).
+* **Nguyên lý hoạt động:**
+  - **Khâu chuyển dữ liệu (DMA Hardware Transfer):** Mỗi khi `USART_RDR` có byte mới, phần cứng USART tự động phát xung `DMAR` sang bộ điều khiển **DMA2 Controller**. DMA2 tự động chiếm bus AHB trong 1 chu kỳ để đọc `USART_RDR` và ghi thẳng vào mảng SRAM, đồng thời thanh ghi đếm `NDTR` tự động giảm đi 1. **CPU Cortex-M7 hoàn toàn không tham gia, không tốn bất kỳ chu kỳ lệnh nào (0% CPU Load)** trong suốt quá trình nhận 1000 bytes.
+  - **Khâu báo hiệu kết thúc khung (IDLE Line Detection):**
+    - Theo chuẩn UART, khi đường truyền rảnh (không có dữ liệu truyền), chân RX được giữ ở mức điện áp **CAO (Logic 1)**.
+    - Khi thiết bị gửi truyền xong byte cuối cùng và ngừng gửi, chân RX duy trì mức CAO liên tục.
+    - Bộ đếm phần cứng của USART giám sát: Nếu chân RX giữ mức CAO liên tục trong khoảng thời gian bằng **đúng 1 khung truyền (1 Frame duration = 10 bit times)**, phần cứng xác nhận frame đã kết thúc và tự động bật cờ `IDLE = 1` trong `USART_ISR`.
+    - Lúc này, NVIC mới kích hoạt ngắt **DUY NHẤT 1 LẦN** cho toàn bộ gói dữ liệu.
+* **Quy trình xử lý trong hàm ngắt:**
+  - CPU nhảy vào `USART1_IRQHandler()` đúng 1 lần:
+    1. Đọc thanh ghi `DMA2_Stream2->NDTR` để tính toán chính xác số byte vừa nhận được: $\text{Received\_Bytes} = \text{BUFFER\_SIZE} - \text{NDTR}$.
+    2. Xóa cờ `IDLE` bằng lệnh ghi trực tiếp: `USART1->ICR = USART_ICR_IDLECF;`.
+    3. Chuyển toàn bộ gói tin sang cho Application layer hoặc Parser xử lý.
+
+---
+
+| Tiêu chí kỹ thuật | 1. Polling (`while`) | 2. RXNE Interrupt | 3. DMA + IDLE Line (Tối ưu) |
+| :--- | :--- | :--- | :--- |
+| **Số lần CPU bị ngắt cho 1000 bytes** | `0` (Nhưng CPU bị kẹt cứng) | **1000 lần ngắt** | **1 lần ngắt duy nhất** |
+| **Tải CPU (CPU Overhead)** | $100\%$ (Chờ cờ trong vòng lặp) | $30\% \sim 50\%$ (Context switch liên tục) | $\approx 0\%$ (DMA chạy phần cứng ngầm) |
+| **Nguy cơ mất dữ liệu (Overrun Error)** | Rất cao nếu có tác vụ khác chạy | Dễ xảy ra nếu bị ngắt ưu tiên cao chặn | Rất thấp (DMA được Bus Matrix ưu tiên) |
+| **Hỗ trợ gói tin độ dài biến thiên** | Khó xác định khi nào hết gói | Phải dùng thêm Timer để timeout | **Tự động bắt chính xác qua cờ IDLE** |
 
 ---
 

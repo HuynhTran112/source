@@ -76,7 +76,10 @@ Trong kiến trúc giao tiếp nối tiếp UART, có hai cơ chế nhận dữ 
     - Lúc này, NVIC mới kích hoạt ngắt **DUY NHẤT 1 LẦN** cho toàn bộ gói dữ liệu.
 * **Quy trình xử lý trong hàm ngắt:**
   - CPU nhảy vào `USART1_IRQHandler()` đúng 1 lần:
-    1. Đọc thanh ghi `DMA2_Stream2->NDTR` để tính toán chính xác số byte vừa nhận được: $\text{Received\_Bytes} = \text{BUFFER\_SIZE} - \text{NDTR}$.
+    1. Đọc thanh ghi `DMA2_Stream2->NDTR` để tính toán chính xác số byte vừa nhận được:
+       ```c
+       uint16_t received_bytes = BUFFER_SIZE - DMA2_Stream2->NDTR;
+       ```
     2. Xóa cờ `IDLE` bằng lệnh ghi trực tiếp: `USART1->ICR = USART_ICR_IDLECF;`.
     3. Chuyển toàn bộ gói tin sang cho Application layer hoặc Parser xử lý.
 
@@ -93,21 +96,35 @@ Trong kiến trúc giao tiếp nối tiếp UART, có hai cơ chế nhận dữ 
 
 ## 1.2. Sơ đồ Bus Matrix & Luồng dữ liệu phần cứng (Dataflow Architecture)
 
-```mermaid
-flowchart TD
-    EXT[Thiết bị ngoài: PC / Sensor] -->|Tín hiệu Serial RX Pin: PB7| UART[USART1 Peripheral - Bus APB2]
-    UART -->|Tín hiệu DMA Request: Stream 2 Channel 4| DMA[DMA2 Controller - Bus AHB1]
-    DMA -->|Tự động ghi trực tiếp Zero CPU| SRAM[SRAM Ring Buffer - Bus AHB]
-    
-    subgraph CACHE_GAP [Khoảng hẫng D-Cache trên Cortex-M7]
-        SRAM -->|Dữ liệu mới tại RAM| MAIN_RAM[Main SRAM Memory]
-        DCACHE[L1 D-Cache 32B Line] -->|Dữ liệu cũ trong Cache| CPU[Cortex-M7 Core 216MHz]
-    end
-    
-    UART -->|Gửi tín hiệu Ngắt IDLE Line| NVIC[NVIC Interrupt Controller]
-    NVIC -->|Kích hoạt ngắt| CPU
-    
-    style CACHE_GAP fill:#ffe6e6,stroke:#ff0000,stroke-width:2px
+```text
+       [ Tín hiệu UART từ bên ngoài (Chân RX: PB7) ]
+                           │
+                           ▼
+          ┌──────────────────────────────────┐
+          │  USART1 Peripheral (Bus APB2)    │
+          │  - Shift Register -> Data (RDR)  │
+          └──────────────────────────────────┘
+                           │
+             (DMA Request) │ (IDLE Line Interrupt)
+                    ┌──────┴──────┐
+                    │             │
+                    ▼             ▼
+  ┌─────────────────────────┐  ┌─────────────────────────┐
+  │ DMA2 Controller (AHB1)  │  │ NVIC Interrupt Handler  │
+  │ - Stream 2 Channel 4    │  │ - USART1_IRQHandler()   │
+  └─────────────────────────┘  └─────────────────────────┘
+                    │                      │
+       (Ghi ngầm vào SRAM)                 │ (Đánh thức CPU khi xong gói)
+                    ▼                      ▼
+  ┌──────────────────────────────────────────────────────┐
+  │              Main SRAM Ring Buffer                   │
+  └──────────────────────────────────────────────────────┘
+                    │                      │
+                    ▼                      ▼
+             ┌────────────┐         ┌────────────┐
+             │  D-Cache   │  (≠)    │  Main SRAM │  <── Khoảng hẫng D-Cache Coherency!
+             │ (Data cũ)  │         │ (Data mới) │      (Bắt buộc gọi SCB_InvalidateDCache)
+             └────────────┘         └────────────┘
 ```
 
 ---
@@ -117,7 +134,9 @@ flowchart TD
 DMA2 Stream 2 hoạt động ở chế độ **Circular Mode**. Thanh ghi `DMA2_Stream2->NDTR` bắt đầu từ `BUFFER_SIZE` và **đếm lùi về 0** mỗi khi có 1 byte được ghi vào RAM.
 
 Công thức tính vị trí con trỏ `head` trong Ring Buffer:
-$$\text{head} = \text{BUFFER\_SIZE} - \text{DMA2\_Stream2->NDTR}$$
+```c
+head = BUFFER_SIZE - DMA2_Stream2->NDTR;
+```
 
 ```text
 Vùng nhớ Ring Buffer (Ví dụ BUFFER_SIZE = 8):
@@ -181,8 +200,10 @@ Với Baudrate mục tiêu = $115200 \text{ bps}$, chế độ Oversampling by 1
 
 $$\text{USARTDIV} = \frac{f_{PCLK2}}{\text{Baudrate}} = \frac{108,000,000}{115,200} = 937.5$$
 
-Trong kiến trúc STM32F7 USART:
-$$\text{Ghi vào thanh ghi } USART1->BRR = 937.5 \approx 938 = \mathbf{0x03AA}$$
+Trong kiến trúc STM32F7, giá trị nạp vào thanh ghi `USART1->BRR`:
+```c
+USART1->BRR = 938U; /* 0x03AA (Làm tròn 937.5 -> 938) */
+```
 
 ---
 

@@ -97,34 +97,44 @@ Trong kiến trúc giao tiếp nối tiếp UART, có hai cơ chế nhận dữ 
 ## 1.2. Sơ đồ Bus Matrix & Luồng dữ liệu phần cứng (Dataflow Architecture)
 
 ```text
-       [ Tín hiệu UART từ bên ngoài (Chân RX: PB7) ]
-                           │
-                           ▼
-          ┌──────────────────────────────────┐
-          │  USART1 Peripheral (Bus APB2)    │
-          │  - Shift Register -> Data (RDR)  │
-          └──────────────────────────────────┘
-                           │
-             (DMA Request) │ (IDLE Line Interrupt)
-                    ┌──────┴──────┐
-                    │             │
-                    ▼             ▼
-  ┌─────────────────────────┐  ┌─────────────────────────┐
-  │ DMA2 Controller (AHB1)  │  │ NVIC Interrupt Handler  │
-  │ - Stream 2 Channel 4    │  │ - USART1_IRQHandler()   │
-  └─────────────────────────┘  └─────────────────────────┘
-                    │                      │
-       (Ghi ngầm vào SRAM)                 │ (Đánh thức CPU khi xong gói)
-                    ▼                      ▼
-  ┌──────────────────────────────────────────────────────┐
-  │              Main SRAM Ring Buffer                   │
-  └──────────────────────────────────────────────────────┘
-                    │                      │
-                    ▼                      ▼
-             ┌────────────┐         ┌────────────┐
-             │  D-Cache   │  (≠)    │  Main SRAM │  <── Khoảng hẫng D-Cache Coherency!
-             │ (Data cũ)  │         │ (Data mới) │      (Bắt buộc gọi SCB_InvalidateDCache)
-             └────────────┘         └────────────┘
+  [ PHA 1: DMA NHẬN DỮ LIỆU TỪNG BYTE ]           [ PHA 2: ĐIỀU KIỆN KÍCH HOẠT NGẮT ĐÁNH THỨC CPU ]
+   UART RX Signal (PB7)                              Có 1 trong 2 sự kiện phần cứng xảy ra:
+            │                                        ┌──────────────────────────────────────────────┐
+            ▼                                        │ ❶ USART IDLE Line: RX giữ HIGH = 1 Frame    │
+ ┌──────────────────────────┐                        │    ==> Kích hoạt ngắt USART1_IRQHandler()  │
+ │    USART1 Peripheral     │                        ├──────────────────────────────────────────────┤
+ │ Shift Reg -> Data (RDR)  │                        │ ❷ DMA Buffer Full / Half (HT/TC Event):      │
+ └──────────────────────────┘                        │    ==> Kích hoạt ngắt DMA2_Stream2_IRQHandler()│
+            │ (Tự động phát DMA Req mỗi byte)        └──────────────────────┬───────────────────────┘
+            ▼                                                               │
+ ┌──────────────────────────┐                                               │ (Đánh thức CPU giật
+ │  DMA2 Controller (AHB1)  │                                               │  mình nhảy vào ISR)
+ │  - Stream 2 Channel 4    │                                               │
+ └──────────────────────────┘                                               │
+            │                                                               │
+   (Ghi ngầm vào SRAM)                                                      │
+            ▼                                                               ▼
+ ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+ │                            Main SRAM (Nơi chứa Ring Buffer thực sự)                              │
+ │                            ===> Có [DỮ LIỆU MỚI] do DMA vừa nạp vào                              │
+ └────────────────────────────────────────────────┬─────────────────────────────────────────────────┘
+                                                  │
+                           Gốc rễ hiện tượng MẤT ĐỒNG BỘ (Cache Coherency Gap):
+                           - DMA đã nạp [DỮ LIỆU MỚI] vào SRAM bên dưới.
+                           - Nhưng CPU khi vào ISR đọc dữ liệu lại nhìn vào L1 D-Cache trước!
+                                                  │
+                                                  ▼
+ ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+ │                                  L1 D-Cache (Bản photo trong CPU)                                │
+ │                                  ===> Vẫn giữ [DỮ LIỆU CỦ] từ trước                              │
+ └────────────────────────────────────────────────┬─────────────────────────────────────────────────┘
+                                                  │
+                              Trong ISR, CPU gọi SCB_InvalidateDCache_by_Addr()!
+                              ===> Phế bỏ bản photo cũ trong D-Cache, buộc CPU đọc từ SRAM!
+                                                  ▼
+ ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+ │                                     CPU ĐỌC ĐÚNG DỮ LIỆU MỚI                                     │
+ └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---

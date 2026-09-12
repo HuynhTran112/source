@@ -177,14 +177,14 @@ Cortex-M7 có bộ nhớ đệm **L1 Data Cache (32 bytes per Line)**:
 
 ## 2.1. Bản đồ địa chỉ Base Address & Vector ngắt
 
-Tra cứu RM0385 *Chapter 2: Memory map* & *Chapter 12: NVIC*:
+Tra cứu RM0385 *Chapter 2: Memory map* & *Chapter 10: Interrupts and events (NVIC Vector Table)* (hoặc *PM0253 Chapter 4: Core peripherals* để xem chi tiết thanh ghi NVIC):
 
 | Tên ngoại vi | Bus | Base Address | Offset | Địa chỉ tuyệt đối | IRQ Number |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | **`GPIOA`** | AHB1 | `0x4002 0000` | `0x0000` | `0x4002 0000` | - |
 | **`GPIOB`** | AHB1 | `0x4002 0000` | `0x0400` | `0x4002 0400` | - |
-| **`DMA2`** | AHB1 | `0x4002 0000` | `0x6400` | `0x4002 6400` | - |
-| **`USART1`** | APB2 | `0x4001 0000` | `0x1000` | `0x4001 1000` | `USART1_IRQn = 37` |
+| **`DMA2`** | AHB1 | `0x4002 0000` | `0x6400` | `0x4002 6400` | `DMA2_Stream2_IRQn = 58` (Nếu dùng ngắt HT/TC) |
+| **`USART1`** | APB2 | `0x4001 0000` | `0x1000` | `0x4001 1000` | `USART1_IRQn = 37` (Dùng cho ngắt IDLE) |
 
 ---
 

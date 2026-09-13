@@ -122,135 +122,268 @@ Chip STM32F746NG chỉ tích hợp khối **CAN Controller (bxCAN)**, chịu tr�
 
 ---
 
-## 1.3. Tính toán CAN Bit Timing Chuẩn CiA 301 ($500\text{ kbps}$, Sample Point $87.5\%$)
-
-Nguồn xung nhịp cấp cho `CAN1` thuộc **Bus APB1** có tần số $f_{PCLK1} = 54\text{ MHz}$.  
-Theo chuẩn công nghiệp ô tô **CiA 301 / ISO 11898-1**, ở tốc độ $500\text{ kbps}$, điểm lấy mẫu (**Sample Point**) tối ưu là **$87.5\%$**.
-
-### ⏱️ 1.3.1. Bản chất Phần cứng của `tq` (Time Quantum)
-
-* **`tq` (Time Quantum - số nhiều: Time Quanta) là gì?**
-  * Là **đơn vị thời gian nguyên tử nhỏ nhất (Atomic Clock Tick)** của khối điều khiển Bit Timing Logic (BTL) trong silicon bxCAN.
-  * Mọi trạng thái bên trong bộ điều khiển CAN (thời lượng bit $T_{bit}$, vị trí lấy mẫu Sample Point, các phân đoạn `Sync_Seg`, `Prop_Seg`, `Phase_Seg1`, `Phase_Seg2`, và bước nhảy đồng bộ `SJW`) **đều được cấu thành và đo đạc bằng một số nguyên lần các lát $t_q$** ($N_q \in [8 \dots 25]\,t_q$ theo chuẩn ISO 11898-1). Bộ điều khiển CAN không tính thời gian bằng micro-giây tùy ý mà đếm bằng số bước $t_q$.
-* **Nguồn gốc phần cứng sinh ra `tq`:**
-  * Xung nhịp bus ngoại vi $f_{PCLK1}$ (trên STM32F746 là $54\text{ MHz}$) đi qua một bộ đếm chia tần số số học **Baud Rate Prescaler (BRP)** tích hợp sẵn trong thanh ghi `CAN_BTR`:
-    $$t_q = \frac{\text{BRP}}{f_{PCLK1}} = \frac{6}{54,000,000\text{ Hz}} \approx 111.11\text{ ns}$$
-* **Mối quan hệ giữa `tq` và Thời lượng 1 Bit CAN ($T_{bit}$):**
-  * Với tốc độ $500\text{ kbps}$, chu kỳ của 1 bit là:
-    $$T_{bit} = \frac{1}{\text{Baudrate}} = \frac{1}{500,000\text{ bps}} = 2000\text{ ns} = 2.0\,\mu\text{s}$$
-  * Để tạo ra khoảng thời gian $2000\text{ ns}$, phần cứng bxCAN ghép đúng **$18$ đơn vị $t_q$** lại với nhau:
-    $$T_{bit} = 18 \times t_q = 18 \times 111.11\text{ ns} = 2000\text{ ns}$$
-  * Chu kỳ $1\text{ bit}$ được chia thành 18 ô $t_q$. Các phân đoạn `Sync_Seg` ($1\,t_q$), `Prop_Seg` ($7\,t_q$), `Phase_Seg1` ($8\,t_q$), `Phase_Seg2` ($2\,t_q$) chỉ đơn thuần là phân bổ số lượng các lát $t_q$ này.
+## 1.3. Tính Toán CAN Bit Timing Chuẩn CiA 301 & Cơ Chế Đồng Bộ Hóa Toàn Cảnh
 
 ---
 
-### ⚡ 1.3.2. Phân Tách 2 Trường Hợp Điện Áp Vật Lý Độc Lập: Dominant vs. Recessive
+### ⏱️ 1.3.1. Các Khái Niệm & Định Nghĩa Nền Tảng Của CAN Bit Timing
 
-Bus CAN sử dụng phương pháp truyền dẫn vi sai qua 2 dây xoắn đôi ($CAN\_H$ và $CAN\_L$) với 2 điện trở đầu cuối $120\,\Omega$ ở hai đầu cáp (điện trở tương đương toàn bus là $R_L = 120\,\Omega \parallel 120\,\Omega = 60\,\Omega$).
+Trước khi đi vào các bước tính toán số học, các khái niệm thời gian trong mạng CAN được chuẩn hóa quốc tế theo ISO 11898-1 và Reference Manual RM0385 như sau:
+
+#### 1. Chu kỳ 1 Bit CAN (T_bit) và Tốc độ Baudrate
+* Thời lượng của 1 bit là khoảng thời gian để truyền trọn vẹn 1 bit dữ liệu trên bus:
+  ```text
+  T_bit = 1 / Baudrate
+  ```
+  *Ví dụ:* Ở tốc độ 500 kbps (500,000 bps), chu kỳ 1 bit là:
+  ```text
+  T_bit = 1 / 500,000 = 0.000002 s = 2000 ns (2.0 µs)
+  ```
+
+#### 2. Bản chất của tq (Time Quantum) & Bộ chia BRP (Baud Rate Prescaler)
+* **tq (Time Quantum - số nhiều: Time Quanta):** Là **đơn vị thời gian nguyên tử nhỏ nhất (Atomic Clock Tick)** của khối điều khiển Bit Timing Logic (BTL) trong silicon CAN controller.
+* **Cách tạo ra từ phần cứng:** Bộ điều khiển CAN không đếm bit bằng micro-giây tùy ý, mà dùng một bộ chia tần số số học **Baud Rate Prescaler (BRP)** từ xung nhịp bus f_PCLK1 (trên STM32F746 là 54 MHz):
+  ```text
+  tq = BRP / f_PCLK1
+  ```
+* **Lượng tử hóa chu kỳ bit:** Chu kỳ T_bit luôn được cấu thành từ một **số nguyên lần các đơn vị tq** (N_q nằm trong khoảng từ 8 đến 25 tq theo chuẩn ISO 11898-1):
+  ```text
+  T_bit = N_q * tq
+  ```
+
+#### 3. Bốn Phân Đoạn (Segments) Cấu Thành 1 Bit CAN (ISO 11898-1)
+Chu kỳ 1 bit CAN được chia làm 4 phân đoạn liên tiếp với nhiệm vụ vật lý riêng biệt:
+
+1. **`Sync_Seg` (Synchronization Segment - Đoạn Đồng bộ):**
+   * **Độ dài:** Cố định đúng **1 tq** (phần cứng quy định, không thể thay đổi).
+   * **Nhiệm vụ:** Dùng để đồng bộ hóa cạnh xung giữa các nút trên mạng. Cạnh xuống từ Recessive sang Dominant của bit kỳ vọng phải rơi vào đoạn này.
+2. **`Prop_Seg` (Propagation Segment - Đoạn Bù trễ Dây dẫn & Transceiver):**
+   * **Nhiệm vụ:** Bù trừ độ trễ vật lý khi tín hiệu điện chạy dọc trên đường dây cáp và đi qua các cổng bán dẫn của chip CAN Transceiver.
+   * **Cơ sở vật lý:** Tín hiệu từ Node A phải truyền tới Node xa nhất B, rồi từ Node B phản hồi ngược lại Node A trong cùng 1 chu kỳ bit:
+     ```text
+     T_Prop_Seg >= 2 * (t_wire_delay + t_transceiver_delay)
+     ```
+   * Đoạn này giúp điện áp trên toàn bộ chiều dài sợi cáp đạt trạng thái ổn định phẳng lặng trước khi đo đạc.
+3. **`Phase_Seg1` (Phase Buffer Segment 1 - Đoạn Đệm Pha 1):**
+   * **Vị trí:** Nằm ngay trước **Điểm lấy mẫu (Sample Point)**.
+   * **Nhiệm vụ:** Kéo dài bit khi xung nhịp bị trễ pha (Late Edge) trong quá trình tái đồng bộ (Resynchronization).
+4. **`Phase_Seg2` (Phase Buffer Segment 2 - Đoạn Đệm Pha 2):**
+   * **Vị trí:** Nằm ngay sau **Điểm lấy mẫu (Sample Point)** kéo dài đến hết bit.
+   * **Nhiệm vụ:** Cắt ngắn bit khi xung nhịp bị sớm pha (Early Edge) trong quá trình tái đồng bộ.
+
+#### 4. Quy ước Gộp Của STM32 bxCAN: Khối BS1 và BS2
+Để tinh gọn các trường thanh ghi điều khiển `CAN_BTR`, hãng STMicroelectronics gộp 4 phân đoạn trên thành 2 khối:
+* **Khối `BS1` (Bit Segment 1):** Gộp chung `Prop_Seg` và `Phase_Seg1`:
+  ```text
+  BS1 = Prop_Seg + Phase_Seg1   (Cấu hình qua trường TS1[3:0], nhận giá trị từ 1 đến 16 tq)
+  ```
+* **Khối `BS2` (Bit Segment 2):** Chính là `Phase_Seg2`:
+  ```text
+  BS2 = Phase_Seg2              (Cấu hình qua trường TS2[2:0], nhận giá trị từ 1 đến 8 tq)
+  ```
+* Như vậy, tổng số Time Quanta trong 1 bit trên STM32 là:
+  ```text
+  N_q = Sync_Seg (1 tq) + BS1 + BS2
+  ```
+
+#### 5. Khái Niệm Điểm Lấy Mẫu (Sample Point) & Rationale Tại Sao Chọn 87.5%?
+* **Điểm lấy mẫu (Sample Point):** Là thời điểm chính xác mà bộ điều khiển CAN đọc điện áp trên bus để chốt giá trị bit đó là mức 0 hay mức 1:
+  ```text
+  Sample Point (%) = ((Sync_Seg + BS1) / N_q) * 100% = ((1 + BS1) / N_q) * 100%
+  ```
+* **Tại sao chuẩn CiA 301 / ISO 11898-1 quy định tối ưu là 87.5%?**
+  * **Bản chất toán học:** `87.5% = 7/8 = 0.111 (nhị phân)`, là phân số nhị phân tối ưu cho mạch đếm trong vi mạch số.
+  * **Cơ sở vật lý:** Điểm lấy mẫu giải quyết mâu thuẫn giữa 2 yêu cầu kỹ thuật:
+    * *Muốn đẩy lùi càng về cuối bit càng tốt (> 80%):* Để đoạn `Prop_Seg` đủ dài, cho phép kết nối chiều dài dây cáp đạt tối đa (100 mét ở tốc độ 500 kbps).
+    * *Không được đẩy quá sát đuôi bit (< 90%):* Để đoạn `Phase_Seg2` còn đủ không gian cho phần cứng co ngắn bit bù trừ độ trôi tần số (Clock Drift) do thạch anh biến thiên theo nhiệt độ.
+    * $\implies$ Điểm cân bằng cực trị hội tụ chính xác tại **87.5%**.
+
+#### 6. Biên Độ Nhảy Bù Pha SJW (Synchronization Jump Width)
+* Là số lượng `tq` tối đa mà phần cứng được phép co hoặc dãn trên `Phase_Seg1` và `Phase_Seg2` trong mỗi chu kỳ tái đồng bộ (cấu hình qua trường `SJW[1:0]`, thường chọn `1 tq` đến `4 tq`).
+
+---
+
+### 📐 1.3.2. Quy Trình & Thuật Toán Tính Toán Bit Timing Cho STM32F746
+
+#### 📌 Bước 1: Xác Định Các Thông Số Đầu Vào (Nguồn Gốc Từ Đâu?)
+* **Tần số ngoại vi (f_PCLK1):** `54 MHz` (`54,000,000 Hz`). Tra trong Datasheet (DS10610 - Bus APB1 tối đa 54 MHz) và code cấu hình Clock hệ thống Ngày 1.
+* **Tốc độ Baudrate mục tiêu (500 kbps):**
+  * *Tra ở đâu để biết?* Không nằm trong Reference Manual hay Datasheet. Đây là **yêu cầu hệ thống (System Specification)** được quy định trong **file cơ sở dữ liệu CAN (.DBC)** hoặc các tiêu chuẩn quốc tế như **ISO 15765-4 (OBD-II chẩn đoán ô tô)** và **CiA 301**.
+  * Chu kỳ 1 bit: `T_bit = 1 / 500,000 = 2000 ns`.
+* **Điểm lấy mẫu mục tiêu:** `87.5%` (Chuẩn CiA 301 cho tốc độ <= 500 kbps).
+
+#### 🔍 Bước 2: Thuật Toán Giải Mã Tìm Nghiệm Số Nguyên N_q và BRP
+Để tốc độ truyền đạt độ chính xác tuyệt đối (Baudrate Error = 0.00%), bộ chia BRP bắt buộc phải là một **SỐ NGUYÊN DƯƠNG**.
+
+1. **Thiết lập phương trình:**
+   ```text
+   BRP = f_PCLK1 / (Baudrate * N_q) = 54,000,000 / (500,000 * N_q) = 108 / N_q
+   ```
+2. **Ràng buộc:**
+   * Phần cứng quy định: `8 <= N_q <= 25`.
+   * BRP nguyên $\implies$ **N_q bắt buộc phải là ƯỚC SỐ của 108**.
+3. **Tìm các ước số của 108 trong đoạn [8, 25]:**
+   Các ước số của 108 gồm: `1, 2, 3, 4, 6, 9, 12, 18, 27, 36, 54, 108`.  
+   Trong khoảng `[8, 25]`, ta có đúng **3 ứng viên**:
+   * Ứng viên 1: `N_q = 9`   $\implies BRP = 108 / 9 = 12`
+   * Ứng viên 2: `N_q = 12`  $\implies BRP = 108 / 12 = 9`
+   * Ứng viên 3: `N_q = 18`  $\implies BRP = 108 / 18 = 6`
+4. **So khớp Sample Point 87.5% để chọn ứng viên tối ưu:**
+   * **Nếu chọn N_q = 9:**
+     * `Sample Point 87.5% = 9 * 0.875 = 7.875` --> Chọn `1 + BS1 = 8 tq`.
+     * Phân đoạn còn lại: `BS2 = 9 - 8 = 1 tq`.
+     * *Rủi ro:* `BS2` chỉ có `1 tq`, biên độ co dãn bù pha quá hẹp (`SJW` tối đa chỉ là 1), rất dễ mất đồng bộ khi nhiệt độ môi trường làm trôi tần số thạch anh. *(Loại)*
+   * **Nếu chọn N_q = 12:**
+     * `Sample Point 87.5% = 12 * 0.875 = 10.5 tq`.
+     * Nếu chọn `1 + BS1 = 10` --> `Sample Point = 10 / 12 = 83.33%` (Lệch nhiều so với chuẩn 87.5%).
+     * Nếu chọn `1 + BS1 = 11` --> `Sample Point = 11 / 12 = 91.67%` (Quá sát đuôi bit, `BS2` chỉ còn 1 tq). *(Loại)*
+   * **Nếu chọn N_q = 18:**
+     * `Sample Point 87.5% = 18 * 0.875 = 15.75` --> Chọn `1 + BS1 = 16 tq` (tức `BS1 = 15 tq`).
+     * Phân đoạn còn lại: `BS2 = 18 - 16 = 2 tq`.
+     * `Điểm lấy mẫu thực tế = (1 + 15) / 18 = 16 / 18 = 88.89%` (Cực kỳ sát chuẩn quốc tế 87.5%).
+     * Đồng thời `BS2 = 2 tq` tạo khoảng đệm an toàn tuyệt đối cho phép cấu hình `SJW = 1 tq` hoặc `2 tq`.
+   * 👉 **KẾT LUẬN:** **`N_q = 18` là nghiệm số nguyên duy nhất thỏa mãn trọn vẹn cả 2 điều kiện!**
+
+#### ⏱️ Bước 3: Phân Bổ Chi Tiết Các Phân Đoạn
+* `tq = T_bit / 18 = 2000 ns / 18 = 111.11 ns`.
+* `BRP = 6`.
+* `Sync_Seg = 1 tq`.
+* `BS1 = 15 tq` (Bao gồm `Prop_Seg = 7 tq` và `Phase_Seg1 = 8 tq`).
+* `BS2 = Phase_Seg2 = 2 tq`.
+* `SJW = 1 tq` (hoặc `2 tq`).
+* Điểm lấy mẫu: `(1 + 15) / 18 = 16 / 18 = 88.89%`.
+
+---
+
+### 📋 1.3.3. Bảng Tổng Kết Cấu Hình Thanh Ghi CAN_BTR (Tuân Thủ Quy Tắc Phần Cứng N - 1)
+
+Trong Reference Manual RM0385 (Mục 30.9.2 - thanh ghi `CAN_BTR`), phần cứng vi điều khiển **tự động cộng thêm 1** vào giá trị nạp:
+
+```text
+Giá trị ghi vào thanh ghi = Giá trị thực tế mong muốn - 1
+```
+
+| Tên Trường Bit | Vị Trí Bit | Ý Nghĩa Kỹ Thuật | Giá Trị Thực Tế | Công Thức Tính | Giá Trị Nạp (Dec) | Giá Trị Hex / Nhị Phân |
+| :--- | :---: | :--- | :---: | :--- | :---: | :---: |
+| **`BRP[9:0]`** | `[9:0]` | Baud Rate Prescaler | `6` | `6 - 1` | **`5`** | `0x005` (`0000000101b`) |
+| **`TS1[3:0]`** | `[19:16]` | Time Segment 1 (`BS1`) | `15 tq` | `15 - 1` | **`14`** | `0xE` (`1110b`) |
+| **`TS2[2:0]`** | `[22:20]` | Time Segment 2 (`BS2`) | `2 tq` | `2 - 1` | **`1`** | `0x1` (`001b`) |
+| **`SJW[1:0]`** | `[25:24]` | Resync Jump Width | `1 tq` | `1 - 1` | **`0`** | `0x0` (`00b`) |
+
+Mã code cấu hình Bare-metal theo chuẩn Clear-then-Set:
+```c
+/* Bước 1: Xóa trắng 4 trường bit trong CAN_BTR */
+CAN1->BTR &= ~((0x03UL << 24) |   /* SJW[1:0] */
+               (0x07UL << 20) |   /* TS2[2:0] */
+               (0x0FUL << 16) |   /* TS1[3:0] */
+               (0x3FFUL << 0));   /* BRP[9:0] */
+
+/* Bước 2: Nạp các giá trị đã tính toán */
+CAN1->BTR |= ((0UL << 24)  |      /* SJW = 1 tq (nạp 0)   */
+              (1UL << 20)  |      /* TS2 = 2 tq (nạp 1)   */
+              (14UL << 16) |      /* TS1 = 15 tq (nạp 14) */
+              (5UL << 0));        /* BRP = 6 (nạp 5)      */
+```
+
+---
+
+### ⚡ 1.3.4. Bản Chất Vật Lý Của Bit CAN: Phân Tách 2 Trạng Thái Dominant vs. Recessive
+
+Bus CAN truyền tín hiệu vi sai qua 2 dây xoắn đôi (`CAN_H`, `CAN_L`) với 2 điện trở đầu cuối 120 Ohm (`R_bus = 120 || 120 = 60 Ohm`).
 
 ```text
 ========================================================================================================================
 TRƯỜNG HỢP 1: TRẠNG THÁI RECESSIVE (MỨC LOGIC 1 - TRẠNG THÁI NGHỈ / ẨN)
 ========================================================================================================================
-Sơ đồ mạch Transceiver:
+Sơ đồ Transceiver:
                  VCC (3.3V / 5V)
                       │
                      [ ] Cầu phân áp nội trở kháng cao
                       ├───► CAN_H = 2.5V ────────────┐
                       │                               │  RL = 60 Ohm
-                      │                               │  (Không có dòng điện chạy qua: I ≈ 0 mA)
+                      │                               │  (Không có dòng điện chạy qua: I_bus ≈ 0 mA)
                       │                               │
                       ├───► CAN_L = 2.5V ────────────┘
                      [ ] Cầu phân áp nội trở kháng cao
                       │
                      GND
-* Trạng thái Transistor: Cả Transistor kéo lên (High-side) và kéo xuống (Low-side) đều TẮT (High-Z).
-* Điện áp Dây CAN_H:     2.5 V (Mức điện áp treo tự nhiên)
-* Điện áp Dây CAN_L:     2.5 V (Mức điện áp treo tự nhiên)
-* Hiệu điện thế vi sai:  V_DIFF = V_CAN_H - V_CAN_L = 2.5V - 2.5V = 0.0 V (Quy chuẩn ISO 11898-2: -0.5V <= V_DIFF <= +0.5V)
-* Dòng điện bus:         I_bus ≈ 0 mA
-* Tín hiệu về MCU (RX):  3.3 V (Mức Logic 1)
-* Đặc tính phân định:    Bị mức Dominant đè bẹp hoàn toàn nếu có một Node khác trên bus phát Dominant cùng thời điểm.
+• Trạng thái Transistor: Tầng công suất TẮT HOÀN TOÀN (Trở kháng cao High-Z).
+• Điện áp Dây CAN_H:     2.5 V (Treo điện áp tự nhiên qua cầu phân áp nội)
+• Điện áp Dây CAN_L:     2.5 V (Treo điện áp tự nhiên qua cầu phân áp nội)
+• Hiệu điện thế vi sai:  V_DIFF = CAN_H - CAN_L = 2.5V - 2.5V = 0.0 V (Chuẩn ISO: -0.5V <= V_DIFF <= +0.5V)
+• Dòng điện Bus:         I_bus ≈ 0 mA
+• Chân RX (Vào MCU):     3.3 V (Mức Logic 1)
+• Đặc tính phân định:    Bị mức Dominant đè bẹp hoàn toàn nếu có một Node khác phát Dominant cùng lúc.
 
 ========================================================================================================================
 TRƯỜNG HỢP 2: TRẠNG THÁI DOMINANT (MỨC LOGIC 0 - TRẠNG THÁI THỐNG TRỊ)
 ========================================================================================================================
-Sơ đồ mạch Transceiver:
+Sơ đồ Transceiver:
                  VCC (3.3V / 5V)
                       │
-                     ┌┴┐ Transistor High-side DẪN THÔNG (Bơm dòng chủ động)
+                     ┌┴┐ Transistor High-side DẪN BÃO HÒA (Kéo nguồn chủ động)
                      └┬┘
                       ├───► CAN_H = 3.5V ────────────┐
                       │                               │  Bơm dòng qua trở kết thúc bus:
                       │                               │  I_bus = 2.0V / 60 Ohm ≈ 33.3 mA
                       │                               │
                       ├───► CAN_L = 1.5V ────────────┘
-                     ┌┴┐ Transistor Low-side DẪN THÔNG (Rút dòng chủ động)
+                     ┌┴┐ Transistor Low-side DẪN BÃO HÒA (Kéo mass chủ động)
                      └┬┘
                       │
                      GND
-* Trạng thái Transistor: Cả hai Transistor High-side và Low-side đều BẬT DẪN CỰC MẠNH.
-* Điện áp Dây CAN_H:     3.5 V (Kéo chủ động lên mức cao)
-* Điện áp Dây CAN_L:     1.5 V (Kéo chủ động xuống mức thấp)
-* Hiệu điện thế vi sai:  V_DIFF = V_CAN_H - V_CAN_L = 3.5V - 1.5V = +2.0 V (Quy chuẩn ISO 11898-2: 1.5V <= V_DIFF <= 3.0V)
-* Dòng điện bus:         I_bus = 2.0V / 60 Ohm ≈ 33.3 mA
-* Tín hiệu về MCU (RX):  0.0 V (Mức Logic 0)
-* Đặc tính phân định:    THỐNG TRỊ TOÀN BUS. Nếu Node A phát Recessive (High-Z) mà Node B phát Dominant (bơm áp),
-                         dây bus sẽ bị ép thành 3.5V/1.5V (V_DIFF = 2.0V), Node A đọc ngược lại thấy mức 0 và thua cuộc.
+• Trạng thái Transistor: Tầng công suất KÍCH HOẠT DẪN CỰC MẠNH.
+• Điện áp Dây CAN_H:     3.5 V (Kéo chủ động lên mức cao)
+• Điện áp Dây CAN_L:     1.5 V (Kéo chủ động xuống mức thấp)
+• Hiệu điện thế vi sai:  V_DIFF = CAN_H - CAN_L = 3.5V - 1.5V = +2.0 V (Chuẩn ISO: +1.5V <= V_DIFF <= +3.0V)
+• Dòng điện Bus:         I_bus = 2.0V / 60 Ohm ≈ 33.3 mA
+• Chân RX (Vào MCU):     0.0 V (Mức Logic 0)
+• Đặc tính phân định:    THỐNG TRỊ TOÀN BUS. Nếu Node A phát Recessive mà Node B phát Dominant, 
+                         dây bus bị ép thành 3.5V/1.5V (V_DIFF = 2.0V). Cả hai đều đọc về mức 0.
 ```
-
-#### Bảng Đối Chiếu Thông Số Kỹ Thuật Giữa 2 Trường Hợp:
 
 | Đại lượng Đo Đạc | TRƯỜNG HỢP 1: RECESSIVE (Mức Logic 1) | TRƯỜNG HỢP 2: DOMINANT (Mức Logic 0) |
 | :--- | :---: | :---: |
-| **Trạng thái Transceiver TXD** | $3.3\text{ V}$ (Không kích hoạt tầng công suất) | $0.0\text{ V}$ (Kích hoạt tầng công suất dẫn bão hòa) |
-| **Điện áp Dây $CAN\_H$** | $\mathbf{2.5\text{ V}}$ (Treo điện áp phân cực trung gian) | $\mathbf{3.5\text{ V}}$ (Kéo nguồn chủ động) |
-| **Điện áp Dây $CAN\_L$** | $\mathbf{2.5\text{ V}}$ (Treo điện áp phân cực trung gian) | $\mathbf{1.5\text{ V}}$ (Kéo mass chủ động) |
-| **Hiệu điện thế vi sai ($V_{DIFF}$)** | $$V_{DIFF} = 2.5\text{V} - 2.5\text{V} = \mathbf{0.0\text{ V}}$$ (Tiêu chuẩn: $-0.5\text{V} \le V_{DIFF} \le +0.5\text{V}$) | $$V_{DIFF} = 3.5\text{V} - 1.5\text{V} = \mathbf{+2.0\text{ V}}$$ (Tiêu chuẩn: $+1.5\text{V} \le V_{DIFF} \le +3.0\text{V}$) |
-| **Dòng điện tải qua Bus ($R_L=60\Omega$)** | $I_{bus} \approx \mathbf{0\text{ mA}}$ | $I_{bus} \approx \mathbf{33.3\text{ mA}}$ |
-| **Điện áp Chân RX vào Vi điều khiển** | $\mathbf{3.3\text{ V}}$ (Mức Logic 1) | $\mathbf{0.0\text{ V}}$ (Mức Logic 0) |
+| **Trạng thái Transceiver TXD** | `3.3 V` (Không kích hoạt tầng công suất) | `0.0 V` (Kích hoạt tầng công suất dẫn bão hòa) |
+| **Điện áp Dây CAN_H** | **`2.5 V`** (Treo điện áp phân cực trung gian) | **`3.5 V`** (Kéo nguồn chủ động) |
+| **Điện áp Dây CAN_L** | **`2.5 V`** (Treo điện áp phân cực trung gian) | **`1.5 V`** (Kéo mass chủ động) |
+| **Hiệu điện thế vi sai (V_DIFF)** | `V_DIFF = 2.5V - 2.5V =` **`0.0 V`** (`-0.5V <= V_DIFF <= +0.5V`) | `V_DIFF = 3.5V - 1.5V =` **`+2.0 V`** (`+1.5V <= V_DIFF <= +3.0V`) |
+| **Dòng điện tải qua Bus (R_L = 60 Ohm)** | `I_bus ≈` **`0 mA`** | `I_bus ≈` **`33.3 mA`** |
+| **Điện áp Chân RX vào Vi điều khiển** | **`3.3 V`** (Mức Logic 1) | **`0.0 V`** (Mức Logic 0) |
 | **Quyền ưu tiên Phân định (Arbitration)** | Bị đè bẹp (Yielding) | **Thống trị tuyệt đối (Dominant)** |
 
 ---
 
-### 🔄 1.3.3. Cơ Chế Đồng Bộ Mode (Synchronization Modes) & Phân Tích Dạng Sóng
+### 🔄 1.3.5. Cơ Chế Đồng Bộ Hóa (Synchronization) & Phân Tích Dạng Sóng Toàn Cảnh
 
-Bus CAN là giao thức **truyền thông không đồng bộ (Asynchronous)** — nghĩa là **KHÔNG CÓ DÂY XUNG CLOCK ĐI KÈM**. Mỗi vi điều khiển trên mạng chạy bằng bộ dao động thạch anh riêng, chắc chắn sẽ có sai số trôi tần số (Clock Drift do nhiệt độ và dung sai chế tạo). Nếu không có cơ chế liên tục đồng bộ lại pha, điểm lấy mẫu (Sample Point) sẽ dần trôi ra khỏi vị trí an toàn và gây ra lỗi bit (Bit Error / CRC Error).
+Bus CAN là giao thức **truyền thông không đồng bộ (Asynchronous)** — không có dây xung Clock đi kèm dữ liệu. Mỗi nút mạng chạy thạch anh riêng, chắc chắn sẽ có sai số trôi tần số (Clock Drift do nhiệt độ và dung sai chế tạo). Nếu không liên tục đồng bộ lại pha, điểm lấy mẫu sẽ trôi lệch và gây ra lỗi dữ liệu.
 
-#### ⚠️ Quy Tắc Vàng Kích Hoạt Đồng Bộ Trong Chuẩn ISO 11898-1:
-1. **CHỈ CÓ CẠNH CHUYỂN MỨC TỪ RECESSIVE SANG DOMINANT (Tương đương cạnh xuống $1 \rightarrow 0$ của chân RX / Cạnh lên của $V_{DIFF}$)** mới được phần cứng bxCAN sử dụng để đồng bộ hóa!
-2. **CẠNH CHUYỂN TỪ DOMINANT SANG RECESSIVE TUYỆT ĐỐI KHÔNG ĐƯỢC DÙNG ĐỂ ĐỒNG BỘ.**  
-   *Cơ sở vật lý:* Khi chuyển từ Dominant về Recessive, tầng công suất của Transceiver ngắt dẫn, điện áp trên hai dây phụ thuộc vào thời gian xả của điện dung ký sinh trên đường cáp dài qua điện trở $60\,\Omega$. Sườn dốc xả này biến dạng theo chiều dài cáp nên không đủ độ sắc nét và chính xác để làm mốc chuẩn thời gian.
+#### ⚠️ Quy Tắc Vàng Kích Hoạt Đồng Bộ (ISO 11898-1):
+1. **CHỈ CÓ CẠNH CHUYỂN MỨC TỪ RECESSIVE SANG DOMINANT (Tương đương cạnh xuống 3.3V -> 0.0V trên chân RX của MCU / Cạnh lên của V_DIFF)** mới được phần cứng bxCAN sử dụng để đồng bộ!
+2. **CẠNH CHUYỂN TỪ DOMINANT VỀ RECESSIVE TUYỆT ĐỐI KHÔNG ĐỒNG BỘ.**  
+   *Cơ sở vật lý:* Khi chuyển về Recessive, transistor ngắt dẫn, điện áp hai dây xả về 2.5V phụ thuộc vào hằng số thời gian RC của điện dung ký sinh trên đường cáp dài qua điện trở 60 Ohm. Sườn dốc xả này bị méo theo độ dài cáp nên không đủ độ sắc nét và ổn định để làm mốc chuẩn thời gian.
 
-#### Có 2 Chế Độ Đồng Bộ Hóa Trong Khối bxCAN:
+#### 💡 Bảng Đối Chiếu: Cạnh Xuống 1 -> 0 Nằm ở Đường Nào?
 
-1. **Chế độ 1: Hard Synchronization (Đồng bộ Cứng):**
-   * **Điều kiện kích hoạt:** Xảy ra **duy nhất 1 lần khi bắt đầu một Frame truyền** — tại cạnh xuống của bit **SOF (Start of Frame)** sau khi bus đang ở trạng thái nghỉ (Bus Idle - Recessive).
-   * **Tác động phần cứng:** Ngay khi cạnh $1 \rightarrow 0$ xuất hiện, bộ đếm Time Quanta nội bộ của mọi Node nhận bị **RESET TỨC THÌ VỀ 0**, ép cạnh này bắt đầu chính xác tại phân đoạn `Sync_Seg`. Không sử dụng giá trị `SJW`.
-
-2. **Chế độ 2: Resynchronization (Tái đồng bộ Mềm):**
-   * **Điều kiện kích hoạt:** Xảy ra ở **tất cả các cạnh chuyển mức Recessive $\rightarrow$ Dominant tiếp theo** bên trong thân bản tin (giữa các bit dữ liệu, bit nhồi stuff, CRC, ACK).
-   * **Đo sai số pha (Phase Error $e$):** Phần cứng đo khoảng cách giữa cạnh chuyển mức thực tế với phân đoạn `Sync_Seg` kỳ vọng.
-   * **Biên độ nhảy tối đa `SJW` (Synchronization Jump Width):** Giá trị giới hạn trong thanh ghi `CAN_BTR` quy định số lượng $t_q$ tối đa mà phần cứng được phép co dãn trong 1 chu kỳ bit (thường chọn $1 \dots 4\,t_q$).
-
-#### 💡 Trả lời Cốt lõi: Cạnh Xuống $1 \rightarrow 0$ Nằm ở Đường Nào Trên Sơ Đồ?
-
-Khi chuyển từ trạng thái **Recessive (1)** sang **Dominant (0)**, mỗi đường tín hiệu trong hệ thống có một dạng sườn xung riêng biệt:
-
-| Đường Tín Hiệu | Mức Điện Áp Khi Là 1 (Recessive) | Mức Điện Áp Khi Là 0 (Dominant) | Chiều Biến Thiên Điện Áp | Có Phải Cạnh Xuống Không? |
+| Đường Tín Hiệu | Mức 1 (Recessive) | Mức 0 (Dominant) | Chiều Biến Thiên Điện Áp | Trạng Thái Sườn Xung |
 | :--- | :---: | :---: | :---: | :---: |
-| **Chân `RX` (Vào STM32 PB8)** | **$3.3\text{ V}$** (Logic 1) | **$0.0\text{ V}$** (Logic 0) | **$3.3\text{V} \rightarrow 0.0\text{V}$** | **CHÍNH LÀ CẠNH XUỐNG (Falling Edge)** mà khối bxCAN BTL bắt để kích hoạt đồng bộ! |
-| **Dây vi sai $CAN\_L$ (Cáp ngoài)** | **$2.5\text{ V}$** | **$1.5\text{ V}$** | **$2.5\text{V} \rightarrow 1.5\text{V}$** | **LÀ CẠNH XUỐNG (Falling Edge)** trên dây vật lý ngoài |
-| **Dây vi sai $CAN\_H$ (Cáp ngoài)** | **$2.5\text{ V}$** | **$3.5\text{ V}$** | **$2.5\text{V} \rightarrow 3.5\text{V}$** | **LÀ CẠNH LÊN (Rising Edge)** |
-| **Hiệu điện thế vi sai $V_{DIFF}$** | **$0.0\text{ V}$** | **$+2.0\text{ V}$** | **$0.0\text{V} \rightarrow +2.0\text{V}$** | **LÀ CẠNH LÊN (Rising Edge)** |
+| **Chân RX vi điều khiển (PB8)** | **`3.3 V`** | **`0.0 V`** | **`3.3V -> 0.0V`** | **CẠNH XUỐNG (Falling Edge)** *(bxCAN bắt cạnh này)* |
+| **Dây vi sai CAN_L ngoài cáp** | **`2.5 V`** | **`1.5 V`** | **`2.5V -> 1.5V`** | **CẠNH XUỐNG (Falling Edge)** |
+| **Dây vi sai CAN_H ngoài cáp** | **`2.5 V`** | **`3.5 V`** | **`2.5V -> 3.5V`** | **CẠNH LÊN (Rising Edge)** |
+| **Hiệu điện thế vi sai V_DIFF** | **`0.0 V`** | **`+2.0 V`** | **`0.0V -> +2.0V`** | **CẠNH LÊN (Rising Edge)** |
 
-> 📌 **Kết luận kỹ thuật:**
-> * Trên sơ đồ sóng của bộ điều khiển STM32, đường được vẽ chính là đường **`Đường dây RX (Vào STM32)`** (tín hiệu mức số TTL/CMOS tại chân PB8 `CAN1_RX`). Khi chuyển từ $1 \rightarrow 0$, điện áp tụt từ $3.3\text{V}$ xuống $0.0\text{V}$, tạo ra **Cạnh Xuống (Falling Edge)** để kích hoạt mạch Edge Detector của phần cứng CAN.
-> * Ngoài bus vi sai vật lý, dây **$CAN\_L$** cũng sụt áp từ $2.5\text{V}$ xuống $1.5\text{V}$ (cạnh xuống), trong khi dây **$CAN\_H$** và **$V_{DIFF}$** nhảy lên mức cao (cạnh lên).
+#### Hai Chế Độ Đồng Bộ Hóa Trong Khối bxCAN:
+1. **Hard Synchronization (Đồng bộ Cứng):**
+   * Xảy ra **duy nhất 1 lần khi bắt đầu Frame** — tại cạnh xuống của bit **SOF (Start of Frame)** sau trạng thái Bus Idle.
+   * Bộ đếm Time Quanta nội bộ của Node nhận bị **RESET TỨC THÌ VỀ 0**, ép cạnh này bắt đầu chính xác tại phân đoạn `Sync_Seg`.
+2. **Resynchronization (Tái đồng bộ Mềm):**
+   * Xảy ra ở tất cả các cạnh Recessive $
+ightarrow$ Dominant tiếp theo bên trong bản tin.
+   * Đo sai số pha: `e = vị trí cạnh thực tế - vị trí Sync_Seg kỳ vọng`. Phần cứng tự động co hoặc dãn bằng giá trị `SJW`.
 
 ---
 
-#### 📊 Dạng Sóng Phân Tích Chi Tiết: So Sánh 3 Kịch Bản Tái Đồng Bộ (Resync Modes)
+#### 📊 Dạng Sóng Phân Tích: So Sánh 3 Kịch Bản Tái Đồng Bộ (Resync Modes)
 
 ```text
 ========================================================================================================================
@@ -288,7 +421,7 @@ Hệ quả:      Đẩy lùi Sample Point về sau thêm 1 t_q, tránh lấy m�
                   | Sync_Seg |          Prop_Seg         |      Phase_Seg1 GỐC   | KÉO DÀI |   Phase_Seg2    |
 Số lượng t_q      | (1 t_q)  |          (7 t_q)          |         (8 t_q)       |+SJW(1tq)|     (2 t_q)     |
 ──────────────────┼──────────┼───────────────────────────┼───────────────────────┼─────────┼─────────────────┼────
-Đường dây RX      | 3.3V ────────────┐                   │                       │         │                 │
+CHÂN RX (VÀO MCU) | 3.3V ────────────┐                   │                       │         │                 │
 (Đến trễ!)        |                  │ 0.0V (Dominant)   │                       │         │                 │
                   |                  └───────────────────┴───────────────────────┴─────────┴─────────────────┴────
 Trục t_q          |  t_q 01  | t_q 02│. . . . . . t_q 08 | t_q 09 . . . . t_q 16 │ t_q 17  │ t_q 18   t_q 19 │
@@ -306,152 +439,13 @@ Hệ quả:      Kết thúc bit hiện tại sớm hơn, ép phân đoạn Sync
                   | Sync_Seg |          Prop_Seg         |          Phase_Seg1           |Phase_Seg2| BỊ CẮT BỚT! │
 Số lượng t_q      | (1 t_q)  |          (7 t_q)          |            (8 t_q)            | (1 t_q)  | [-SJW: 1tq] │
 ──────────────────┼──────────┼───────────────────────────┼───────────────────────────────┼──────────┼─────────────┼────
-Đường dây RX      | 3.3V ────────────────────────────────────────────────────────────────┐          │ 0.0V (Cạnh  │
+CHÂN RX (VÀO MCU) | 3.3V ────────────────────────────────────────────────────────────────┐          │ 0.0V (Cạnh  │
 (Đến sớm!)        |                                                                      │          │ của bit mới │
                   |                                                                      └──────────┴─────────────┴────
 Trục t_q          |  t_q 01  | t_q 02  . . . . .  t_q 08 | t_q 09   . . . . . .   t_q 16 │  t_q 17  │(Cắt t_q 18, │
                   |          |                           |                               ▲          │ép Sync_Seg  │
                   |          |                           |                               SAMPLE PT  │bit mới ngay)│
 ========================================================================================================================
-```
-
----
-
-### 🔍 1.3.4. Ý Nghĩa Vật Lý & Nhiệm Vụ Của 4 Phân Đoạn (Segments) Trong 1 Bit CAN
-
-1. **`Sync_Seg` (Synchronization Segment - Đoạn Đồng bộ):**
-   * **Độ dài:** Cố định đúng **$1\,t_q$** (theo chuẩn quốc tế ISO 11898-1, không thể thay đổi).
-   * **Nhiệm vụ:** Dùng để đồng bộ hóa cạnh xung giữa các nút trên mạng. Khi có cạnh xuống $1 \rightarrow 0$ trên chân RX, phần cứng kỳ vọng cạnh này rơi vào `Sync_Seg`.
-
-2. **`Prop_Seg` (Propagation Segment - Đoạn Bù trễ Dây dẫn & Transceiver):**
-   * **Nhiệm vụ:** Bù trừ độ trễ vật lý khi tín hiệu điện chạy dọc trên đường dây cáp và đi qua các cổng bán dẫn của chip CAN Transceiver.
-   * **Cơ sở vật lý:** 
-     * Tín hiệu điện chạy trên cáp đồng mất $\approx 5\text{ ns/m}$.
-     * Tín hiệu đi qua 2 chip CAN Transceiver (Node phát và Node nhận) trễ thêm $\approx 150 \dots 250\text{ ns}$.
-     * Trong cơ chế phân định quyền ưu tiên (Bus Arbitration) và bit xác nhận `ACK`, tín hiệu từ Node A phải truyền tới Node xa nhất B, rồi từ Node B phản hồi ngược lại Node A trong cùng 1 chu kỳ bit:
-       $$T_{Prop\_Seg} \ge 2 \times (t_{wire\_delay} + t_{transceiver\_delay})$$
-     * Đoạn `Prop_Seg` sinh ra để **chờ cho điện áp trên toàn bộ chiều dài sợi cáp ổn định hoàn toàn** trước khi phần cứng bước sang giai đoạn đo đạc.
-
-3. **`Phase_Seg1` (Phase Buffer Segment 1 - Đoạn Đệm Pha 1):**
-   * **Vị trí:** Nằm ngay trước **Điểm lấy mẫu (Sample Point)**.
-   * **Nhiệm vụ:** Kéo dài bit khi xung nhịp bị trễ pha (Resynchronization - Kịch bản 2).
-   * **Cơ chế:** Nếu cạnh tín hiệu đến **muộn hơn dự kiến** ($e > 0$), phần cứng tự động **kéo dài thêm đoạn `Phase_Seg1`** một khoảng tối đa bằng `SJW`. Việc kéo dài này giúp dời Điểm lấy mẫu lùi về sau, tránh đo nhầm vào lúc tín hiệu điện áp đang còn dao động chuyển mức.
-
-4. **`Phase_Seg2` (Phase Buffer Segment 2 - Đoạn Đệm Pha 2):**
-   * **Vị trí:** Nằm ngay sau **Điểm lấy mẫu (Sample Point)** kéo dài đến hết bit.
-   * **Nhiệm vụ:** Cắt ngắn bit khi xung nhịp bị sớm pha (Resynchronization - Kịch bản 3).
-   * **Cơ chế:** Nếu cạnh tín hiệu đến **sớm hơn dự kiến** ($e < 0$), phần cứng tự động **cắt bớt độ dài của đoạn `Phase_Seg2`** (tối đa bằng `SJW`) để kết thúc bit sớm hơn, giúp sẵn sàng đón nhận bit tiếp theo đúng thời điểm mà không bị lệch nhịp.
-
-5. **`SJW` (Synchronization Jump Width - Biên độ Nhảy Đồng bộ):**
-   * Giới hạn số đơn vị $t_q$ tối đa mà phần cứng được phép co/dãn trên `Phase_Seg1` và `Phase_Seg2` trong mỗi chu kỳ tái đồng bộ (trong thanh ghi `CAN_BTR`, thường chọn $1\,t_q \dots 4\,t_q$).
-
-### 🎯 1.3.5. Tại Sao Điểm Lấy Mẫu (Sample Point) Tối Ưu Lại Là $87.5\%$?
-* **Nguồn gốc chuẩn CiA 301:** Tổ chức quốc tế **CAN in Automation (CiA 301)** quy định ở các tốc độ $\le 500\text{ kbps}$, điểm lấy mẫu chuẩn bắt buộc là **$87.5\%$**.
-* **Bản chất toán học:** $87.5\% = \frac{7}{8} = 0.111_2$, là phân số nhị phân tối ưu cho các mạch cộng/chia số trong silicon.
-* **Cơ sở vật lý:** Điểm lấy mẫu phải giải quyết sự xung đột giữa 2 yêu cầu kỹ thuật:
-  * *Muốn đẩy lùi càng về cuối bit càng tốt ($> 80\%$):* Để đoạn `Prop_Seg` đủ dài, cho phép kết nối chiều dài dây cáp xa nhất có thể.
-  * *Không được đẩy quá sát đuôi bit ($< 90\%$):* Để đoạn `Phase_Seg2` còn đủ không gian cho phần cứng co dãn bù trừ độ trôi tần số (Clock Drift) do thạch anh nóng/lạnh.
-  * $\implies$ Điểm cân bằng cực trị giữa **chiều dài cáp tối đa** và **dung sai thạch anh lớn nhất** hội tụ chính xác tại **$87.5\%$**.
-
----
-
-### 🔢 1.3.6. Bốn Bước Tính Toán Bit Timing Chi Tiết Cho STM32F746
-
-#### 📌 Câu hỏi Thực tế: Con số 500 kbps Tra ở Đâu để Biết?
-* **Không nằm trong Reference Manual hay Datasheet của STM32:** Khối bxCAN của STM32 là phần cứng vạn năng, hỗ trợ dải tốc độ từ 10 kbps đến 1000 kbps (1 Mbps). Chip không tự ép bạn phải chạy tốc độ nào.
-* **Nguồn tra cứu thực tế trong dự án:**
-  1. **Tài liệu đặc tả hệ thống (System Requirement Specification / ICD):** Do kiến trúc sư hệ thống hoặc khách hàng (OEM ô tô như VinFast, Toyota, Bosch...) quy định cho mạng xe.
-  2. **File cơ sở dữ liệu mạng CAN (File .DBC):** Phần mềm như CANoe, PCAN-View sẽ đọc file DBC để biết toàn bộ mạng đang vận hành ở tốc độ nào.
-  3. **Tiêu chuẩn công nghiệp quốc tế:**
-     * **ISO 15765-4 (OBD-II Chẩn đoán ô tô):** Bắt buộc cổng chẩn đoán xe con phải chạy ở tốc độ **500 kbps** (hoặc 250 kbps).
-     * **SAE J1939 (Xe tải nặng, máy công trình):** Mặc định chạy ở **250 kbps** hoặc **500 kbps**.
-     * **CiA 301 (CANopen):** Bảng tốc độ danh định chuẩn gồm 125 kbps, 250 kbps, 500 kbps, 1 Mbps.
-  * Vì vậy, khi làm bài toán hay dự án, tốc độ Baudrate luôn là **đầu vào cố định cho trước**.
-
----
-
-#### 📐 Thuật Toán 3 Bước Giải Mã Tìm `Nq` Từ `BRP` (Không Chọn Bừa Bãi)
-
-Nhiều tài liệu chỉ ghi "chọn Nq = 18" mà không giải thích vì sao. Dưới đây là thuật toán suy luận số học chuẩn:
-
-* **Bước A: Ràng buộc phần cứng của Nq (RM0385 & ISO 11898-1)**
-  ```text
-  Nq = Sync_Seg (1 tq) + BS1 (1..16 tq) + BS2 (1..8 tq)
-  ==> 8 <= Nq <= 25
-  ```
-
-* **Bước B: Thiết lập phương trình số nguyên BRP**
-  ```text
-  BRP = f_PCLK1 / (Baudrate * Nq)
-      = 54,000,000 / (500,000 * Nq)
-      = 108 / Nq
-  ```
-  Để tốc độ Baudrate không bị sai số (Baudrate Error = 0.00%), **BRP bắt buộc phải là một số nguyên dương**.  
-  Điều này đồng nghĩa: **`Nq` bắt buộc phải là ƯỚC SỐ CỦA 108**.
-
-* **Bước C: Lọc các ước số của 108 trong đoạn [8, 25]**
-  Các ước số của 108 là: 1, 2, 3, 4, 6, 9, 12, 18, 27, 36, 54, 108.  
-  Các số nằm trong khoảng `8 <= Nq <= 25` chỉ có **3 ứng viên**:
-  * Ứng viên 1: `Nq = 9`  --> `BRP = 108 / 9 = 12` (Số nguyên)
-  * Ứng viên 2: `Nq = 12` --> `BRP = 108 / 12 = 9`  (Số nguyên)
-  * Ứng viên 3: `Nq = 18` --> `BRP = 108 / 18 = 6`  (Số nguyên)
-
-* **Bước D: Đánh giá Điểm lấy mẫu (Sample Point = 87.5%) để chọn nghiệm tối ưu**
-  * **Nếu chọn Nq = 9:**
-    * Sample point 87.5%: `9 * 0.875 = 7.875` --> Chọn `1 + BS1 = 8 tq`.
-    * Phân đoạn còn lại: `BS2 = 9 - 8 = 1 tq`.
-    * *Đánh giá rủi ro:* `BS2` chỉ có vỏn vẹn `1 tq`, phần cứng không còn biên độ thời gian để co ngắn bit khi thạch anh bị trôi pha nhiệt độ (`SJW` tối đa chỉ là 1). Rất dễ sinh lỗi bit ngoài thực tế. Loại!
-  * **Nếu chọn Nq = 12:**
-    * Sample point 87.5%: `12 * 0.875 = 10.5 tq`.
-    * Nếu chọn `1 + BS1 = 10` --> Sample point = `10 / 12 = 83.33%` (Lệch nhiều so với chuẩn 87.5%).
-    * Nếu chọn `1 + BS1 = 11` --> Sample point = `11 / 12 = 91.67%` (Quá sát đuôi bit, `BS2` chỉ còn 1 tq). Loại!
-  * **Nếu chọn Nq = 18:**
-    * Sample point 87.5%: `18 * 0.875 = 15.75` --> Chọn `1 + BS1 = 16 tq` (nghĩa là `BS1 = 15 tq`).
-    * Phân đoạn còn lại: `BS2 = 18 - 16 = 2 tq`.
-    * Điểm lấy mẫu thực tế: `16 / 18 = 88.89%` (Cực kỳ sát chuẩn quốc tế 87.5%).
-    * `BS2 = 2 tq` tạo biên độ đệm an toàn tuyệt đối cho phép cấu hình `SJW = 1 tq` hoặc `2 tq`.
-  * **KẾT LUẬN:** **`Nq = 18` là nghiệm số nguyên duy nhất đạt điểm cân bằng tối ưu.**
-
----
-
-#### 📋 Bảng Tổng Kết Cấu Hình Thanh Ghi `CAN_BTR` Cho Tốc Độ 500 kbps
-
-```text
-Thông số đầu vào:
-• f_PCLK1        = 54,000,000 Hz
-• Baudrate       = 500,000 bps
-• Chu kỳ 1 bit   = 1 / 500,000 = 2000 ns (2.0 µs)
-
-Nghiệm phân bổ:
-• Nq             = 18 tq
-• tq             = 2000 ns / 18 = 111.11 ns
-• BRP            = 108 / 18 = 6
-• Sync_Seg       = 1 tq
-• BS1 (Prop+Ph1) = 15 tq
-• BS2 (Phase2)   = 2 tq
-• SJW            = 1 tq (hoặc 2 tq)
-• Sample Point   = (1 + 15) / 18 = 16 / 18 = 88.89% (Chuẩn CiA 301)
-```
-
-**Giá trị nạp vào các trường thanh ghi `CAN_BTR` (Tuân thủ quy tắc phần cứng N - 1):**
-
-| Trường Bit | Tên Trường | Ý Nghĩa | Công Thức Tính | Giá Trị Nạp (Thập Phân) | Giá Trị Hex / Nhị Phân |
-| :--- | :--- | :--- | :--- | :---: | :---: |
-| `BRP[9:0]` | Baud Rate Prescaler | Bộ chia tần số từ APB1 | `BRP - 1 = 6 - 1` | **`5`** | `0x005` (`0000000101b`) |
-| `TS1[3:0]` | Time Segment 1 | Đoạn BS1 (`Prop + Phase1`) | `BS1 - 1 = 15 - 1` | **`14`** | `0xE` (`1110b`) |
-| `TS2[2:0]` | Time Segment 2 | Đoạn BS2 (`Phase2`) | `BS2 - 1 = 2 - 1` | **`1`** | `0x1` (`001b`) |
-| `SJW[1:0]` | Resync Jump Width | Biên độ nhảy bù pha | `SJW - 1 = 1 - 1` | **`0`** | `0x0` (`00b`) |
-
-Mã code cấu hình Bare-metal vào vi điều khiển:
-```c
-/* Xóa các trường bit trước khi gán */
-CAN1->BTR &= ~((0x03UL << 24) | (0x07UL << 20) | (0x0FUL << 16) | (0x3FFUL << 0));
-
-/* Gán giá trị tính toán vào CAN1->BTR */
-CAN1->BTR |= ((0UL << 24)   |   /* SJW = 1 tq (nạp 0)   */
-              (1UL << 20)   |   /* TS2 = 2 tq (nạp 1)   */
-              (14UL << 16)  |   /* TS1 = 15 tq (nạp 14) */
-              (5UL << 0));      /* BRP = 6 (nạp 5)      */
 ```
 
 ---

@@ -55,6 +55,30 @@ Chip STM32F746NG chỉ tích hợp khối **CAN Controller (bxCAN)**, chịu tr�
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+> [!NOTE]
+> **Thực hành trên Kit STM32F746G-DISCO (Không có CAN Transceiver):**  
+> Bo mạch Discovery STM32F746G-DISCO **không hàn sẵn chip CAN Transceiver ngoài**. Nếu chưa cắm thêm module SN65HVD230 ngoài, bạn hãy cấu hình bit **`CAN_BTR_LBKM = 1` (Loopback Mode)** trong thanh ghi `CAN1->BTR`.  
+> Ở chế độ Loopback, khối phần cứng `bxCAN` tự động nối tín hiệu `TX` chui thẳng ngược về `RX` ngay bên trong vi điều khiển, giúp bạn thực hành tự gửi/nhận ngắt CAN hoàn hảo $100\%$ trên duy nhất 1 bo mạch mà không cần cắm thêm bất kỳ linh kiện nào ngoài.
+
+```text
+┌───────────────────────────────── STM32F746NG Microcontroller ──────────────────────────────────┐
+│                                                                                                │
+│   ┌────────────────────────────────────────────────────────────────────────────────────────┐   │
+│   │  bxCAN Controller (Chế độ LOOPBACK MODE: CAN_BTR_LBKM = 1)                             │   │
+│   │                                                                                        │   │
+│   │  ┌───────────────────────┐   Đường nối lặp nội bộ    ┌──────────────────────────────┐  │   │
+│   │  │  3 TX Mailboxes       ├──────────────────────────►│ 28 Filter Banks ➔ 2 RX FIFOs│  │   │
+│   │  └───────────┬───────────┘    (Internal Loopback)    └──────────────▲───────────────┘  │   │
+│   └──────────────┼──────────────────────────────────────────────────────┼──────────────────┘   │
+│                  │                                                      │                      │
+│            Cổng phát TX                                           Cổng nhận RX                 │
+│             (Chân PB9)                                             (Chân PB8)                  │
+│                  │                                                      │                      │
+│                  └────── Ngắt kết nối khỏi chân vật lý bên ngoài ───────┘                      │
+│                           (Không cần Chip Transceiver ngoài)                                   │
+└────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
 ### Mức logic trên Bus Vi sai CAN (Differential Bus):
 * **Trạng thái Dominant (Mức logic 0 - Mức Thống trị):**
   * Chân `CAN_H` được kéo lên $\approx 3.5\text{ V}$. Chân `CAN_L` được kéo xuống $\approx 1.5\text{ V}$.
@@ -162,6 +186,19 @@ Hệ thống có **28 Filter Banks (từ Bank 0 đến Bank 27)** dùng để l�
    * Cả 2 thanh ghi đều dùng làm ID mong muốn.
    * Gói tin nhận được phải có ID khớp chính xác với 1 trong 2 ID trong danh sách.
 
+```mermaid
+graph TD
+    A["Frame CAN trên Bus tới (ID: 0x123)"] --> B{"Chế độ Filter Scale?"}
+    B -->|"32-bit Scale (FS1R=1)"| C{"Chế độ Filter Mode?"}
+    B -->|"16-bit Scale (FS1R=0)"| D["Lọc được 4 Standard IDs"]
+    C -->|"Mask Mode (FM1R=0)"| E["FR1: ID Mong muốn<br>FR2: MASK (1=Check, 0=Don't Care)"]
+    C -->|"Identifier List Mode (FM1R=1)"| F["FR1: ID Khớp 100% (Ví dụ 0x100)<br>FR2: ID Khớp 100% (Ví dụ 0x200)"]
+    E --> G{"Kết quả Khớp?"}
+    F --> G
+    G -->|Đúng| H["Đẩy vào Receive FIFO 0 hoặc FIFO 1 (theo FFA1R)"]
+    G -->|Sai| I["Phần cứng tự động HỦY FRAME (Zero CPU Overhead!)"]
+```
+
 ---
 
 ## 1.5. Cơ chế Quản lý Lỗi & Automotive Bus-Off Recovery State Machine
@@ -197,6 +234,25 @@ Giao thức CAN tích hợp mạch giám sát lỗi phần cứng qua 2 bộ đ�
 * **Chế độ Tự động Phục hồi (Automatic Bus-Off Management - ABOM):**
   * Nếu bit `ABOM = 1` trong `CAN_MCR`: Khi rơi vào Bus-Off, phần cứng tự động theo dõi bus. Ngay khi đếm đủ 128 lần chuỗi 11-bit recessive, phần cứng tự động thoát Bus-Off và kéo TEC/REC về 0.
   * Nếu bit `ABOM = 0` (Thủ công bằng phần mềm): CPU phải tự xóa chế độ Init để khởi tạo lại CAN Controller.
+
+### Sơ đồ Tuần tự Truyền Frame CAN (Transmitting Sequence):
+```mermaid
+sequenceDiagram
+    autonumber
+    actor App as Application Layer
+    participant CAN as bxCAN Hardware
+    participant Bus as CAN Bus Physical Line
+
+    App->>CAN: Kiểm tra Mailbox rảnh: (CAN1->TSR & (TME0 | TME1 | TME2))
+    Note over CAN: Chọn ví dụ Mailbox 0 đang rảnh (TME0 == 1)
+    App->>CAN: Ghi ID và IDE/RTR vào CAN1->sTxMailBox[0].TIR
+    App->>CAN: Ghi độ dài DLC (ví dụ: 8 bytes) vào CAN1->sTxMailBox[0].TDTR
+    App->>CAN: Ghi 4 bytes đầu vào TDLR, 4 bytes sau vào TDHR
+    App->>CAN: Kích hoạt truyền: CAN1->sTxMailBox[0].TIR |= CAN_TI0R_TXRQ
+    CAN->>Bus: Trọng tài bus (Arbitration) và phát frame
+    Bus-->>CAN: Nhận ACK từ node khác trên mạng
+    CAN->>CAN: Bật cờ CAN_TSR_TXOK0 = 1 và CAN_TSR_RQCP0 = 1
+```
 
 ---
 
@@ -355,10 +411,13 @@ void CAN1_Init(void)
 
     /* 5. Cấu hình Bit Timing CAN_BTR: Baudrate 500kbps at PCLK1 = 54MHz */
     /* BRP = 6 (nạp 5), TS1 = 15 (nạp 14 = 0xE), TS2 = 2 (nạp 1), SJW = 1 (nạp 0) */
+    /* NOTE: Nếu thực hành trên Kit đơn lẻ (STM32F746G-DISCO không có Transceiver IC ngoài), */
+    /* hãy bật thêm bit CAN_BTR_LBKM (Bit 30: Loopback Mode) để tự lặp nội bộ kiểm tra code. */
     CAN1->BTR = (5U << 0)  |  /* BRP[9:0] = 5 */
                 (14U << 16)|  /* TS1[3:0] = 14 */
                 (1U << 20) |  /* TS2[2:0] = 1 */
-                (0U << 24);   /* SJW[1:0] = 0 */
+                (0U << 24) |  /* SJW[1:0] = 0 */
+                CAN_BTR_LBKM; /* Bật Loopback Mode để Self-Test không cần Transceiver ngoài */
 
     /* 6. Cấu hình Filter mặc định (Accept All để test ban đầu) */
     CAN1_Filter_Config(0x0000, 0x0000);

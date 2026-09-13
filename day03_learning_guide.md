@@ -500,28 +500,70 @@ Hệ thống có **28 Filter Banks (từ Bank 0 đến Bank 27)** dùng để l�
 
 > ⚠️ **BẪY PHẦN CỨNG CAN1 MASTER:** Khối **CAN1 đóng vai trò là Master** quản lý toàn bộ 28 Filter Banks. Thanh ghi phân định ranh giới `CAN1->FMR` (trường `CAN2SB[5:0]`) quyết định Bank nào thuộc về CAN1 và Bank nào thuộc về CAN2. **KỂ CẢ KHI DỰ ÁN CHỈ DÙNG CAN2, BẮT BUỘC PHẢI CẤP CLOCK CHO CAN1 VÀ CẤU HÌNH FILTER TRÊN CAN1!**
 
-### Hai chế độ lọc chính của Filter Bank:
-1. **Identifier Mask Mode (Chế độ Mặt nạ):**
-   * Sử dụng 2 thanh ghi: **Filter Register (ID mong muốn)** và **Mask Register (Mặt nạ kiểm tra)**.
-   * Tại các vị trí bit trong Mask bằng `1`: Bit trên ID của gói tin nhận được **bắt buộc phải khớp 100%** với Filter ID.
-   * Tại các vị trí bit trong Mask bằng `0`: Phần cứng **bỏ qua không kiểm tra** (Don't care - chấp nhận cả 0 lẫn 1).
-   * *Ứng dụng:* Dùng để lọc cả một dải ID (ví dụ nhận tất cả các ID từ `0x700` đến `0x70F`).
-2. **Identifier List Mode (Chế độ Danh sách):**
-   * Cả 2 thanh ghi đều dùng làm ID mong muốn.
-   * Gói tin nhận được phải có ID khớp chính xác với 1 trong 2 ID trong danh sách.
+### 3 Cấu Hình Quyết Định Hoạt Động Của Một Filter Bank
+
+Mỗi Filter Bank phần cứng luôn gồm **2 thanh ghi 32-bit: `CAN_FiR1` (FR1) và `CAN_FiR2` (FR2)**. Cách thức hoạt động của từng bank được xác định bởi 3 thông số thanh ghi độc lập:
+
+#### 1. Kích thước bộ lọc (Filter Scale) — Thanh ghi `CAN_FS1R`:
+* **`32-bit Scale` (`FS1R = 1`):** Giữ nguyên `FR1` và `FR2` ở độ rộng 32-bit. Bắt buộc dùng khi cần lọc **Extended Identifier (ID mở rộng 29-bit)**, hoặc khi lọc Standard ID (11-bit) nhưng muốn kiểm tra chặt chẽ cả cờ `IDE` và `RTR`.
+* **`16-bit Scale` (`FS1R = 0`):** Chẻ đôi mỗi thanh ghi 32-bit thành 2 nửa 16-bit độc lập (`FR1` chia thành 2 bộ lọc 16-bit, `FR2` chia thành 2 bộ lọc 16-bit). Một bank duy nhất chứa được cùng lúc **4 bộ lọc Standard ID (11-bit)**, giúp tăng gấp đôi số lượng ID lọc được.
+
+#### 2. Chế độ lọc (Filter Mode) — Thanh ghi `CAN_FM1R`:
+* **`Identifier Mask Mode` (Chế độ Mặt nạ — `FM1R = 0`):**
+  * `FR1` đóng vai trò là **ID mong muốn**.
+  * `FR2` đóng vai trò là **Mặt nạ kiểm tra (MASK)**:
+    * **Bit Mask = 1:** Bắt buộc bit tương ứng của ID gói tin nhận được phải giống 100% với bit trong `FR1`.
+    * **Bit Mask = 0:** "Don't care" — Bỏ qua không kiểm tra (gói tin mang bit 0 hay 1 đều chấp nhận).
+  * *Ứng dụng:* Lọc một dải / một nhóm ID (ví dụ từ `0x700` đến `0x70F`), hoặc nhận tất cả mọi frame trên bus (**Accept All Mode**: gán `MASK = 0x0000 0000`).
+* **`Identifier List Mode` (Chế độ Danh sách — `FM1R = 1`):**
+  * Không dùng mặt nạ Mask. Cả `FR1` và `FR2` đều đóng vai trò là **Target ID độc lập**.
+  * Gói tin bay tới phải có ID khớp chính xác 100% với `FR1` **HOẶC** khớp chính xác 100% với `FR2`.
+  * *Ứng dụng:* Dùng khi chỉ cần nhận đích danh một vài ID cụ thể (ví dụ: chỉ nhận đúng ID `0x100` và `0x200`).
+
+#### 3. Phân luồng FIFO nhận (Filter FIFO Assignment) — Thanh ghi `CAN_FFA1R`:
+* **`FFA1R = 0`:** Gói tin sau khi khớp qua Filter Bank này sẽ được phần cứng tự động đẩy vào **Receive FIFO 0**.
+* **`FFA1R = 1`:** Gói tin sau khi khớp qua Filter Bank này sẽ được phần cứng tự động đẩy vào **Receive FIFO 1**.
+
+---
+
+### 📊 Lưu Đồ Ra Quyết Định Của Phần Cứng (Hardware Acceptance Decision Tree)
+
+Lưu đồ dưới đây tổng hợp trực quan toàn bộ quy trình 4 bước tuần tự mà phần cứng bxCAN tự động thực thi mỗi khi một frame CAN bay từ đường truyền bus vào vi điều khiển:
 
 ```mermaid
 graph TD
-    A["Frame CAN trên Bus tới (ID: 0x123)"] --> B{"Chế độ Filter Scale?"}
-    B -->|"32-bit Scale (FS1R=1)"| C{"Chế độ Filter Mode?"}
-    B -->|"16-bit Scale (FS1R=0)"| D["Lọc được 4 Standard IDs"]
-    C -->|"Mask Mode (FM1R=0)"| E["FR1: ID Mong muốn<br>FR2: MASK (1=Check, 0=Don't Care)"]
+    A["Frame CAN trên Bus tới (ví dụ ID: 0x123)"] --> B{"Bước 1: Filter Scale?<br>(CAN_FS1R)"}
+    B -->|"32-bit Scale (FS1R=1)"| C{"Bước 2: Filter Mode?<br>(CAN_FM1R)"}
+    B -->|"16-bit Scale (FS1R=0)"| D["Chẻ đôi 2 thanh ghi 32-bit<br>➔ Chứa được 4 Standard IDs (11-bit)"]
+    C -->|"Mask Mode (FM1R=0)"| E["FR1: ID Mong muốn<br>FR2: MASK (1=Bắt buộc, 0=Bỏ qua)"]
     C -->|"Identifier List Mode (FM1R=1)"| F["FR1: ID Khớp 100% (Ví dụ 0x100)<br>FR2: ID Khớp 100% (Ví dụ 0x200)"]
-    E --> G{"Kết quả Khớp?"}
+    D --> G{"Bước 3: So Khớp ID?"}
+    E --> G
     F --> G
-    G -->|Đúng| H["Đẩy vào Receive FIFO 0 hoặc FIFO 1 (theo FFA1R)"]
-    G -->|Sai| I["Phần cứng tự động HỦY FRAME (Zero CPU Overhead!)"]
+    G -->|"ĐÚNG (Khớp ID)"| H{"Bước 4: Gán FIFO nào?<br>(CAN_FFA1R)"}
+    G -->|"SAI (Không Khớp)"| I["PHẦN CỨNG TỰ ĐỘNG HỦY FRAME (DROP)<br>Zero CPU Overhead!"]
+    H -->|"FFA1R = 0"| J["Đẩy vào Receive FIFO 0<br>➔ Tăng FMP0 ➔ Gọi CAN1_RX0_IRQHandler"]
+    H -->|"FFA1R = 1"| K["Đẩy vào Receive FIFO 1<br>➔ Tăng FMP1 ➔ Gọi CAN1_RX1_IRQHandler"]
 ```
+
+#### 🔍 Diễn Giải Từng Bước Của Lưu Đồ Quyết Định Bộ Lọc 1.4:
+
+* **Tại sao cần lưu đồ này?** Trên mạng CAN ô tô, hàng ngàn frame bay qua bus liên tục mỗi giây. Nếu gói tin nào MCU cũng phải nhảy vào ngắt để đọc rồi dùng lệnh `if (id == ...)` kiểm tra, CPU sẽ bị nghẽn hoàn toàn (**Interrupt Starvation**). Mạch lọc phần cứng bxCAN giải quyết vấn đề này bằng cách tự động kiểm tra ID ngay trong silicon:
+  1. **Bước 1 — Kiểm tra thanh ghi `CAN_FS1R` (Scale):** 
+     * Phần cứng kiểm tra xem lập trình viên cấu hình Bank này dùng độ rộng bao nhiêu bit.
+     * Nếu là `32-bit`: Dành cho các ID mở rộng 29-bit (Extended ID) hoặc Standard ID kèm kiểm tra cờ `IDE` / `RTR`.
+     * Nếu là `16-bit`: Phần cứng tự động chẻ đôi 2 thanh ghi 32-bit (`FR1`, `FR2`) thành 4 thanh ghi 16-bit nhỏ hơn. Vì Standard ID chỉ có 11-bit nên 1 Bank lúc này lọc được cùng lúc 4 ID khác nhau.
+  2. **Bước 2 — Kiểm tra thanh ghi `CAN_FM1R` (Mode):**
+     * **Nhánh Mask Mode (`FM1R = 0`):** Áp dụng công thức so sánh bitwise logic: `(ID_nhận ^ ID_mong_muốn) & MASK == 0`. Bất kỳ bit nào trong thanh ghi Mask bằng `1` thì bit tương ứng của ID nhận được bắt buộc phải trùng khớp. Bit nào trong Mask bằng `0` thì coi như "Don't care" (bỏ qua). Nhánh này chuyên dùng để bắt trọn một dải ID (ví dụ từ `0x700` đến `0x70F`) hoặc nhận tất cả frame (**Accept All**: Mask = 0).
+     * **Nhánh List Mode (`FM1R = 1`):** Cả 2 thanh ghi đều chứa ID mục tiêu. Frame nhận được phải có ID bằng chính xác 100% với `FR1` hoặc `FR2`. Dùng khi chỉ cần bắt đích danh 1 hoặc 2 ID riêng lẻ.
+  3. **Bước 3 — Ra quyết định So khớp (Match Logic):**
+     * **Nếu KHÔNG KHỚP:** Mạch logic phần cứng lập tức vứt bỏ frame (DROP). Bộ nhớ FIFO không bị ghi đè, CPU hoàn toàn không bị ngắt, tải CPU bằng đúng 0%.
+     * **Nếu KHỚP:** Chuyển tiếp frame sang Bước 4.
+  4. **Bước 4 — Phân luồng FIFO qua thanh ghi `CAN_FFA1R`:**
+     * Phần cứng nhìn vào bit tương ứng của Bank trong `CAN_FFA1R`:
+       * Nếu bit bằng `0`: Ghi frame vào **Receive FIFO 0** $\rightarrow$ Tăng số đếm `FMP0` $\rightarrow$ Kích hoạt ngắt `CAN1_RX0_IRQHandler`.
+       * Nếu bit bằng `1`: Ghi frame vào **Receive FIFO 1** $\rightarrow$ Tăng số đếm `FMP1` $\rightarrow$ Kích hoạt ngắt `CAN1_RX1_IRQHandler`.
+     * *Ý nghĩa kỹ thuật:* Giúp phân tách luồng dữ liệu theo độ ưu tiên: Các bản tin khẩn cấp (thắng, túi khí) đẩy vào FIFO 0 gắn ngắt ưu tiên cao; các bản tin giải trí, cảm biến nhiệt độ đẩy vào FIFO 1 gắn ngắt ưu tiên thấp.
 
 ---
 
@@ -555,28 +597,65 @@ Giao thức CAN tích hợp mạch giám sát lỗi phần cứng qua 2 bộ đ�
                    Trở lại trạng thái ERROR ACTIVE
 ```
 
-* **Chế độ Tự động Phục hồi (Automatic Bus-Off Management - ABOM):**
-  * Nếu bit `ABOM = 1` trong `CAN_MCR`: Khi rơi vào Bus-Off, phần cứng tự động theo dõi bus. Ngay khi đếm đủ 128 lần chuỗi 11-bit recessive, phần cứng tự động thoát Bus-Off và kéo TEC/REC về 0.
-  * Nếu bit `ABOM = 0` (Thủ công bằng phần mềm): CPU phải tự xóa chế độ Init để khởi tạo lại CAN Controller.
+#### 🔍 Diễn Giải Sơ Đồ Máy Trạng Thái Quản Lý Lỗi (Fault Confinement):
+
+* **Tại sao cần cơ chế này?** Trong một hệ thống nhiều vi điều khiển cùng nối chung 2 dây cáp, nếu 1 vi điều khiển bị chập mạch hoặc xung clock bị sai làm nó liên tục phát bit 0 (Dominant), nó sẽ đè bẹp toàn bộ đường truyền và làm tê liệt tất cả các vi điều khiển còn lại. Do đó, chuẩn ISO 11898-1 định nghĩa thuật toán **Fault Confinement** bắt buộc mỗi node tự đếm lỗi và tự cách ly nếu hỏng:
+  1. **Hai bộ đếm lỗi TEC và REC hoạt động như thế nào?**
+     * **Quy tắc phạt bất đối xứng:** Node phát gây ra lỗi sẽ bị phạt rất nặng (**TEC tăng +8 điểm** sau mỗi frame lỗi), trong khi các Node nhận chỉ phát hiện lỗi thụ động (**REC tăng +1 điểm**).
+     * **Quy tắc thưởng khi thành công:** Mỗi khi một frame được truyền/nhận thành công mà không có lỗi, TEC giảm `-1` điểm, REC giảm `-1` điểm (nhưng không giảm dưới 0).
+  2. **Trạng thái 1 — ERROR ACTIVE (Bình thường: TEC $\le$ 127 và REC $\le$ 127):**
+     * Node hoàn toàn khỏe mạnh, tham gia truyền nhận bình thường.
+     * Khi phát hiện lỗi trên đường truyền, Node này có quyền phát **Active Error Flag gồm 6 bit Dominant (0) liên tiếp**. Vì 6 bit 0 cố tình vi phạm luật Bit Stuffing, nó ép TẤT CẢ các node khác trên mạng cùng phát hiện lỗi và cùng hủy frame hỏng đó ngay lập tức.
+  3. **Trạng thái 2 — ERROR PASSIVE (Cảnh báo nghi ngờ: TEC > 127 hoặc REC > 127):**
+     * Node bị nghi ngờ là thủ phạm làm bẩn đường truyền vì điểm lỗi đã vượt mốc 127.
+     * **Bị tước quyền phá mạng:** Node vẫn được truyền nhận, nhưng khi phát hiện lỗi, nó **CHỈ ĐƯỢC PHÉP phát Passive Error Flag gồm 6 bit Recessive (1) liên tiếp**. Vì mức 1 là mức yếu, nó không thể đè bẹp dữ liệu của các node khác.
+     * **Bị phạt xếp hàng:** Sau khi truyền xong một frame, node này bắt buộc phải chờ thêm 8 bit (Suspend Transmission) để nhường quyền ưu tiên cho các node khỏe mạnh truyền trước.
+  4. **Trạng thái 3 — BUS-OFF (Tử hình / Cách ly hoàn toàn: TEC > 255):**
+     * Khi lỗi phát tích lũy vượt quá 255 điểm, phần cứng kết luận phần cứng bộ truyền hoặc bộ thu của Node đã bị hỏng nặng.
+     * Phần cứng bxCAN **ngắt kết nối chân TX hoàn toàn khỏi bus**, đưa chân phát về trạng thái thả nổi (Recessive / High-Z). Node bị "tắt tiếng" hoàn toàn, không thể gửi hay nhận thêm bất kỳ dữ liệu nào, bảo vệ an toàn cho toàn bộ phần còn lại của mạng xe hơi.
+  5. **Cơ chế Phục hồi từ Bus-Off (Bus-Off Recovery):**
+     * Node ở trạng thái Bus-Off chỉ được phép quay lại trạng thái `ERROR ACTIVE` khi nó lắng nghe và đếm đủ **128 lần xuất hiện của chuỗi 11 bit Recessive (1) liên tiếp**.
+     * *Cơ sở kỹ thuật:* Chuỗi 11 bit Recessive (1) chính là khoảng trống tối thiểu khi bus hoàn toàn rảnh rỗi giữa các frame (**Bus Idle**). Đếm đủ 128 lần trạng thái Bus Idle chứng minh mạng xe hơi đã thông suốt và node có thể xin gia nhập lại an toàn.
+     * Cấu hình bit `ABOM` (Automatic Bus-Off Management) trong `CAN_MCR`:
+       * `ABOM = 1`: Phần cứng bxCAN tự động đếm 128 lần chuỗi 11-bit 1 và tự động thoát khỏi Bus-Off mà không cần CPU can thiệp.
+       * `ABOM = 0`: Phần mềm CPU phải tự giám sát cờ lỗi `BOFF` trong thanh ghi `CAN_ESR`, sau đó chủ động reset lại controller bằng cờ `INRQ`.
+
+---
 
 ### Sơ đồ Tuần tự Truyền Frame CAN (Transmitting Sequence):
 ```mermaid
 sequenceDiagram
     autonumber
-    actor App as Application Layer
-    participant CAN as bxCAN Hardware
+    actor App as Application Layer (main.c)
+    participant CAN as bxCAN Hardware (Registers)
     participant Bus as CAN Bus Physical Line
 
-    App->>CAN: Kiểm tra Mailbox rảnh: (CAN1->TSR & (TME0 | TME1 | TME2))
-    Note over CAN: Chọn ví dụ Mailbox 0 đang rảnh (TME0 == 1)
-    App->>CAN: Ghi ID và IDE/RTR vào CAN1->sTxMailBox[0].TIR
-    App->>CAN: Ghi độ dài DLC (ví dụ: 8 bytes) vào CAN1->sTxMailBox[0].TDTR
-    App->>CAN: Ghi 4 bytes đầu vào TDLR, 4 bytes sau vào TDHR
-    App->>CAN: Kích hoạt truyền: CAN1->sTxMailBox[0].TIR |= CAN_TI0R_TXRQ
-    CAN->>Bus: Trọng tài bus (Arbitration) và phát frame
-    Bus-->>CAN: Nhận ACK từ node khác trên mạng
-    CAN->>CAN: Bật cờ CAN_TSR_TXOK0 = 1 và CAN_TSR_RQCP0 = 1
+    App->>CAN: 1. Đọc CAN1->TSR kiểm tra Mailbox rảnh: (TME0 | TME1 | TME2)
+    Note over CAN: Giả sử chọn được Mailbox 0 đang rảnh (TME0 == 1)
+    App->>CAN: 2. Ghi ID, IDE (Chuẩn/Mở rộng), RTR vào CAN1->sTxMailBox[0].TIR
+    App->>CAN: 3. Ghi độ dài dữ liệu DLC (0 - 8 bytes) vào CAN1->sTxMailBox[0].TDTR
+    App->>CAN: 4. Ghi dữ liệu: Byte 0-3 vào TDLR, Byte 4-7 vào TDHR
+    App->>CAN: 5. Kích hoạt lệnh phát: CAN1->sTxMailBox[0].TIR |= CAN_TI0R_TXRQ
+    CAN->>Bus: 6. Đưa frame ra bus: Trọng tài phân định (Arbitration) và phát bit
+    Bus-->>CAN: 7. Bắt tay phần cứng: Các node khác kéo Dominant 0 tại khe ACK
+    CAN->>CAN: 8. Phần cứng tự động bật cờ: CAN_TSR_TXOK0 = 1 và CAN_TSR_RQCP0 = 1
 ```
+
+#### 🔍 Diễn Giải Từng Bước Của Sơ Đồ Tuần Tự Truyền Dữ Liệu:
+
+1. **Bước 1 — Tìm Mailbox rảnh:** bxCAN của STM32 cung cấp **3 Transmit Mailboxes (Mailbox 0, 1, 2)** để chứa dữ liệu chờ phát. Ứng dụng đọc thanh ghi `CAN_TSR` (Transmit Status Register), kiểm tra 3 cờ `TME0`, `TME1`, `TME2` (Transmit Mailbox Empty). Nếu có ít nhất 1 cờ bằng `1`, Mailbox đó đang rảnh và sẵn sàng nhận dữ liệu mới.
+2. **Bước 2 — Cài đặt Định danh gói tin:** Ghi giá trị Identifier (ID) vào thanh ghi `CAN_TIxR` của Mailbox đã chọn. Tại đây ta cấu hình luôn cờ `IDE = 0` (Standard ID 11-bit) hoặc `IDE = 1` (Extended ID 29-bit), và cờ `RTR = 0` (Data Frame mang dữ liệu).
+3. **Bước 3 — Cài đặt Độ dài dữ liệu:** Ghi số lượng byte dữ liệu cần gửi (từ 0 đến 8 bytes) vào trường `DLC[3:0]` trong thanh ghi `CAN_TDTxR`.
+4. **Bước 4 — Nạp dữ liệu vào thanh ghi đệm:**
+   * Ghi 4 bytes đầu tiên (Data 0 đến Data 3) vào thanh ghi 32-bit `CAN_TDLxR`.
+   * Ghi 4 bytes tiếp theo (Data 4 đến Data 7) vào thanh ghi 32-bit `CAN_TDHxR`.
+5. **Bước 5 — Kích hoạt phát tin (Request Transmission):** Ghi bit `TXRQ = 1` trong thanh ghi `CAN_TIxR`. Ngay khi bit này được bật, quyền sở hữu Mailbox được chuyển giao hoàn toàn cho phần cứng. Mailbox bị khóa (cờ `TME` tụt về 0), CPU không được phép sửa đổi dữ liệu bên trong nữa.
+6. **Bước 6 — Phân định trọng tài và phát bit ra đường truyền:** Phần cứng CAN Controller chờ đến khi đường truyền rảnh (Bus Idle) thì bắt đầu phát bit Start of Frame (SOF) và phát các bit của trường ID. Nếu có nhiều node cùng phát đồng thời, cơ chế **Bus Arbitration** dựa trên mức 0 Dominant đè bẹp mức 1 Recessive sẽ diễn ra: Node nào có ID nhỏ hơn (nhiều bit 0 hơn) sẽ giành quyền ưu tiên phát tiếp, node thua cuộc tự động chuyển sang chế độ nhận mà dữ liệu không bị hỏng.
+7. **Bước 7 — Bắt tay phần cứng tại khe ACK (Acknowledge Slot):** Sau khi phát xong trường dữ liệu và trường mã kiểm tra CRC, node phát sẽ thả bus về mức Recessive (1) tại đúng 1 bit gọi là **ACK Slot**. Tất cả các node nhận được gói tin chính xác trên toàn mạng sẽ đồng loạt kéo bus xuống mức Dominant (0). Node phát đọc lại bus thấy mức 0 này sẽ biết rằng frame của mình đã được ít nhất một node trên mạng tiếp nhận thành công.
+8. **Bước 8 — Phần cứng xác nhận hoàn tất:** Sau khi nhận được ACK, phần cứng bxCAN tự động:
+   * Bật cờ `TXOKx = 1` (Transmit OK) và `RQCPx = 1` (Request Completed) trong thanh ghi `CAN_TSR`.
+   * Bật cờ `TME` lên 1 để báo Mailbox đã rảnh, sẵn sàng cho lần truyền tiếp theo.
+   * Kích hoạt ngắt `CAN1_TX_IRQHandler` (nếu lập trình viên có bật bit cho phép ngắt truyền `TMEIE` trong `CAN_IER`).
 
 ---
 

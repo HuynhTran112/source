@@ -502,46 +502,104 @@ Hệ thống có **28 Filter Banks (từ Bank 0 đến Bank 27)** dùng để l�
 
 ### 3 Cấu Hình Quyết Định Hoạt Động Của Một Filter Bank
 
-Mỗi Filter Bank phần cứng luôn gồm **2 thanh ghi 32-bit: `CAN_FiR1` (FR1) và `CAN_FiR2` (FR2)**. Cách thức hoạt động của từng bank được xác định bởi 3 thông số thanh ghi độc lập:
+Mỗi Filter Bank vật lý luôn gồm **2 thanh ghi 32-bit: `CAN_FiR1` (FR1) và `CAN_FiR2` (FR2)**, tương đương **tổng cộng 64 bit nhớ**.
 
-#### 1. Kích thước bộ lọc (Filter Scale) — Thanh ghi `CAN_FS1R`:
-* **`32-bit Scale` (`FS1R = 1`):** Giữ nguyên `FR1` và `FR2` ở độ rộng 32-bit. Bắt buộc dùng khi cần lọc **Extended Identifier (ID mở rộng 29-bit)**, hoặc khi lọc Standard ID (11-bit) nhưng muốn kiểm tra chặt chẽ cả cờ `IDE` và `RTR`.
-* **`16-bit Scale` (`FS1R = 0`):** Chẻ đôi mỗi thanh ghi 32-bit thành 2 nửa 16-bit độc lập (`FR1` chia thành 2 bộ lọc 16-bit, `FR2` chia thành 2 bộ lọc 16-bit). Một bank duy nhất chứa được cùng lúc **4 bộ lọc Standard ID (11-bit)**, giúp tăng gấp đôi số lượng ID lọc được.
+Cách phần cứng chia cắt và sử dụng 64 bit này được định đoạt bởi 2 thanh ghi cấu hình: **`CAN_FS1R` (Scale - Kích thước)** và **`CAN_FM1R` (Mode - Chế độ)**, tạo thành **4 tổ hợp bộ lọc phần cứng**:
 
-#### 2. Chế độ lọc (Filter Mode) — Thanh ghi `CAN_FM1R`:
-* **`Identifier Mask Mode` (Chế độ Mặt nạ — `FM1R = 0`):**
-  * `FR1` đóng vai trò là **ID mong muốn**.
-  * `FR2` đóng vai trò là **Mặt nạ kiểm tra (MASK)**:
-    * **Bit Mask = 1:** Bắt buộc bit tương ứng của ID gói tin nhận được phải giống 100% với bit trong `FR1`.
-    * **Bit Mask = 0:** "Don't care" — Bỏ qua không kiểm tra (gói tin mang bit 0 hay 1 đều chấp nhận).
-  * *Ứng dụng:* Lọc một dải / một nhóm ID (ví dụ từ `0x700` đến `0x70F`), hoặc nhận tất cả mọi frame trên bus (**Accept All Mode**: gán `MASK = 0x0000 0000`).
-* **`Identifier List Mode` (Chế độ Danh sách — `FM1R = 1`):**
-  * Không dùng mặt nạ Mask. Cả `FR1` và `FR2` đều đóng vai trò là **Target ID độc lập**.
-  * Gói tin bay tới phải có ID khớp chính xác 100% với `FR1` **HOẶC** khớp chính xác 100% với `FR2`.
-  * *Ứng dụng:* Dùng khi chỉ cần nhận đích danh một vài ID cụ thể (ví dụ: chỉ nhận đúng ID `0x100` và `0x200`).
+```text
+┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                      MA TRẬN 4 TỔ HỢP BỘ LỌC CỦA 1 FILTER BANK (64 BITS)                        │
+├──────────────────────────┬──────────────────────────────────────┬───────────────────────────────┤
+│ Kích Thước (CAN_FS1R)    │ Chế Độ Mặt Nạ (FM1R = 0: Mask Mode) │ Chế Độ Danh Sách (FM1R = 1)   │
+├──────────────────────────┼──────────────────────────────────────┼───────────────────────────────┤
+│ 32-bit Scale (FS1R = 1)  │ 1 BỘ LỌC 32-bit:                     │ 2 BỘ LỌC 32-bit:              │
+│ (Lọc Extended ID 29-bit) │ • FR1 = Target ID (32-bit)           │ • FR1 = Target ID 1 (32-bit)  │
+│                          │ • FR2 = Mask (32-bit)                │ • FR2 = Target ID 2 (32-bit)  │
+├──────────────────────────┼──────────────────────────────────────┼───────────────────────────────┤
+│ 16-bit Scale (FS1R = 0)  │ 2 BỘ LỌC 16-bit:                     │ 4 BỘ LỌC 16-bit:              │
+│ (Lọc Standard ID 11-bit) │ • Cặp 1: FR1_Low (ID) & High (Mask)  │ • Ngăn 1: FR1_Low  = ID 1     │
+│                          │ • Cặp 2: FR2_Low (ID) & High (Mask)  │ • Ngăn 2: FR1_High = ID 2     │
+│                          │                                      │ • Ngăn 3: FR2_Low  = ID 3     │
+│                          │                                      │ • Ngăn 4: FR2_High = ID 4     │
+└──────────────────────────┴──────────────────────────────────────┴───────────────────────────────┘
+```
 
-#### 3. Phân luồng FIFO nhận (Filter FIFO Assignment) — Thanh ghi `CAN_FFA1R`:
-* **`FFA1R = 0`:** Gói tin sau khi khớp qua Filter Bank này sẽ được phần cứng tự động đẩy vào **Receive FIFO 0**.
-* **`FFA1R = 1`:** Gói tin sau khi khớp qua Filter Bank này sẽ được phần cứng tự động đẩy vào **Receive FIFO 1**.
+#### 💡 Cơ chế nhét vừa Standard ID (11-bit) vào 1 ngăn 16-bit (RM0385):
+Trong 1 ngăn 16-bit, vi điều khiển phân bổ các bit như sau:
+* **Bit `[15:5]` (11 bits):** Chứa trọn vẹn 11 bit Standard Identifier (`STID[10:0]`).
+* **Bit `[4]` (1 bit):** Cờ `RTR` (`0` = Data Frame mang dữ liệu, `1` = Remote Frame xin dữ liệu).
+* **Bit `[3]` (1 bit):** Cờ `IDE` (`0` = Bắt buộc Standard ID 11-bit, `1` = Extended ID).
+* **Bit `[2:0]` (3 bits):** Dành riêng hoặc chứa 3 bit cao của Extended ID.
+$\rightarrow$ Nhờ chỉ tốn 16 bit cho mỗi bộ lọc Standard ID, khi chuyển sang **16-bit List Mode**, 1 Bank duy nhất (64 bit) chẻ thành 4 ngăn 16-bit độc lập, **chứa trọn vẹn 4 Standard IDs khác nhau!**
+
+---
+
+#### 🧪 4 Ví Dụ Kỹ Thuật Thực Tế Minh Họa Cho 4 Tổ Hợp Bộ Lọc:
+
+##### 1. Tổ hợp 4: `16-bit Scale + List Mode (FS1R = 0, FM1R = 1)` — Lọc đích danh 4 Standard IDs:
+* **Yêu cầu bài toán:** Hộp điều khiển phanh ABS chỉ cần nghe ngóng đúng 4 cảm biến tốc độ bánh xe trên mạng:
+  * Ngăn 1 (`FR1_Low`):  `0x101` (Tốc độ bánh trước trái - FL Wheel Speed)
+  * Ngăn 2 (`FR1_High`): `0x102` (Tốc độ bánh trước phải - FR Wheel Speed)
+  * Ngăn 3 (`FR2_Low`):  `0x103` (Tốc độ bánh sau trái - RL Wheel Speed)
+  * Ngăn 4 (`FR2_High`): `0x104` (Tốc độ bánh sau phải - RR Wheel Speed)
+* **Kết quả thực thi của mạch phần cứng:**
+  * Gói tin bay tới có ID là `0x101`, `0x102`, `0x103` hoặc `0x104`: **KHỚP 100% $\rightarrow$ Đẩy vào FIFO**.
+  * Gói tin mang ID `0x200` (Hộp số) hoặc bất kỳ ID nào khác: **SAI $\rightarrow$ DROP ngay lập tức (Zero CPU Load)**.
+
+##### 2. Tổ hợp 3: `16-bit Scale + Mask Mode (FS1R = 0, FM1R = 0)` — Lọc 2 dải Standard IDs:
+* **Yêu cầu bài toán:** Muốn nhận toàn bộ một nhóm gồm 4 ID liên tiếp từ `0x200` đến `0x203`:
+  * Ta phân tích dạng nhị phân 11-bit của 4 ID này:
+    * `0x200 = 0b 010 0000 0000`
+    * `0x201 = 0b 010 0000 0001`
+    * `0x202 = 0b 010 0000 0010`
+    * `0x203 = 0b 010 0000 0011`
+  * Nhận xét: **9 bit đầu (`0b 010 0000 00..`) hoàn toàn giống hệt nhau**, chỉ có **2 bit cuối là biến thiên (`00`, `01`, `10`, `11`)**.
+* **Cài đặt cặp lọc thứ nhất (`FR1`):**
+  * Ngăn ID (`FR1_Low`): `0x200` (ID mẫu kỳ vọng).
+  * Ngăn Mask (`FR1_High`): `0x7FC` (`0b 111 1111 1100` $\rightarrow$ 9 bit đầu bằng `1` bắt buộc trùng khớp 100%, 2 bit cuối bằng `0` là Don't Care!).
+* **Kết quả:**
+  * Bất kỳ gói nào mang ID từ `0x200` đến `0x203`: **KHỚP $\rightarrow$ Đẩy vào FIFO**.
+  * Gói mang ID `0x204` (`0b 010 0000 0100` — bit thứ 3 bằng `1`, sai lệch với bit thứ 3 của `0x200` bằng `0`): **DROP ngay lập tức!**
+  * *(Cặp lọc thứ 2 trong `FR2` cấu hình độc lập để lọc thêm 1 dải khác, ví dụ dải `0x300` - `0x307`)*.
+
+##### 3. Tổ hợp 1: `32-bit Scale + Mask Mode (FS1R = 1, FM1R = 0)` — Chế độ "Accept All" (Nhận tất cả):
+* **Yêu cầu bài toán:** Khi mới bắt đầu phát triển driver hoặc làm bộ phân tích CAN Sniffer (như Wireshark), ta muốn MCU nhận **TẤT CẢ** các gói tin trên bus mà không bỏ sót bất kỳ gói nào.
+* **Cài đặt:**
+  * Thanh ghi ID (`FR1`): `0x0000 0000`
+  * Thanh ghi Mask (`FR2`): `0x0000 0000` *(Toàn bộ 32 bit đều bằng 0 $\rightarrow$ Don't care toàn bộ!)*
+* **Kết quả:** Mọi gói tin (Standard hay Extended, bất kể ID bằng bao nhiêu) đều lọt qua bộ lọc 100%.
+
+##### 4. Tổ hợp 2: `32-bit Scale + List Mode (FS1R = 1, FM1R = 1)` — Lọc đích danh 2 Extended IDs (29-bit):
+* **Yêu cầu bài toán:** Hệ thống xe thương mại chuẩn SAE J1939 chỉ cần bắt đích danh 2 thông điệp mở rộng:
+  * `FR1` = `0x18FEF100` (Thông điệp Tốc độ hành trình xe - Cruise Speed)
+  * `FR2` = `0x18FEEE00` (Thông điệp Nhiệt độ nước làm mát động cơ - Coolant Temperature)
+* **Kết quả:** Đúng 2 thông điệp 29-bit này được phép đi vào FIFO, mọi frame 29-bit khác trên bus xe tải đều bị chặn lại.
 
 ---
 
 ### 📊 Lưu Đồ Ra Quyết Định Của Phần Cứng (Hardware Acceptance Decision Tree)
 
-Lưu đồ dưới đây tổng hợp trực quan toàn bộ quy trình 4 bước tuần tự mà phần cứng bxCAN tự động thực thi mỗi khi một frame CAN bay từ đường truyền bus vào vi điều khiển:
-
 ```mermaid
 graph TD
     A["Frame CAN trên Bus tới (ví dụ ID: 0x123)"] --> B{"Bước 1: Filter Scale?<br>(CAN_FS1R)"}
-    B -->|"32-bit Scale (FS1R=1)"| C{"Bước 2: Filter Mode?<br>(CAN_FM1R)"}
-    B -->|"16-bit Scale (FS1R=0)"| D["Chẻ đôi 2 thanh ghi 32-bit<br>➔ Chứa được 4 Standard IDs (11-bit)"]
-    C -->|"Mask Mode (FM1R=0)"| E["FR1: ID Mong muốn<br>FR2: MASK (1=Bắt buộc, 0=Bỏ qua)"]
-    C -->|"Identifier List Mode (FM1R=1)"| F["FR1: ID Khớp 100% (Ví dụ 0x100)<br>FR2: ID Khớp 100% (Ví dụ 0x200)"]
-    D --> G{"Bước 3: So Khớp ID?"}
-    E --> G
-    F --> G
+    
+    B -->|"32-bit Scale (FS1R = 1)"| C{"Bước 2: Filter Mode?<br>(CAN_FM1R)"}
+    B -->|"16-bit Scale (FS1R = 0)"| D{"Bước 2: Filter Mode?<br>(CAN_FM1R)"}
+    
+    C -->|"Mask Mode (FM1R = 0)"| E1["1 Bộ lọc 32-bit:<br>FR1 = ID, FR2 = MASK"]
+    C -->|"List Mode (FM1R = 1)"| E2["2 Bộ lọc 32-bit:<br>FR1 = ID 1, FR2 = ID 2"]
+    
+    D -->|"Mask Mode (FM1R = 0)"| F1["2 Bộ lọc 16-bit:<br>FR1 = ID 1 + MASK 1<br>FR2 = ID 2 + MASK 2"]
+    D -->|"List Mode (FM1R = 1)"| F2["4 Bộ lọc 16-bit:<br>Chứa được 4 Standard IDs<br>(ID 1, ID 2, ID 3, ID 4)"]
+    
+    E1 --> G{"Bước 3: So Khớp ID?"}
+    E2 --> G
+    F1 --> G
+    F2 --> G
+    
     G -->|"ĐÚNG (Khớp ID)"| H{"Bước 4: Gán FIFO nào?<br>(CAN_FFA1R)"}
     G -->|"SAI (Không Khớp)"| I["PHẦN CỨNG TỰ ĐỘNG HỦY FRAME (DROP)<br>Zero CPU Overhead!"]
+    
     H -->|"FFA1R = 0"| J["Đẩy vào Receive FIFO 0<br>➔ Tăng FMP0 ➔ Gọi CAN1_RX0_IRQHandler"]
     H -->|"FFA1R = 1"| K["Đẩy vào Receive FIFO 1<br>➔ Tăng FMP1 ➔ Gọi CAN1_RX1_IRQHandler"]
 ```
@@ -550,12 +608,15 @@ graph TD
 
 * **Tại sao cần lưu đồ này?** Trên mạng CAN ô tô, hàng ngàn frame bay qua bus liên tục mỗi giây. Nếu gói tin nào MCU cũng phải nhảy vào ngắt để đọc rồi dùng lệnh `if (id == ...)` kiểm tra, CPU sẽ bị nghẽn hoàn toàn (**Interrupt Starvation**). Mạch lọc phần cứng bxCAN giải quyết vấn đề này bằng cách tự động kiểm tra ID ngay trong silicon:
   1. **Bước 1 — Kiểm tra thanh ghi `CAN_FS1R` (Scale):** 
-     * Phần cứng kiểm tra xem lập trình viên cấu hình Bank này dùng độ rộng bao nhiêu bit.
-     * Nếu là `32-bit`: Dành cho các ID mở rộng 29-bit (Extended ID) hoặc Standard ID kèm kiểm tra cờ `IDE` / `RTR`.
-     * Nếu là `16-bit`: Phần cứng tự động chẻ đôi 2 thanh ghi 32-bit (`FR1`, `FR2`) thành 4 thanh ghi 16-bit nhỏ hơn. Vì Standard ID chỉ có 11-bit nên 1 Bank lúc này lọc được cùng lúc 4 ID khác nhau.
+     * Nếu là `32-bit`: Dành cho các ID mở rộng 29-bit (Extended ID) hoặc Standard ID kèm kiểm tra chặt chẽ cờ `IDE` / `RTR`.
+     * Nếu là `16-bit`: Phần cứng tự động chẻ đôi 2 thanh ghi 32-bit (`FR1`, `FR2`) thành 4 ngăn 16-bit nhỏ hơn để tối ưu hóa việc lọc các Standard ID 11-bit.
   2. **Bước 2 — Kiểm tra thanh ghi `CAN_FM1R` (Mode):**
-     * **Nhánh Mask Mode (`FM1R = 0`):** Áp dụng công thức so sánh bitwise logic: `(ID_nhận ^ ID_mong_muốn) & MASK == 0`. Bất kỳ bit nào trong thanh ghi Mask bằng `1` thì bit tương ứng của ID nhận được bắt buộc phải trùng khớp. Bit nào trong Mask bằng `0` thì coi như "Don't care" (bỏ qua). Nhánh này chuyên dùng để bắt trọn một dải ID (ví dụ từ `0x700` đến `0x70F`) hoặc nhận tất cả frame (**Accept All**: Mask = 0).
-     * **Nhánh List Mode (`FM1R = 1`):** Cả 2 thanh ghi đều chứa ID mục tiêu. Frame nhận được phải có ID bằng chính xác 100% với `FR1` hoặc `FR2`. Dùng khi chỉ cần bắt đích danh 1 hoặc 2 ID riêng lẻ.
+     * **Nếu ở 32-bit Scale:**
+       * *Mask Mode (`FM1R = 0`):* Dùng `FR1` làm Target ID và `FR2` làm Mask để lọc 1 dải ID mở rộng hoặc Accept All.
+       * *List Mode (`FM1R = 1`):* Dùng `FR1` và `FR2` làm 2 ID cụ thể khớp 100%.
+     * **Nếu ở 16-bit Scale:**
+       * *Mask Mode (`FM1R = 0`):* Ghép 4 ngăn thành 2 cặp (mỗi cặp gồm 1 ID 16-bit + 1 Mask 16-bit), lọc được **2 dải Standard ID**.
+       * *List Mode (`FM1R = 1`):* Cả 4 ngăn đều dùng làm ID cố định, lọc được **4 Standard IDs độc lập**.
   3. **Bước 3 — Ra quyết định So khớp (Match Logic):**
      * **Nếu KHÔNG KHỚP:** Mạch logic phần cứng lập tức vứt bỏ frame (DROP). Bộ nhớ FIFO không bị ghi đè, CPU hoàn toàn không bị ngắt, tải CPU bằng đúng 0%.
      * **Nếu KHỚP:** Chuyển tiếp frame sang Bước 4.

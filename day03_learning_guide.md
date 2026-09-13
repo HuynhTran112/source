@@ -138,6 +138,44 @@ $$T_{bit} = T_{Sync\_Seg} + T_{Prop\_Seg} + T_{Phase\_Seg1} + T_{Phase\_Seg2}$$
  <─────────────────────────────────── 87.5% ──────────────────────────────>▲ Điểm Lấy Mẫu (Sample Point)
 ```
 
+### 🔍 Ý nghĩa Vật lý & Nhiệm vụ của 4 Phân đoạn (Segments) trong 1 Bit CAN:
+
+1. **`Sync_Seg` (Synchronization Segment - Đoạn Đồng bộ):**
+   * **Độ dài:** Cố định đúng **$1\,t_q$** (theo chuẩn quốc tế ISO 11898-1, không thể thay đổi).
+   * **Nhiệm vụ:** Dùng để đồng bộ hóa cạnh xung giữa các nút trên mạng. Khi một bit mới bắt đầu, tín hiệu trên đường dây chuyển mức điện áp từ $1 \rightarrow 0$ (Cạnh xuống - Falling Edge). Mọi vi điều khiển trên bus lấy cạnh này làm mốc chuẩn rơi vào đúng `Sync_Seg` để đồng bộ lại bộ đếm thời gian nội bộ (Hard Synchronization).
+
+2. **`Prop_Seg` (Propagation Segment - Đoạn Bù trễ Dây dẫn & Transceiver):**
+   * **Nhiệm vụ:** Bù trừ độ trễ vật lý khi tín hiệu điện chạy dọc trên đường dây cáp và đi qua các cổng bán dẫn của chip CAN Transceiver.
+   * **Cơ sở vật lý:** 
+     * Tín hiệu điện chạy trên cáp đồng mất $\approx 5\text{ ns/m}$.
+     * Tín hiệu đi qua 2 chip CAN Transceiver (Node phát và Node nhận) trễ thêm $\approx 150 \dots 250\text{ ns}$.
+     * Trong cơ chế phân định quyền ưu tiên (Bus Arbitration) và bit xác nhận `ACK`, tín hiệu từ Node A phải truyền tới Node xa nhất B, rồi từ Node B phản hồi ngược lại Node A trong cùng 1 chu kỳ bit:
+       $$T_{Prop\_Seg} \ge 2 \times (t_{wire\_delay} + t_{transceiver\_delay})$$
+     * Đoạn `Prop_Seg` sinh ra để **chờ cho điện áp trên toàn bộ chiều dài sợi cáp ổn định hoàn toàn** trước khi phần cứng bước sang giai đoạn đo đạc.
+
+3. **`Phase_Seg1` (Phase Buffer Segment 1 - Đoạn Đệm Pha 1):**
+   * **Vị trí:** Nằm ngay trước **Điểm lấy mẫu (Sample Point)**.
+   * **Nhiệm vụ:** Kéo dài bit khi xung nhịp bị trễ pha (Resynchronization).
+   * **Cơ chế:** Nếu thạch anh của bên phát chạy hơi chậm (cạnh tín hiệu đến **muộn hơn dự kiến**), phần cứng bên nhận sẽ tự động **kéo dài thêm đoạn `Phase_Seg1`** một khoảng tối đa bằng `SJW` (Synchronization Jump Width). Việc kéo dài này giúp dời Điểm lấy mẫu lùi về sau, tránh đo nhầm vào lúc tín hiệu điện áp đang còn dao động chuyển mức.
+
+4. **`Phase_Seg2` (Phase Buffer Segment 2 - Đoạn Đệm Pha 2):**
+   * **Vị trí:** Nằm ngay sau **Điểm lấy mẫu (Sample Point)** kéo dài đến hết bit.
+   * **Nhiệm vụ:** Cắt ngắn bit khi xung nhịp bị sớm pha.
+   * **Cơ chế:** Nếu thạch anh của bên phát chạy hơi nhanh (cạnh tín hiệu đến **sớm hơn dự kiến**), phần cứng bên nhận sẽ tự động **cắt bớt độ dài của đoạn `Phase_Seg2`** (tối đa bằng `SJW`) để kết thúc bit sớm hơn, giúp sẵn sàng đón nhận bit tiếp theo đúng thời điểm mà không bị lệch nhịp.
+
+5. **`SJW` (Synchronization Jump Width - Biên độ Nhảy Đồng bộ):**
+   * Giới hạn số đơn vị $t_q$ tối đa mà phần cứng được phép co/dãn trên `Phase_Seg1` và `Phase_Seg2` trong mỗi chu kỳ tái đồng bộ (thường chọn $1\,t_q \dots 4\,t_q$).
+
+### 🎯 Tại sao Điểm lấy mẫu (Sample Point) tối ưu lại là $87.5\%$?
+* **Nguồn gốc chuẩn CiA 301:** Tổ chức quốc tế **CAN in Automation (CiA 301)** quy định ở các tốc độ $\le 500\text{ kbps}$, điểm lấy mẫu chuẩn bắt buộc là **$87.5\%$**.
+* **Bản chất toán học:** $87.5\% = \frac{7}{8} = 0.111_2$, là phân số nhị phân tối ưu cho các bộ đếm số trong silicon.
+* **Cơ sở vật lý:** Điểm lấy mẫu phải giải quyết sự xung đột giữa 2 yêu cầu:
+  * *Muốn đẩy lùi càng về cuối bit càng tốt ($> 80\%$):* Để đoạn `Prop_Seg` đủ dài, cho phép kết nối chiều dài dây cáp xa nhất có thể.
+  * *Không được đẩy quá sát đuôi bit ($< 90\%$):* Để đoạn `Phase_Seg2` còn đủ không gian cho phần cứng co dãn bù trừ độ trôi tần số (Clock Drift) do thạch anh nóng/lạnh.
+  * $\implies$ Điểm cân bằng cực trị giữa **chiều dài cáp tối đa** và **dung sai thạch anh lớn nhất** hội tụ chính xác tại **$87.5\%$**.
+
+---
+
 1. **Thời lượng 1 bit mục tiêu ở $500\text{ kbps}$:**
    $$T_{bit} = \frac{1}{500,000\text{ bps}} = 2000\text{ ns} = 2.0\,\mu\text{s}$$
 2. **Chọn tổng số đơn vị thời gian (Time Quanta - $N_q$) trong 1 bit:**  

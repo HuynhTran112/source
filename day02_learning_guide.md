@@ -206,7 +206,7 @@ PB7  --> AFRL7[3:0]  = 0111b (AF7) -> USART1_RX
 ## 2.3. Công thức tính Baudrate chuẩn cho STM32F7 (`USART_BRR`)
 
 Nguồn xung cấp cho `USART1` thuộc Bus APB2 có tần số $f_{PCLK2} = 108\text{ MHz}$.  
-Với Baudrate mục tiêu = $115200 \text{ bps}$, chế độ Oversampling by 16 (`OVER16 = 0`):
+Với Baudrate mục tiêu = $115200 \text{ bps}$, chế độ Oversampling by 16 (bit `OVER8 = 0` trong `USART_CR1`):
 
 $$\text{USARTDIV} = \frac{f_{PCLK2}}{\text{Baudrate}} = \frac{108,000,000}{115,200} = 937.5$$
 
@@ -240,7 +240,39 @@ Tra cứu RM0385 *Chapter 13: Direct memory access controller (DMA)* -> *Section
 
 ## 3.1. Khung Pseudocode & TODOs triển khai Driver Bare-metal
 
-### TODO 1: Cấu hình GPIO AF7 cho PA9 (TX) và PB7 (RX)
+> 📁 **Cấu trúc File dự án cần tạo/cập nhật cho Ngày 2:**
+> 1. [**`drivers/inc/uart_dma.h`**](file:///d:/Project/STM32F7/drivers/inc/uart_dma.h): Khai báo mảng `rx_buffer` căn lề 32-byte và các hàm `UART1_DMA_Init()`, `UART1_ReadRingBuffer()`.
+> 2. [**`drivers/src/uart_dma.c`**](file:///d:/Project/STM32F7/drivers/src/uart_dma.c): Chứa toàn bộ code cấu hình thanh ghi GPIO AF7, USART1, DMA2 Stream 2 Channel 4 và hàm ngắt `USART1_IRQHandler()`.
+> 3. [**`src/main.c`**](file:///d:/Project/STM32F7/src/main.c): Gọi `System_Clock_Init()` (216MHz), `UART1_DMA_Init()` và xử lý chuỗi dữ liệu nhận được trong vòng lặp `while(1)`.
+
+---
+
+### 📂 KHỐI 1: FILE HEADER [ `drivers/inc/uart_dma.h` ]
+
+#### TODO 1 [File: `drivers/inc/uart_dma.h`]: Khai báo Buffer 32-byte Aligned & Prototypes
+```c
+#ifndef UART_DMA_H
+#define UART_DMA_H
+
+#include "Reg.h"
+
+#define UART_RX_BUFFER_SIZE  64U
+
+/* Mảng Ring Buffer căn lề 32 bytes bắt buộc cho D-Cache Cortex-M7 */
+extern uint8_t dma_rx_ring_buffer[UART_RX_BUFFER_SIZE] __attribute__((aligned(32)));
+extern volatile uint8_t uart_rx_idle_flag;
+
+void UART1_DMA_Init(void);
+uint16_t UART1_DMA_GetReadIndex(void);
+
+#endif
+```
+
+---
+
+### 📂 KHỐI 2: FILE SOURCE DRIVER [ `drivers/src/uart_dma.c` ]
+
+#### TODO 2 [File: `drivers/src/uart_dma.c`]: Cấu hình GPIO AF7 cho PA9 (TX) và PB7 (RX)
 ```c
 // 1. Cấp clock cho GPIOA và GPIOB
 RCC->AHB1ENR |= (RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOBEN);
@@ -260,7 +292,7 @@ GPIOB->AFR[0] &= ~(0xFU << (7 * 4));
 GPIOB->AFR[0] |=  (0x7U << (7 * 4));
 ```
 
-### TODO 2: Cấu hình USART1 & Baudrate 115200
+#### TODO 3 [File: `drivers/src/uart_dma.c`]: Cấu hình USART1 & Baudrate 115200 at 108MHz
 ```c
 // 1. Cấp clock cho USART1 (Bus APB2)
 RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
@@ -278,16 +310,9 @@ USART1->CR1 |= USART_CR1_UE;
 // 5. Cho phép ngắt trong NVIC
 NVIC_EnableIRQ(USART1_IRQn);
 NVIC_SetPriority(USART1_IRQn, 5);
-
-// 1. Đặt độ ưu tiên ngắt (Priority = 5) tại thanh ghi NVIC_IPR (Interrupt Priority Register)
-// USART1 là IRQ 37 -> Ghi giá trị 5 vào 4 bit cao [7:4] của byte thứ 37
-// NVIC->IPR[37] = (5U << 4);
-// 2. Cho phép ngắt tại thanh ghi NVIC_ISER (Interrupt Set-Enable Register)
-// IRQ 37 nằm ở thanh ghi thứ 1 (37 / 32 = 1), tại bit thứ 5 (37 % 32 = 5)
-// NVIC->ISER[1] = (1U << 5);
 ```
 
-### TODO 3: Cấu hình DMA2 Stream 2 Channel 4 Circular Mode
+#### TODO 4 [File: `drivers/src/uart_dma.c`]: Cấu hình DMA2 Stream 2 Channel 4 Circular Mode
 ```c
 // 1. Cấp clock cho DMA2 (Bus AHB1)
 RCC->AHB1ENR |= RCC_AHB1ENR_DMA2EN;
@@ -308,6 +333,47 @@ DMA2_Stream2->CR |=  (4U << DMA_SxCR_CHSEL_Pos) | (2U << DMA_SxCR_PL_Pos) |
 
 // 5. Bật DMA2 Stream 2
 DMA2_Stream2->CR |= DMA_SxCR_EN;
+```
+
+#### TODO 5 [File: `drivers/src/uart_dma.c`]: Trình phục vụ ngắt USART1_IRQHandler() & Xóa Cache
+```c
+void USART1_IRQHandler(void) {
+    if (USART1->ISR & USART_ISR_IDLE) {
+        // 1. Invalidate D-Cache trước khi đọc Ring Buffer
+        SCB_InvalidateDCache_by_Addr((uint32_t *)dma_rx_ring_buffer, UART_RX_BUFFER_SIZE);
+        
+        // 2. Xóa cờ ngắt IDLE (W1C register -> dùng phép gán trực tiếp =)
+        USART1->ICR = USART_ICR_IDLECF;
+        uart_rx_idle_flag = 1;
+    }
+    
+    // Xóa cờ lỗi Overrun if any
+    if (USART1->ISR & USART_ISR_ORE) {
+        USART1->ICR = USART_ICR_ORECF;
+    }
+}
+```
+
+---
+
+### 📂 KHỐI 3: FILE MAIN CHÍNH [ `src/main.c` ]
+
+#### TODO 6 [File: `src/main.c`]: Khởi chạy System Clock & Vòng lặp Main
+```c
+#include "Sys_Clock.h"
+#include "uart_dma.h"
+
+int main(void) {
+    System_Clock_Init(); // Bật 216MHz Clock
+    UART1_DMA_Init();    // Khởi chạy UART RX DMA
+
+    while (1) {
+        if (uart_rx_idle_flag) {
+            uart_rx_idle_flag = 0;
+            // Xử lý gói tin vừa nhận được trong dma_rx_ring_buffer...
+        }
+    }
+}
 ```
 
 ---

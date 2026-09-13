@@ -290,6 +290,10 @@ GPIOA->AFR[1] |=  (0x7U << ((9 - 8) * 4));
 
 GPIOB->AFR[0] &= ~(0xFU << (7 * 4));
 GPIOB->AFR[0] |=  (0x7U << (7 * 4));
+
+uint16_t UART1_DMA_GetReadIndex(void) {
+    return (UART_RX_BUFFER_SIZE - DMA2_Stream2->NDTR);
+}
 ```
 
 #### TODO 3 [File: `drivers/src/uart_dma.c`]: Cấu hình USART1 & Baudrate 115200 at 108MHz

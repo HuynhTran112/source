@@ -291,9 +291,6 @@ GPIOA->AFR[1] |=  (0x7U << ((9 - 8) * 4));
 GPIOB->AFR[0] &= ~(0xFU << (7 * 4));
 GPIOB->AFR[0] |=  (0x7U << (7 * 4));
 
-uint16_t UART1_DMA_GetReadIndex(void) {
-    return (UART_RX_BUFFER_SIZE - DMA2_Stream2->NDTR);
-}
 ```
 
 #### TODO 3 [File: `drivers/src/uart_dma.c`]: Cấu hình USART1 & Baudrate 115200 at 108MHz
@@ -316,7 +313,7 @@ NVIC_EnableIRQ(USART1_IRQn);
 NVIC_SetPriority(USART1_IRQn, 5);
 ```
 
-#### TODO 4 [File: `drivers/src/uart_dma.c`]: Cấu hình DMA2 Stream 2 Channel 4 Circular Mode
+#### TODO 4 [File: `drivers/src/uart_dma.c`]: Cấu hình DMA2 Stream 2 Channel 4 Circular Mode và UART1_DMA_GetReadIndex()
 ```c
 // 1. Cấp clock cho DMA2 (Bus AHB1)
 RCC->AHB1ENR |= RCC_AHB1ENR_DMA2EN;
@@ -337,6 +334,9 @@ DMA2_Stream2->CR |=  (4U << DMA_SxCR_CHSEL_Pos) | (2U << DMA_SxCR_PL_Pos) |
 
 // 5. Bật DMA2 Stream 2
 DMA2_Stream2->CR |= DMA_SxCR_EN;
+uint16_t UART1_DMA_GetReadIndex(void) {
+    return (UART_RX_BUFFER_SIZE - DMA2_Stream2->NDTR);
+}
 ```
 
 #### TODO 5 [File: `drivers/src/uart_dma.c`]: Trình phục vụ ngắt USART1_IRQHandler() & Xóa Cache

@@ -364,16 +364,34 @@ void USART1_IRQHandler(void) {
 #include "uart_dma.h"
 
 int main(void) {
-    System_Clock_Init(); // Bật 216MHz Clock
-    UART1_DMA_Init();    // Khởi chạy UART RX DMA
+    System_Clock_Init(); // 1. Bật 216MHz System Clock
+    UART1_DMA_Init();    // 2. Khởi chạy UART1 RX DMA Circular Mode
+
+    uint16_t old_pos = 0; // Biến lưu con trỏ vị trí đã đọc lần trước
 
     while (1) {
+        // Kiểm tra xem ngắt IDLE trong ISR có báo hiệu dữ liệu mới về không
         if (uart_rx_idle_flag) {
-            uart_rx_idle_flag = 0;
-            // Xử lý gói tin vừa nhận được trong dma_rx_ring_buffer...
+            uart_rx_idle_flag = 0; // Xóa cờ mềm ngay lập tức
+            
+            // 1. Lấy vị trí ghi hiện tại mà DMA vừa bốc tới trong SRAM
+            uint16_t current_pos = UART1_DMA_GetReadIndex();
+            
+            // 2. Đọc tất cả các byte mới từ old_pos đến current_pos trong Ring Buffer
+            for (uint16_t i = old_pos; i != current_pos; i = (i + 1) % UART_RX_BUFFER_SIZE) {
+                uint8_t byte_nhan_duoc = dma_rx_ring_buffer[i];
+                
+                // =========================================================
+                // 💡 XỬ LÝ DỮ LIỆU TẠI ĐÂY (Ví dụ: kiểm tra chuỗi, bật LED...)
+                // =========================================================
+            }
+            
+            // 3. Cập nhật vị trí cũ bằng vị trí mới để lần ngắt sau đọc tiếp
+            old_pos = current_pos;
         }
     }
 }
+
 ```
 
 ---

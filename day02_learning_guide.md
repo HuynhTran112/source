@@ -278,6 +278,13 @@ USART1->CR1 |= USART_CR1_UE;
 // 5. Cho phép ngắt trong NVIC
 NVIC_EnableIRQ(USART1_IRQn);
 NVIC_SetPriority(USART1_IRQn, 5);
+
+// 1. Đặt độ ưu tiên ngắt (Priority = 5) tại thanh ghi NVIC_IPR (Interrupt Priority Register)
+// USART1 là IRQ 37 -> Ghi giá trị 5 vào 4 bit cao [7:4] của byte thứ 37
+// NVIC->IPR[37] = (5U << 4);
+// 2. Cho phép ngắt tại thanh ghi NVIC_ISER (Interrupt Set-Enable Register)
+// IRQ 37 nằm ở thanh ghi thứ 1 (37 / 32 = 1), tại bit thứ 5 (37 % 32 = 5)
+// NVIC->ISER[1] = (1U << 5);
 ```
 
 ### TODO 3: Cấu hình DMA2 Stream 2 Channel 4 Circular Mode

@@ -355,26 +355,104 @@ Trục t_q          |  t_q 01  | t_q 02  . . . . .  t_q 08 | t_q 09   . . . . . 
 
 ---
 
-### 🔢 1.3.6. Bốn Bước Tính Toán Bit Timing Cho STM32F746 ($f_{PCLK1} = 54\text{ MHz}$, $500\text{ kbps}$)
-   $$T_{bit} = \frac{1}{500,000\text{ bps}} = 2000\text{ ns} = 2.0\,\mu\text{s}$$
-2. **Chọn tổng số đơn vị thời gian (Time Quanta - $N_q$) trong 1 bit:**  
-   Chọn $N_q = 18\,t_q$. Khi đó thời lượng của $1\,t_q$ là:
-   $$t_q = \frac{T_{bit}}{18} = \frac{2000\text{ ns}}{18} \approx 111.11\text{ ns}$$
-3. **Tính toán bộ chia Baud Rate Prescaler (BRP):**
-   $$\text{BRP} = f_{PCLK1} \times t_q = 54\text{ MHz} \times \frac{2000\text{ ns}}{18} = \frac{54,000,000}{500,000 \times 18} = \mathbf{6}$$
-4. **Phân bổ các đoạn trong 1 Bit CAN:**
-   * $T_{Sync\_Seg} = 1\,t_q$ (Cố định theo chuẩn phần cứng CAN).
-   * Điểm lấy mẫu $87.5\% \implies (1 + T_{Prop\_Seg} + T_{Phase\_Seg1}) / 18 = 0.875 \implies 1 + T_{BS1} = 15.75 \approx 16\,t_q$.
-   * Đoạn $T_{BS1} = T_{Prop\_Seg} + T_{Phase\_Seg1} = \mathbf{14\,t_q}$ (hoặc $15\,t_q$).
-   * Đoạn $T_{BS2} = T_{Phase\_Seg2} = 18 - 1 - 15 = \mathbf{2\,t_q}$.
-   * Điểm lấy mẫu thực tế: $\frac{1 + 15}{18} = \frac{16}{18} = \mathbf{88.89\%}$ (Rất sát chuẩn $87.5\%$, sai số $0.0\%$).
-   * Synchronization Jump Width ($SJW$): Chọn $SJW = \mathbf{1\,t_q}$ hoặc $2\,t_q$.
+### 🔢 1.3.6. Bốn Bước Tính Toán Bit Timing Chi Tiết Cho STM32F746
 
-### Giá trị nạp vào các trường của thanh ghi `CAN_BTR`:
-* **`BRP[9:0]`:** Giá trị gán $= \text{BRP} - 1 = 6 - 1 = \mathbf{5}$ (Vì phần cứng tự cộng 1).
-* **`TS1[3:0]`:** Giá trị gán $= T_{BS1} - 1 = 15 - 1 = \mathbf{14}$ (Mã Hex `0xE`).
-* **`TS2[2:0]`:** Giá trị gán $= T_{BS2} - 1 = 2 - 1 = \mathbf{1}$ (Mã Hex `0x1`).
-* **`SJW[1:0]`:** Giá trị gán $= SJW - 1 = 1 - 1 = \mathbf{0}$.
+#### 📌 Câu hỏi Thực tế: Con số 500 kbps Tra ở Đâu để Biết?
+* **Không nằm trong Reference Manual hay Datasheet của STM32:** Khối bxCAN của STM32 là phần cứng vạn năng, hỗ trợ dải tốc độ từ 10 kbps đến 1000 kbps (1 Mbps). Chip không tự ép bạn phải chạy tốc độ nào.
+* **Nguồn tra cứu thực tế trong dự án:**
+  1. **Tài liệu đặc tả hệ thống (System Requirement Specification / ICD):** Do kiến trúc sư hệ thống hoặc khách hàng (OEM ô tô như VinFast, Toyota, Bosch...) quy định cho mạng xe.
+  2. **File cơ sở dữ liệu mạng CAN (File .DBC):** Phần mềm như CANoe, PCAN-View sẽ đọc file DBC để biết toàn bộ mạng đang vận hành ở tốc độ nào.
+  3. **Tiêu chuẩn công nghiệp quốc tế:**
+     * **ISO 15765-4 (OBD-II Chẩn đoán ô tô):** Bắt buộc cổng chẩn đoán xe con phải chạy ở tốc độ **500 kbps** (hoặc 250 kbps).
+     * **SAE J1939 (Xe tải nặng, máy công trình):** Mặc định chạy ở **250 kbps** hoặc **500 kbps**.
+     * **CiA 301 (CANopen):** Bảng tốc độ danh định chuẩn gồm 125 kbps, 250 kbps, 500 kbps, 1 Mbps.
+  * Vì vậy, khi làm bài toán hay dự án, tốc độ Baudrate luôn là **đầu vào cố định cho trước**.
+
+---
+
+#### 📐 Thuật Toán 3 Bước Giải Mã Tìm `Nq` Từ `BRP` (Không Chọn Bừa Bãi)
+
+Nhiều tài liệu chỉ ghi "chọn Nq = 18" mà không giải thích vì sao. Dưới đây là thuật toán suy luận số học chuẩn:
+
+* **Bước A: Ràng buộc phần cứng của Nq (RM0385 & ISO 11898-1)**
+  ```text
+  Nq = Sync_Seg (1 tq) + BS1 (1..16 tq) + BS2 (1..8 tq)
+  ==> 8 <= Nq <= 25
+  ```
+
+* **Bước B: Thiết lập phương trình số nguyên BRP**
+  ```text
+  BRP = f_PCLK1 / (Baudrate * Nq)
+      = 54,000,000 / (500,000 * Nq)
+      = 108 / Nq
+  ```
+  Để tốc độ Baudrate không bị sai số (Baudrate Error = 0.00%), **BRP bắt buộc phải là một số nguyên dương**.  
+  Điều này đồng nghĩa: **`Nq` bắt buộc phải là ƯỚC SỐ CỦA 108**.
+
+* **Bước C: Lọc các ước số của 108 trong đoạn [8, 25]**
+  Các ước số của 108 là: 1, 2, 3, 4, 6, 9, 12, 18, 27, 36, 54, 108.  
+  Các số nằm trong khoảng `8 <= Nq <= 25` chỉ có **3 ứng viên**:
+  * Ứng viên 1: `Nq = 9`  --> `BRP = 108 / 9 = 12` (Số nguyên)
+  * Ứng viên 2: `Nq = 12` --> `BRP = 108 / 12 = 9`  (Số nguyên)
+  * Ứng viên 3: `Nq = 18` --> `BRP = 108 / 18 = 6`  (Số nguyên)
+
+* **Bước D: Đánh giá Điểm lấy mẫu (Sample Point = 87.5%) để chọn nghiệm tối ưu**
+  * **Nếu chọn Nq = 9:**
+    * Sample point 87.5%: `9 * 0.875 = 7.875` --> Chọn `1 + BS1 = 8 tq`.
+    * Phân đoạn còn lại: `BS2 = 9 - 8 = 1 tq`.
+    * *Đánh giá rủi ro:* `BS2` chỉ có vỏn vẹn `1 tq`, phần cứng không còn biên độ thời gian để co ngắn bit khi thạch anh bị trôi pha nhiệt độ (`SJW` tối đa chỉ là 1). Rất dễ sinh lỗi bit ngoài thực tế. Loại!
+  * **Nếu chọn Nq = 12:**
+    * Sample point 87.5%: `12 * 0.875 = 10.5 tq`.
+    * Nếu chọn `1 + BS1 = 10` --> Sample point = `10 / 12 = 83.33%` (Lệch nhiều so với chuẩn 87.5%).
+    * Nếu chọn `1 + BS1 = 11` --> Sample point = `11 / 12 = 91.67%` (Quá sát đuôi bit, `BS2` chỉ còn 1 tq). Loại!
+  * **Nếu chọn Nq = 18:**
+    * Sample point 87.5%: `18 * 0.875 = 15.75` --> Chọn `1 + BS1 = 16 tq` (nghĩa là `BS1 = 15 tq`).
+    * Phân đoạn còn lại: `BS2 = 18 - 16 = 2 tq`.
+    * Điểm lấy mẫu thực tế: `16 / 18 = 88.89%` (Cực kỳ sát chuẩn quốc tế 87.5%).
+    * `BS2 = 2 tq` tạo biên độ đệm an toàn tuyệt đối cho phép cấu hình `SJW = 1 tq` hoặc `2 tq`.
+  * **KẾT LUẬN:** **`Nq = 18` là nghiệm số nguyên duy nhất đạt điểm cân bằng tối ưu.**
+
+---
+
+#### 📋 Bảng Tổng Kết Cấu Hình Thanh Ghi `CAN_BTR` Cho Tốc Độ 500 kbps
+
+```text
+Thông số đầu vào:
+• f_PCLK1        = 54,000,000 Hz
+• Baudrate       = 500,000 bps
+• Chu kỳ 1 bit   = 1 / 500,000 = 2000 ns (2.0 µs)
+
+Nghiệm phân bổ:
+• Nq             = 18 tq
+• tq             = 2000 ns / 18 = 111.11 ns
+• BRP            = 108 / 18 = 6
+• Sync_Seg       = 1 tq
+• BS1 (Prop+Ph1) = 15 tq
+• BS2 (Phase2)   = 2 tq
+• SJW            = 1 tq (hoặc 2 tq)
+• Sample Point   = (1 + 15) / 18 = 16 / 18 = 88.89% (Chuẩn CiA 301)
+```
+
+**Giá trị nạp vào các trường thanh ghi `CAN_BTR` (Tuân thủ quy tắc phần cứng N - 1):**
+
+| Trường Bit | Tên Trường | Ý Nghĩa | Công Thức Tính | Giá Trị Nạp (Thập Phân) | Giá Trị Hex / Nhị Phân |
+| :--- | :--- | :--- | :--- | :---: | :---: |
+| `BRP[9:0]` | Baud Rate Prescaler | Bộ chia tần số từ APB1 | `BRP - 1 = 6 - 1` | **`5`** | `0x005` (`0000000101b`) |
+| `TS1[3:0]` | Time Segment 1 | Đoạn BS1 (`Prop + Phase1`) | `BS1 - 1 = 15 - 1` | **`14`** | `0xE` (`1110b`) |
+| `TS2[2:0]` | Time Segment 2 | Đoạn BS2 (`Phase2`) | `BS2 - 1 = 2 - 1` | **`1`** | `0x1` (`001b`) |
+| `SJW[1:0]` | Resync Jump Width | Biên độ nhảy bù pha | `SJW - 1 = 1 - 1` | **`0`** | `0x0` (`00b`) |
+
+Mã code cấu hình Bare-metal vào vi điều khiển:
+```c
+/* Xóa các trường bit trước khi gán */
+CAN1->BTR &= ~((0x03UL << 24) | (0x07UL << 20) | (0x0FUL << 16) | (0x3FFUL << 0));
+
+/* Gán giá trị tính toán vào CAN1->BTR */
+CAN1->BTR |= ((0UL << 24)   |   /* SJW = 1 tq (nạp 0)   */
+              (1UL << 20)   |   /* TS2 = 2 tq (nạp 1)   */
+              (14UL << 16)  |   /* TS1 = 15 tq (nạp 14) */
+              (5UL << 0));      /* BRP = 6 (nạp 5)      */
+```
 
 ---
 

@@ -458,6 +458,31 @@ Trục t_q của từng Bit |  . . .       t_q 16  │t_q 17│(BỎ    │t_q 0
 =========================================================================================================================================
 ```
 
+#### 📌 Phân Tích 2 Trường Hợp Đặc Biệt Ngoài Sườn Xuống 1 -> 0
+
+Bên cạnh 3 kịch bản tái đồng bộ tại sườn xuống `1 -> 0` (In-Sync, Late Edge, Early Edge), hệ thống còn gặp 2 trạng thái bus đặc thù:
+
+1. **Trường hợp chuyển mức 0 -> 1 (Dominant sang Recessive - Cạnh lên 0.0V -> 3.3V trên chân RX):**
+   * **Bản chất phần cứng:** Các khóa MOSFET trong chip Transceiver ngắt hoàn toàn (High-Z). Hai dây `CAN_H` và `CAN_L` không còn nguồn ép, toàn bộ điện tích tích tụ trên điện dung ký sinh của dây cáp phải tự xả qua điện trở đầu cuối $60\ \Omega$ theo hằng số thời gian $\tau = R \cdot C$.
+   * **Hệ quả kỹ thuật:** Sườn chuyển mức này có độ dốc thoai thoải, phụ thuộc vào chiều dài đường dây và số node trong mạng (dao động từ $100\text{ ns}$ đến hơn $300\text{ ns}$). Do sai số thời gian quá lớn, chuẩn **ISO 11898-1 nghiêm cấm sử dụng sườn này để tái đồng bộ**.
+
+2. **Trường hợp các bit đồng mức logic liên tiếp (0 -> 0 hoặc 1 -> 1):**
+   * **Bản chất phần cứng:** Điện áp trên bus duy trì phẳng lặng hoàn toàn (giữ nguyên $V_{DIFF} \approx 2.0\text{V}$ hoặc $0.0\text{V}$). Không có bất kỳ sườn chuyển mức nào xuất hiện.
+   * **Hệ quả kỹ thuật:** Bộ đếm Time Quanta của các node phải chạy tự do (free-running). Sự sai lệch tần số thạch anh giữa các node sẽ tích lũy dần theo từng bit trôi qua.
+   * **Cơ chế khắc phục bằng Bit Stuffing:** Để ngăn sai số thạch anh tích lũy quá lớn làm trượt điểm lấy mẫu, chuẩn CAN áp dụng quy tắc **Bit Stuffing**: Sau **5 bit liên tiếp có cùng mức logic**, bên phát bắt buộc phải tự động chèn thêm **1 bit có mức logic đảo ngược (Stuff Bit)**. Điều này đảm bảo cứ tối đa 5 bit chắc chắn sẽ xuất hiện một sườn chuyển mức `1 -> 0` để khóa pha đồng hồ trở lại.
+
+---
+
+#### 🎯 ĐÚC KẾT CỐT LÕI: BẢN CHẤT VẬT LÝ MOSFET / XẢ TỤ & KIỂM SOÁT SAI SỐ ĐỒNG BỘ
+
+> [!IMPORTANT]
+> **TỔNG KẾT BẢN CHẤT VẬT LÝ VÀ QUY TRÌNH ĐỒNG BỘ BIT TRÊN BUS CAN:**
+>
+> 1. **Chuyển mức `1 -> 0`:** Do các khóa **MOSFET của Transceiver chủ động kích hoạt (Active Drive)** để bơm nguồn ép bus về đúng điện áp chuẩn ($3.5\text{V} / 1.5\text{V}$), dập tắt điện dung ký sinh cực nhanh trong $10 - 20\text{ ns}$ $\rightarrow$ Sườn dốc đứng, thời gian chuyển mức chuẩn xác nên **sai số được hạn chế tối đa**.
+> 2. **Chuyển mức `0 -> 1`:** Do **MOSFET tắt hoàn toàn (High-Z)**, năng lượng tích tụ trên tụ ký sinh của dây cáp **tự xả tự do** qua điện trở đầu cuối $60\ \Omega$ $\rightarrow$ Thời gian xả biến động theo độ dài cáp và số lượng node nên **sai số rất cao** (bị cấm dùng để đồng bộ).
+> 3. **Mục đích chia 3 kịch bản ở sườn `1 -> 0`:** Nhằm đo đạc và điều chỉnh `Phase_Seg` (co/dãn bằng `SJW`) để **khắc phục sai số tần số thạch anh** giữa các Node tích lũy qua cả chuỗi chuyển mức `1 -> 0` lẫn `0 -> 1`.
+> 4. **Kiểm soát sai số tụ điện và sóng phản xạ:** Toàn bộ sai số do quá trình nạp/xả tụ ký sinh và sóng dao động phản xạ ở cả 2 trường hợp (`0 -> 1` hoặc `1 -> 0`) được **kiểm soát triệt để bằng Điểm lấy mẫu (Sample Point)** đặt muộn ở mức **$87.5\% - 88.89\%$** (tại mốc $1777\text{ ns}$ trên bit $2000\text{ ns}$), đảm bảo dữ liệu chỉ được chốt khi điện áp vi sai trên bus đã ổn định thành đường thẳng DC phẳng lặng tuyệt đối.
+
 ---
 
 ## 1.4. Cơ chế 28 Filter Banks & Phân Quyền CAN1 Master

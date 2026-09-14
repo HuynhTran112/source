@@ -600,8 +600,8 @@ graph TD
     G -->|"ĐÚNG (Khớp ID)"| H{"Bước 4: Gán FIFO nào?<br>(CAN_FFA1R)"}
     G -->|"SAI (Không Khớp)"| I["PHẦN CỨNG TỰ ĐỘNG HỦY FRAME (DROP)<br>Zero CPU Overhead!"]
     
-    H -->|"FFA1R = 0"| J["Đẩy vào Receive FIFO 0<br>➔ Tăng FMP0 ➔ Gọi CAN1_RX0_IRQHandler"]
-    H -->|"FFA1R = 1"| K["Đẩy vào Receive FIFO 1<br>➔ Tăng FMP1 ➔ Gọi CAN1_RX1_IRQHandler"]
+    H -->|"FFA1R = 0"| J["Đẩy vào Receive FIFO 0<br>➔ Tăng FMP0 ➔ CAN1_RX0_IRQHandler"]
+    H -->|"FFA1R = 1"| K["Đẩy vào Receive FIFO 1<br>➔ Tăng FMP1 ➔ CAN1_RX1_IRQHandler"]
 ```
 
 #### 🔍 Diễn Giải Từng Bước Của Lưu Đồ Quyết Định Bộ Lọc 1.4:

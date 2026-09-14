@@ -1,0 +1,33 @@
+# ==============================================================================
+# Chỉ theo dõi tài liệu học Markdown (Day 00 -> Day 14)
+# Bỏ qua toàn bộ mã nguồn C/C++, cấu hình IDE và tài liệu PDF nặng
+# ==============================================================================
+
+# 1. Bỏ qua các file tài liệu PDF nặng (RM.pdf 347MB vượt giới hạn 100MB của GitHub!)
+*.pdf
+*.PDF
+*.htm
+
+# 2. Bỏ qua mã nguồn C/C++ và cấu hình dự án baremetal
+drivers/
+src/
+.agents/
+.vscode/
+
+# 3. Bỏ qua file build & artifacts biên dịch
+build/
+bin/
+obj/
+*.o
+*.elf
+*.bin
+*.hex
+*.axf
+*.map
+*.d
+
+# 4. Bỏ qua file tạm của hệ điều hành và editor
+*.swp
+*~
+.DS_Store
+Thumbs.db

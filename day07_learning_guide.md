@@ -165,6 +165,55 @@ west flash
 
 ---
 
+### 0.6. Hướng Dẫn Cài Đặt Toàn Bộ Sang Ổ Đĩa D:\ (Tránh Làm Đầy Ổ C:\)
+
+> 💡 **Khuyến nghị thực tế:** Toàn bộ mã nguồn Zephyr, các thư viện mở rộng (HAL ST, LVGL, CMSIS) và bộ Zephyr SDK chiếm khoảng **5 GB đến 8 GB** dung lượng. Nếu ổ `C:\` của bạn hạn chế dung lượng, bạn **HOÀN TOÀN NÊN CÀI TOÀN BỘ SANG Ổ `D:\`** theo quy trình chuẩn sau:
+
+#### Bước 1: Khởi tạo thư mục và môi trường ảo Python trên ổ D:\
+Mở PowerShell và gõ các lệnh sau:
+```powershell
+# Chuyển sang ổ đĩa D
+D:
+mkdir D:\zephyrproject
+cd D:\zephyrproject
+
+# Tạo và kích hoạt môi trường ảo Python trên ổ D
+python -m venv D:\zephyrproject\.venv
+D:\zephyrproject\.venv\Scripts\Activate.ps1
+
+# Cài đặt công cụ west vào môi trường ảo
+pip install --upgrade pip
+pip install west
+```
+
+#### Bước 2: Tải mã nguồn Zephyr RTOS vào D:\zephyrproject
+```powershell
+# Khởi tạo workspace ngay tại D:\zephyrproject
+west init -m https://github.com/zephyrproject-rtos/zephyr --mr v3.7.0 D:\zephyrproject
+cd D:\zephyrproject
+west update
+west zephyr-export
+
+# Cài đặt toàn bộ dependencies
+pip install -r D:\zephyrproject\zephyr\scripts\requirements.txt
+```
+
+#### Bước 3: Cài đặt Zephyr SDK sang ổ D:\ (Ví dụ D:\zephyr-sdk-0.16.8)
+```powershell
+# Cài toolchain ARM Cortex-M trực tiếp vào thư mục chỉ định trên ổ D
+west sdk install -t arm-zephyr-eabi -d D:\zephyr-sdk-0.16.8
+```
+
+#### Bước 4: Thiết lập biến môi trường Windows trỏ cố định sang ổ D:\
+Chạy 2 lệnh sau trong PowerShell hoặc Command Prompt để hệ thống nhớ vĩnh viễn:
+```powershell
+setx ZEPHYR_BASE "D:\zephyrproject\zephyr"
+setx ZEPHYR_SDK_INSTALL_DIR "D:\zephyr-sdk-0.16.8"
+```
+*(Sau đó tắt PowerShell đi mở lại để hệ thống nhận diện biến môi trường mới. Khi mở lại, chỉ cần chạy lệnh `D:\zephyrproject\.venv\Scripts\Activate.ps1` là bạn đã có trọn vẹn môi trường Zephyr hoàn chỉnh chạy 100% trên ổ `D:\`!)*
+
+---
+
 # 🧠 BƯỚC 1: KIẾN TRÚC HỆ THỐNG & CƠ CHẾ HOẠT ĐỘNG (SYSTEM ARCHITECTURE)
 
 ## 1.1. Triết Lý Thiết Kế của Zephyr RTOS: Devicetree + Kconfig

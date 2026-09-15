@@ -8,16 +8,16 @@
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                           LỘ TRÌNH 4 BƯỚC CHINH PHỤC NGÀY 7                                     │
-├───────────────────┬───────────────────┬────────────────────────────┬────────────────────────────┤
-│ BƯỚC 1: KIẾN TRÚC │ BƯỚC 2: THỰC CHIẾN│ BƯỚC 3: GÕ CODE ỨNG DỤNG   │ BƯỚC 4: PHỎNG VẤN          │
-│ • Triết lý Zephyr │ • Soạn prj.conf   │ • Gắn nhãn file cụ thể     │ • Bộ 5 câu hỏi vặn Zephyr  │
-│ • Devicetree vs   │ • Viết overlay    │ • TODO 1 [prj.conf]        │   & Devicetree             │
-│   Compile Macros  │ • Bảng Kconfig    │ • TODO 2 [app.overlay]     │ • MPU Stack Guard Trap     │
-│ • Multi-threading │ • Pinctrl Node    │ • TODO 3 [CMakeLists.txt]  │ • Cooperative vs Preempt   │
-│ • MPU Stack Guard │ • Khóa Device     │ • TODO 4-5 [src/main.c]    │ • Kịch bản trả lời 60s     │
-│ • Zephyr Logging  │   Binding API     │ • Mổ xẻ 5 Bug hệ thống     │   (Elevator Pitch)         │
-└───────────────────┴───────────────────┴────────────────────────────┴────────────────────────────┘
+│                           LỘ TRÌNH 5 BƯỚC CHINH PHỤC NGÀY 7                                     │
+├───────────────────┬───────────────────┬───────────────────┬────────────────────────────┬────────┤
+│ BƯỚC 0: TOOLCHAIN │ BƯỚC 1: KIẾN TRÚC │ BƯỚC 2: THỰC CHIẾN│ BƯỚC 3: GÕ CODE ỨNG DỤNG   │ BƯỚC 4:│
+│ • Cài đặt Host    │ • Triết lý Zephyr │ • Soạn prj.conf   │ • Gắn nhãn file cụ thể     │ PHỎNG  │
+│   tools (CMake...)│ • Devicetree vs   │ • Viết overlay    │ • TODO 1 [prj.conf]        │ VẤN    │
+│ • Python & West   │   Compile Macros  │ • Bảng Kconfig    │ • TODO 2 [app.overlay]     │ • Bộ 5 │
+│ • Zephyr SDK ARM  │ • Multi-threading │ • Pinctrl Node    │ • TODO 3 [CMakeLists.txt]  │   câu  │
+│ • Sanity Blinky   │ • MPU Stack Guard │ • Khóa Device     │ • TODO 4-5 [src/main.c]    │   hỏi  │
+│   stm32f746g_disco│ • Zephyr Logging  │   Binding API     │ • Mổ xẻ 5 Bug hệ thống     │   vặn  │
+└───────────────────┴───────────────────┴───────────────────┴────────────────────────────┴────────┘
 ```
 
 ---
@@ -33,6 +33,135 @@
 | **5** | **Preemptive vs Cooperative** | Phân biệt Priority: Giá trị âm (từ `-CONFIG_NUM_COOP_PRIO` đến `-1`) là luồng Cooperative (không bị chen ngang), giá trị dương (từ `0` đến `CONFIG_NUM_PREEMPT_PRIO-1`) là luồng Preemptive. |
 | **6** | **Deferred Logging** | Dùng `CONFIG_LOG_MODE_DEFERRED=y`. Tuyệt đối không dùng `printf` thô hay log Blocking trong ISR/Real-time threads để không làm trôi thời gian thực (Jitter). |
 | **7** | **Pinctrl Dependency** | Trong STM32 Devicetree, chân GPIO không được cấu hình tự do bằng thanh ghi trong driver mà phải được khai báo tập trung trong node `&pinctrl` của file overlay. |
+
+---
+
+# ⚙️ BƯỚC 0: HƯỚNG DẪN CÀI ĐẶT MÔI TRƯỜNG PHÁT TRIỂN ZEPHYR RTOS (TOOLCHAIN & SDK SETUP)
+
+> **Tầm quan trọng:** Khác với Bare-metal (chỉ cần cài ARM GCC và Make), Zephyr RTOS là một hệ sinh thái mã nguồn mở hiện đại gồm hàng trăm module phần mềm. Việc thiết lập đúng công cụ quản trị đa kho mã nguồn **`west`**, bộ biên dịch chéo chính thức **Zephyr SDK** và trình biên dịch cây thiết bị **DTC** là điều kiện tiên quyết bắt buộc trước khi bước vào viết code!
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                        HỆ THỐNG CÔNG CỤ XÂY DỰNG ZEPHYR RTOS (BUILD SYSTEM)                      │
+├───────────────────┬─────────────────────────────────────────────────────────────────────────────┤
+│ 1. Python 3.10+   │ Môi trường chạy công cụ `west`, kconfiglib, và bộ tiền xử lý Devicetree    │
+│ 2. West Meta-Tool │ Quản lý Git repository đa repo, tải module con, gọi lệnh build và nạp flash │
+│ 3. CMake & Ninja  │ Hệ thống sinh file biên dịch và thực thi build code song song siêu tốc      │
+│ 4. DTC (devicetree│ Trình biên dịch cú pháp cây thiết bị từ `.dts`/`.overlay` sang mã C macro   │
+│ 5. Zephyr SDK     │ Bộ Cross-Compiler (`arm-zephyr-eabi-gcc`), GDB Debugger, Newlib C library   │
+└───────────────────┴─────────────────────────────────────────────────────────────────────────────┘
+```
+
+> 📖 **Hướng Dẫn Tra Cứu Tài Liệu Cài Đặt Chính Thức Từ Zephyr Project:**
+> 1. **Mở trình duyệt truy cập:** `https://docs.zephyrproject.org/latest/develop/getting_started/index.html`
+> 2. **Tìm các đề mục cốt lõi:**
+>    * Mục 1: **Install dependencies** (Chọn tab tương ứng với hệ điều hành Windows hoặc Linux / Ubuntu).
+>    * Mục 2: **Get Zephyr and install Python dependencies** (Lệnh `west init` và `west update`).
+>    * Mục 3: **Install Zephyr SDK** (Tải bundle `zephyr-sdk-0.16.8` hoặc dùng `west sdk install`).
+>    * Mục 4: **Build your first sample application** (Kiểm tra với ứng dụng mẫu `samples/basic/blinky`).
+
+---
+
+### 0.1. Cài Đặt Các Công Cụ Nền Tảng (Host Tools)
+
+#### Cách 1: Trên Hệ Điều Hành Windows (PowerShell)
+Mở PowerShell dưới quyền Administrator và sử dụng trình quản lý gói **Chocolatey**:
+```powershell
+# Cài đặt trình quản lý gói Chocolatey (nếu máy tính chưa có)
+Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+
+# Cài đặt toàn bộ bộ công cụ nền tảng cho Zephyr
+choco install -y cmake --installargs 'ADD_CMAKE_TO_PATH=System'
+choco install -y ninja gperf python git dtc-msys2
+```
+
+#### Cách 2: Trên Hệ Điều Hành Linux / Ubuntu (hoặc Windows WSL2)
+```bash
+# Cập nhật danh sách gói và cài đặt các công cụ biên dịch
+sudo apt update
+sudo apt install -y --no-install-recommends \
+  git cmake ninja-build gperf ccache dfu-util \
+  device-tree-compiler wget python3-dev python3-pip \
+  python3-venv xz-utils file make gcc gcc-multilib \
+  g++-multilib libsdl2-dev libmagic1
+```
+
+---
+
+### 0.2. Thiết Lập Môi Trường Ảo Python & Cài Đặt Meta-Tool `west`
+
+Nên sử dụng môi trường ảo Python (`venv`) để tránh xung đột thư viện giữa các dự án:
+
+```bash
+# 1. Tạo thư mục làm việc Zephyr và khởi tạo Python Virtual Environment
+python -m venv ~/zephyrproject/.venv
+
+# 2. Kích hoạt môi trường ảo:
+# Trên Windows PowerShell:
+~/zephyrproject/.venv/Scripts/Activate.ps1
+# Trên Linux / macOS / WSL2:
+source ~/zephyrproject/.venv/bin/activate
+
+# 3. Cài đặt công cụ quản trị west bên trong môi trường ảo
+pip install --upgrade pip
+pip install west
+```
+
+---
+
+### 0.3. Tải Mã Nguồn Zephyr RTOS & Cài Đặt Python Dependencies
+
+```bash
+# 1. Khởi tạo workspace trỏ đến phiên bản Zephyr LTS ổn định (khuyến nghị v3.7.0 LTS)
+west init -m https://github.com/zephyrproject-rtos/zephyr --mr v3.7.0 ~/zephyrproject
+
+# 2. Chuyển vào thư mục workspace và đồng bộ toàn bộ các kho module con (HAL ST, LVGL, CMSIS, mbedTLS...)
+cd ~/zephyrproject
+west update
+
+# 3. Xuất gói CMake để hệ thống tự nhận diện đường dẫn Zephyr
+west zephyr-export
+
+# 4. Cài đặt toàn bộ danh mục thư viện Python bắt buộc của Zephyr (DTC parser, Kconfiglib...)
+pip install -r ~/zephyrproject/zephyr/scripts/requirements.txt
+```
+
+---
+
+### 0.4. Cài Đặt Bộ Trình Biên Dịch Chéo Zephyr SDK (ARM Toolchain)
+
+Zephyr cung cấp bộ công cụ **Zephyr SDK** độc lập chứa trình biên dịch tối ưu hóa `arm-zephyr-eabi-gcc` riêng biệt:
+
+```bash
+# 1. Tải và cài đặt tự động Zephyr SDK thông qua west (Phiên bản khuyến nghị: 0.16.8)
+cd ~/zephyrproject
+west sdk install -t arm-zephyr-eabi
+
+# 2. Đối với người dùng Linux/WSL2: Cài đặt udev rules để nạp mạch qua ST-Link USB không cần quyền root
+sudo cp ~/zephyr-sdk-0.16.8/sysroots/x86_64-pokysdk-linux/usr/share/openocd/contrib/60-openocd.rules /etc/udev/rules.d/
+sudo udevadm control --reload
+```
+
+> 💡 **Mẹo cấu hình biến môi trường cố định (Environment Variables):**  
+> Đảm bảo biến môi trường `ZEPHYR_BASE` trỏ tới đường dẫn: `~/zephyrproject/zephyr`  
+> Và `ZEPHYR_SDK_INSTALL_DIR` trỏ tới thư mục cài đặt SDK (ví dụ: `C:\zephyr-sdk-0.16.8` hoặc `~/.local/opt/zephyr-sdk-0.16.8`).
+
+---
+
+### 0.5. Kiểm Tra Hoạt Động (Sanity Check): Build & Flash Mẫu Blinky Đầu Tiên
+
+Để khẳng định môi trường đã cài đặt hoàn hảo 100%, hãy thực hiện biên dịch ứng dụng mẫu chớp tắt LED (`blinky`) cho kit **STM32F746G-Discovery**:
+
+```bash
+# 1. Biên dịch ứng dụng mẫu blinky với board stm32f746g_disco
+west build -b stm32f746g_disco zephyr/samples/basic/blinky -p auto
+
+# 2. Cắm kit STM32F746G-DISCO vào máy tính qua cổng USB ST-Link và nạp firmware
+west flash
+```
+
+* **Kết quả kiểm tra thành công:** Đèn LED xanh (LD1 / Green LED) trên bo mạch STM32F746G-DISCO bắt đầu chớp tắt với chu kỳ 1 giây.  
+* Sau khi hoàn tất bước chuẩn bị môi trường này, bạn đã sẵn sàng bước vào **Bước 1** để khám phá kiến trúc Devicetree và Kconfig!
 
 ---
 

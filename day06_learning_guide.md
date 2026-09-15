@@ -31,19 +31,32 @@
 | **2** | **Access Type** | **CỰC KỲ QUAN TRỌNG:** Thanh ghi `IWDG_KR` chỉ ghi (`Write-only`), không thể đọc. Cờ `EWIF` (Early Wakeup Interrupt Flag trong `WWDG_SR`) là dạng `rc_w0` (Ghi `0` để xóa cờ). |
 | **3** | **Multi-Bit Clear-Set** | Áp dụng quy tắc xóa trước - gán sau (`REG &= ~MASK; REG |= VALUE;`) cho các trường đa bit: `PR[2:0]` trong `IWDG_PR`, `W[6:0]` trong `WWDG_CFR`, và `PLS[2:0]` trong `PWR_CR1`. |
 | **4** | **`volatile` Qualification** | Mọi struct ánh xạ thanh ghi IWDG, WWDG, DBGMCU và các cờ trạng thái chia sẻ trong ngắt NMI/PVD bắt buộc dùng `volatile`. |
-| **5** | **Interrupt Workflow** | Quy trình ngắt bất khả kháng CSS NMI: Mất dao động HSE $\rightarrow$ Phần cứng dựng cờ `CSSF` trong `RCC_CIR` $\rightarrow$ Tự động nhảy vào `NMI_Handler` (Exception số 2, không thể bị vô hiệu hóa bởi `__disable_irq`) $\rightarrow$ Xóa cờ bằng `RCC->CIR |= RCC_CIR_CSSC`. |
+| **5** | **Interrupt Workflow** | Quy trình ngắt bất khả kháng CSS NMI: Mất dao động HSE -> Phần cứng dựng cờ `CSSF` trong `RCC_CIR` -> Tự động nhảy vào `NMI_Handler` (Exception số 2, không thể bị vô hiệu hóa bởi `__disable_irq`) -> Xóa cờ bằng `RCC->CIR |= RCC_CIR_CSSC`. |
 | **6** | **RM / DS Lookup** | Cung cấp chính xác Chapter, Section, từ khóa `Ctrl + F`, công thức `Base Address + Offset` cho `IWDG` (RM0385 Chapter 25), `WWDG` (Chapter 26), `DBGMCU` (Chapter 38) và `PWR/PVD` (Chapter 6). |
-| **7** | **Hardware Rationale & Specs** | Bố trí cơ sở kỹ thuật: tần số $f_{LSI} \approx 32\text{ kHz}$ (dao động $17\text{kHz} - 47\text{kHz}$ theo nhiệt độ), bảng công thức tính thời gian timeout IWDG và ngưỡng cửa sổ WWDG. |
+| **7** | **Hardware Rationale & Specs** | Bố trí cơ sở kỹ thuật: tần số f_LSI ~ 32 kHz (dao động 17 kHz - 47 kHz theo nhiệt độ), bảng công thức tính thời gian timeout IWDG và ngưỡng cửa sổ WWDG. |
 
 ---
 
 # 🧠 BƯỚC 1: NGUYÊN LÝ PHẦN CỨNG & CƠ CHẾ VẬT LÝ (HARDWARE ARCHITECTURE)
 
+## 1.0. So Sánh Bản Chất: Hệ Thống Dân Dụng vs Hệ Thống An Toàn Đa Tầng Công Nghiệp / Automotive
+
+Trước khi đi vào các thanh ghi bảo vệ `IWDG_KR`, `WWDG_CR` và ngắt cứu trợ mất xung `CSS NMI`, hãy so sánh sự khác biệt sinh tử giữa hai thế giới thiết kế nhúng:
+
+| Tiêu chí An toàn | Thiết kế Nhúng Dân dụng / Đơn giản | Kiến trúc Bảo vệ Đa Tầng Chuẩn Công nghiệp (STM32F7) |
+| :--- | :--- | :--- |
+| **Khi Vi điều khiển bị Treo (Deadlock)** | Thiết bị đơ vĩnh viễn, ngưng hoạt động, buộc người dùng phải rút nguồn cắm lại thủ công. | **Chó canh độc lập IWDG (Independent Watchdog)**: Chạy bằng xung nhịp riêng biệt LSI 32 kHz hoàn toàn cách ly với xung chính. Nếu CPU bị treo quá thời gian quy định, phần cứng tự động kích hoạt RESET hệ thống! |
+| **Khi Luồng Lệnh Chạy Bất Thường (Out of Control)** | Vòng lặp bị nhảy cóc hoặc chạy quá nhanh nhưng vẫn xóa cờ Watchdog, lỗi bị che giấu âm thầm. | **Chó canh cửa sổ WWDG (Window Watchdog)**: Chỉ cho phép làm tươi trong một khoảng thời gian cửa sổ xác định. Làm tươi quá sớm hoặc quá muộn đều kích hoạt Reset hệ thống ngay lập tức. |
+| **Khi Thạch Anh Ngoài HSE Bị Hỏng / Rung Gãy** | Toàn bộ vi điều khiển chết đứng do mất xung nhịp chủ SYSCLK, cực kỳ nguy hiểm trên xe hơi. | **Hệ thống An toàn Xung nhịp CSS (Clock Security System)**: Phần cứng tự phát hiện mất xung HSE trong vài nano-giây, lập tức chuyển sang xung nội HSI 16 MHz và kích hoạt ngắt cứu trợ khẩn cấp NMI (Non-Maskable Interrupt). |
+| **Khi Nguồn Cung Cấp Bị Sụt Áp (Brown-Out)** | Vi điều khiển hoạt động chập chờn, ghi đè dữ liệu rác làm hỏng bộ nhớ Flash/EEPROM. | **Bộ Giám sát Điện áp PVD (Programmable Voltage Detector)**: Phát hiện điện áp sụt xuống ngưỡng nguy hiểm, cảnh báo ngắt sớm để kịp thời lưu trữ trạng thái an toàn trước khi sập nguồn hoàn toàn. |
+| **Đối chiếu với Môi trường RTOS** | Chỉ "nuôi chó" ở 1 Task duy nhất, Task khác chết thì Watchdog vẫn bị lừa. | **Cơ chế Watchdog Checkpoint**: Mọi Task quan trọng đều phải cập nhật cờ sống sót vào Event Group; Task quản lý Watchdog chỉ "làm tươi" phần cứng khi tất cả các Task đều khỏe mạnh. |
+
+
 ## 1.1. Bản chất Phần cứng của IWDG (Independent Watchdog)
 
 Khối **IWDG** là một mạch đếm lùi phần cứng 12-bit hoàn toàn độc lập với phần còn lại của chip:
-* **Nguồn xung độc lập:** Được cấp xung riêng biệt bởi bộ dao động nội **LSI (Low-Speed Internal RC) $\approx 32\text{ kHz}$**. Xung LSI tiếp tục dao động kể cả khi thạch anh ngoài HSE bị hỏng, bộ nhân PLL mất khóa pha, hoặc CPU rơi vào các chế độ tiết kiệm điện sâu (Stop/Standby).
-* **Cơ chế hoạt động:** Bộ đếm 12-bit đếm lùi từ giá trị nạp sẵn $\text{RLR}$ về $0$. Nếu trước khi chạm mức $0$, phần mềm không ghi mã **`0xAAAA`** vào thanh ghi khóa `IWDG_KR` (hành động "Feed Dog / Kick Watchdog"), mạch phần cứng sẽ **kéo chân Reset nội bộ xuống mức thấp $\implies$ Vi điều khiển bị Reset cưỡng bức ngay lập tức**!
+* **Nguồn xung độc lập:** Được cấp xung riêng biệt bởi bộ dao động nội **LSI (Low-Speed Internal RC) khoảng 32 kHz**. Xung LSI tiếp tục dao động kể cả khi thạch anh ngoài HSE bị hỏng, bộ nhân PLL mất khóa pha, hoặc CPU rơi vào các chế độ tiết kiệm điện sâu (Stop/Standby).
+* **Cơ chế hoạt động:** Bộ đếm 12-bit đếm lùi từ giá trị nạp sẵn `RLR` về 0. Nếu trước khi chạm mức 0, phần mềm không ghi mã **`0xAAAA`** vào thanh ghi khóa `IWDG_KR` (hành động "Feed Dog / Kick Watchdog"), mạch phần cứng sẽ **kéo chân Reset nội bộ xuống mức thấp -> Vi điều khiển bị Reset cưỡng bức ngay lập tức**!
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
@@ -74,23 +87,23 @@ Khối **IWDG** là một mạch đếm lùi phần cứng 12-bit hoàn toàn đ
 
 ### Công thức Toán học Tính Thời Gian Timeout của IWDG:
 Thời gian đếm lùi tối đa trước khi Reset hệ thống được tính theo công thức:
-$$T_{timeout} = \frac{4 \times 2^{\text{PR[2:0]}} \times (\text{RLR} + 1)}{f_{LSI}}$$
+`T_timeout = ( 4 * 2^(PR[2:0]) * (RLR + 1) ) / f_LSI`
 
-Với tần số chuẩn $f_{LSI} = 32,000\text{ Hz}$, ta chọn bộ chia **$\text{Prescaler} = /64$** (mã `PR[2:0] = 010`b $\implies 4 \times 2^2 = 64$):
-* Một chu kỳ đếm: $t_{tick} = \frac{64}{32,000} = 0.002\text{ s} = \mathbf{2\text{ ms}}$.
-* Muốn thời gian Timeout an toàn là **$2.0\text{ giây}$**:
-  $$\text{RLR} = \frac{T_{timeout}}{t_{tick}} - 1 = \frac{2000\text{ ms}}{2\text{ ms}} - 1 = \mathbf{999} \quad (\text{Mã Hex: } \texttt{0x3E7})$$
+Với tần số chuẩn f_{LSI = 32,000 Hz, ta chọn bộ chia **Prescaler = /64** (mã `PR[2:0] = 010`b -> 4 * 2^2 = 64):
+* Một chu kỳ đếm: t_{tick = {64{32,000 = 0.002 s = 2 ms.
+* Muốn thời gian Timeout an toàn là **2.0 giây**:
+  `RLR = (T_timeout / t_tick) - 1 = (2000 ms / 2 ms) - 1 = 999 (Mã Hex: 0x3E7)`
 
 ---
 
 ## 1.2. Bản chất Phần cứng của WWDG (Window Watchdog) & Lỗi "Refresh Quá Sớm"
 
 Khác với IWDG chỉ quan tâm xem phần mềm có bị "chết đứng" hay không, **WWDG** được sinh ra để phát hiện lỗi **"chạy loạn chu trình" (Program Flow Error)**:
-* **Nguồn xung:** Chạy bằng xung bus **APB1 ($f_{PCLK1} = 54\text{ MHz}$)** thông qua bộ chia nội.
+* **Nguồn xung:** Chạy bằng xung bus **APB1 (f_{PCLK1 = 54 MHz)** thông qua bộ chia nội.
 * **Bộ đếm 7-bit (`T[6:0]`):** Đếm lùi từ một giá trị (ví dụ `0x7F` = 127) xuống `0x3F` (63).
 * **Quy tắc Cửa Sổ 2 Đầu (Window Operation):**
-  1. **Quá muộn (Underflow):** Nếu để bộ đếm tụt xuống dưới `0x40` (tức là bit `T6` chuyển từ $1 \rightarrow 0$) $\implies$ Reset CPU!
-  2. **Quá sớm (Window Violation):** Nếu phần mềm nạp lại bộ đếm khi giá trị đếm **vẫn còn lớn hơn ngưỡng cửa sổ `W[6:0]`** $\implies$ Reset CPU ngay lập tức!
+  1. **Quá muộn (Underflow):** Nếu để bộ đếm tụt xuống dưới `0x40` (tức là bit `T6` chuyển từ 1 rightarrow 0) -> Reset CPU!
+  2. **Quá sớm (Window Violation):** Nếu phần mềm nạp lại bộ đếm khi giá trị đếm **vẫn còn lớn hơn ngưỡng cửa sổ `W[6:0]`** -> Reset CPU ngay lập tức!
 
 ```text
  Giá trị Counter
@@ -104,7 +117,7 @@ Khác với IWDG chỉ quan tâm xem phần mềm có bị "chết đứng" hay 
  0x3F ┴────────────────────────────────────────────────────────────────────────► Thời gian
 ```
 
-> 🎯 **Giá trị kỹ thuật ô tô:** Nếu code bị con trỏ hoang đâm loạn xạ hoặc vòng lặp bị nhảy cóc bước khiến lệnh refresh chó bị gọi liên tục không đúng chu kỳ $\implies$ WWDG sẽ phát hiện và khởi động lại vi điều khiển ngay.
+> 🎯 **Giá trị kỹ thuật ô tô:** Nếu code bị con trỏ hoang đâm loạn xạ hoặc vòng lặp bị nhảy cóc bước khiến lệnh refresh chó bị gọi liên tục không đúng chu kỳ -> WWDG sẽ phát hiện và khởi động lại vi điều khiển ngay.
 
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385):**
 > 1. **Mở file `RM0385.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`WWDG functional description`**
@@ -117,7 +130,7 @@ Khác với IWDG chỉ quan tâm xem phần mềm có bị "chết đứng" hay 
 ## 1.3. Cơ Chế Bảo Vệ Mất Xung Nhịp CSS (Clock Security System) & Ngắt NMI
 
 Nếu xe đang chạy ở tốc độ 100 km/h mà thạch anh ngoài HSE 25MHz bị đứt chân do rung lắc cơ học:
-1. Bộ nhân PLL sẽ mất nguồn xung đầu vào $\rightarrow$ Tần số dao động rơi tự do.
+1. Bộ nhân PLL sẽ mất nguồn xung đầu vào -> Tần số dao động rơi tự do.
 2. Nếu không có mạch bảo vệ, CPU sẽ chết đứng trong vòng vài micro-giây.
 3. **Mạch phần cứng CSS (bật bằng bit `CSSON` trong `RCC_CR`):**
    * Liên tục so sánh chu kỳ của thạch anh ngoài HSE với dao động nội HSI 16MHz.
@@ -149,34 +162,34 @@ Khối IWDG chạy trên miền xung nhịp độc lập LSI 32kHz. Mọi thao t
 ```mermaid
 sequenceDiagram
     autonumber
-    actor App as Application Layer (watchdog.c / main.c)
-    participant KR as IWDG->KR (Key Register)
-    participant Config as IWDG->PR & RLR (Prescaler / Reload)
-    participant SR as IWDG->SR (Update Status Reg)
-    participant Silicon as IWDG Silicon Core (Miền LSI 32kHz)
-    participant ResetLine as Microcontroller System Reset Line
+    actor App as "Application Layer (watchdog.c / main.c)"
+    participant KR as "IWDG_KR (Key Register)"
+    participant Config as "IWDG_PR & RLR (Prescaler / Reload)"
+    participant SR as "IWDG_SR (Update Status Reg)"
+    participant Silicon as "IWDG Silicon Core (Miền LSI 32kHz)"
+    participant ResetLine as "Microcontroller System Reset Line"
 
     Note over App,SR: GIAI ĐOẠN 1: BẮT TAY MỞ KHÓA AN TOÀN (KEY UNLOCK HANDSHAKE)
-    App->>KR: 1. Ghi mã khóa: IWDG->KR = 0x5555; (Cho phép ghi PR & RLR)
+    App->>KR: 1. Ghi mã khóa IWDG_KR = 0x5555 (Cho phép ghi PR & RLR)
     App->>Config: 2. Nạp bộ chia Prescaler /64 vào PR và RLR = 999 (Timeout 2.0 giây)
     Config->>Silicon: 3. Đưa tín hiệu đồng bộ hóa từ APB1 bus sang miền xung LSI 32kHz
     Silicon->>SR: 4. Phần cứng bật cờ PVU = 1 và RVU = 1 (Đang cập nhật giá trị)
-    App->>SR: 5. Polling lặp chờ đồng bộ hoàn tất: while (IWDG->SR & (IWDG_SR_PVU | IWDG_SR_RVU));
-    Silicon->>SR: 6. Chốt giá trị vào miền LSI thành công ➔ Tự động xóa PVU = 0, RVU = 0
+    App->>SR: 5. Polling lặp chờ đồng bộ hoàn tất: while (IWDG_SR & (PVU | RVU))
+    Silicon->>SR: 6. Chốt giá trị vào miền LSI thành công: Tự động xóa PVU = 0, RVU = 0
 
     Note over App,Silicon: GIAI ĐOẠN 2: BẮT TAY KÍCH HOẠT CHẠY TỰ ĐỘNG (START IWDG)
-    App->>KR: 7. Ghi mã kích hoạt: IWDG->KR = 0xCCCC; (Bật IWDG - Không thể tắt bằng phần mềm!)
+    App->>KR: 7. Ghi mã kích hoạt IWDG_KR = 0xCCCC (Bật IWDG - Không thể tắt bằng phần mềm!)
     Silicon->>Silicon: 8. Bộ đếm 12-bit bắt đầu đếm lùi liên tục từ 999 về 0 trên xung LSI
 
     Note over App,Silicon: GIAI ĐOẠN 3: BẮT TAY "ĐÁ CHÓ" ĐỊNH KỲ (NORMAL REFRESH HANDSHAKE)
     loop Chu kỳ giám sát định kỳ (Mỗi 500ms trong Main Loop)
-        App->>KR: 9. Đá chó: Ghi IWDG->KR = 0xAAAA; (Reload Handshake)
+        App->>KR: 9. Đá chó: Ghi IWDG_KR = 0xAAAA (Reload Handshake)
         KR->>Silicon: 10. Phần cứng tức thì nạp lại giá trị 999 vào bộ đếm lùi (Reset Counter)
     end
 
     Note over App,ResetLine: GIAI ĐOẠN 4: XỬ LÝ LỖI TREO HỆ THỐNG (FAULT DETECTED & HARD RESET)
     Note over App: CPU bị kẹt cứng trong Deadlock hoặc HardFault > 2.0 giây!
-    Silicon->>Silicon: 11. Bộ đếm không nhận được mã 0xAAAA ➔ Đếm lùi chạm mốc 0 (Underflow)
+    Silicon->>Silicon: 11. Bộ đếm không nhận được mã 0xAAAA: Đếm lùi chạm mốc 0 (Underflow)
     Silicon->>ResetLine: 12. MẠCH PHẦN CỨNG KÉO CHÂN RESET NỘI BỘ XUỐNG LOW!
     ResetLine->>App: 13. Vi điều khiển bị Reset cưỡng bức, dựng cờ IWDGRSTF trong RCC_CSR!
 ```
@@ -185,30 +198,30 @@ sequenceDiagram
 
 ### 📋 Sơ Đồ 2: Quy Trình Cấu Hình & Kiểm Soát Chu Trình Cửa Sổ WWDG (WWDG Configuration & Flow Control Pipeline)
 
-Khác với IWDG, WWDG giám sát **chu trình thực thi phần mềm (Program Flow)**. Nếu phần mềm chạy sai hoặc bị nhảy cóc bước và làm tươi quá sớm (khi $T > W$), chip sẽ bị Reset ngay lập tức:
+Khác với IWDG, WWDG giám sát **chu trình thực thi phần mềm (Program Flow)**. Nếu phần mềm chạy sai hoặc bị nhảy cóc bước và làm tươi quá sớm (khi Counter lớn hơn Window), chip sẽ bị Reset ngay lập tức:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor App as Software Task Flow
-    participant CR as WWDG->CR (Counter Register)
-    participant CFR as WWDG->CFR (Window Threshold)
-    participant Silicon as WWDG Silicon Engine (Bus APB1)
-    participant Reset as Cortex-M7 Core Reset
+    actor App as "Software Task Flow"
+    participant CR as "WWDG_CR (Counter Register)"
+    participant CFR as "WWDG_CFR (Window Threshold)"
+    participant Silicon as "WWDG Silicon Engine (Bus APB1)"
+    participant Reset as "Cortex-M7 Core Reset"
 
     Note over App,Silicon: KHỞI TẠO CỬA SỔ AN TOÀN (Ngưỡng W = 80, Khởi đầu T = 127)
     App->>CFR: 1. Nạp ngưỡng cửa sổ: W[6:0] = 80
-    App->>CR: 2. Kích hoạt WDGA=1, nạp T[6:0] = 127 ➔ Bắt đầu đếm lùi
+    App->>CR: 2. Kích hoạt WDGA = 1, nạp T[6:0] = 127 (Bắt đầu đếm lùi)
 
     alt TÌNH HUỐNG 1: REFRESH QUÁ SỚM (ILLEGAL EARLY REFRESH - LỖI NHẢY CÓC CODE)
-        Note over App: Vòng lặp bị lỗi con trỏ hoặc nhảy cóc, gọi refresh khi T = 100 (> W=80)
+        Note over App: Vòng lặp bị lỗi con trỏ hoặc nhảy cóc, gọi refresh khi T = 100 (lớn hơn W = 80)
         App->>CR: 3. Ghi nạp lại T[6:0] = 127
-        CR->>Silicon: 4. Phần cứng so sánh: T_current (100) > W (80) ➔ PHÁT HIỆN LỖI CHU TRÌNH!
+        CR->>Silicon: 4. Phần cứng so sánh: T_current (100) > W (80) -> PHÁT HIỆN LỖI CHU TRÌNH!
         Silicon->>Reset: 5. KÍCH HOẠT RESET CƯỠNG BỨC NGAY LẬP TỨC!
     else TÌNH HUỐNG 2: REFRESH HỢP LỆ TRONG CỬA SỔ (SAFE WINDOW REFRESH)
         Note over App: Code chạy chuẩn chu kỳ, nạp lại khi T = 70 (Nằm trong dải 0x40 <= T <= 80)
         App->>CR: 3. Ghi nạp lại T[6:0] = 127
-        CR->>Silicon: 4. Phần cứng kiểm tra: 0x40 <= T <= W ➔ HỢP LỆ!
+        CR->>Silicon: 4. Phần cứng kiểm tra: 0x40 <= T <= W -> HỢP LỆ!
         Silicon->>Silicon: 5. Nạp lại bộ đếm an toàn, chu trình tiếp tục bình thường
     else TÌNH HUỐNG 3: TRỄ HẠN (LATE UNDERFLOW - LỖI TREO CODE)
         Note over App: CPU bị kẹt, không kịp refresh khi T chạm 0x3F (Bit T6 chuyển về 0)
@@ -223,12 +236,12 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant HSE as Thạch Anh Ngoài HSE (25MHz)
-    participant Detector as Mạch Cảm Biến Xung CSS (Hardware Analog)
-    participant MUX as Mạch Ghép Xung SYSCLK Multiplexer
-    participant Core as Cortex-M7 Core (NMI Handler)
-    participant Flash as Flash Memory (Emergency Log)
-    actor App as Automotive Limp-Home Engine
+    participant HSE as "Thạch Anh Ngoài HSE (25MHz)"
+    participant Detector as "Mạch Cảm Biến Xung CSS (Hardware Analog)"
+    participant MUX as "Mạch Ghép Xung SYSCLK Multiplexer"
+    participant Core as "Cortex-M7 Core (NMI Handler)"
+    participant Flash as "Flash Memory (Emergency Log)"
+    actor App as "Automotive Limp-Home Engine"
 
     Note over HSE,Core: HỆ THỐNG ĐANG VẬN HÀNH BÌNH THƯỜNG Ở 216MHz (MAIN PLL TỪ HSE)
     HSE->>Detector: 1. Thạch anh ngoài liên tục phát xung dao động 25MHz
@@ -249,26 +262,26 @@ sequenceDiagram
     Note over Core,App: CHIẾN LƯỢC SỐNG CÒN Ô TÔ (AUTOMOTIVE SAFE STATE)
     Core->>Flash: 9. Ghi mã sự cố hỏng phần cứng vào Flash/EEPROM để lưu vết hộp đen
     Core->>App: 10. Chuyển vi điều khiển sang chế độ bò an toàn (Limp-Home Mode)
-    Core->>Detector: 11. BẮT TAY XÓA CỜ LỖI: Ghi RCC->CIR |= RCC_CIR_CSSC; (W1C Handshake)
-    Note over HSE,App: ➔ BẮT TAY HOÀN TẤT: Xe không bị chết máy giữa cao tốc, bảo đảm an toàn tính mạng!
+    Core->>Detector: 11. BẮT TAY XÓA CỜ LỖI: Ghi RCC_CIR |= RCC_CIR_CSSC (W1C Handshake)
+    Note over HSE,App: BẮT TAY HOÀN TẤT: Xe không bị chết máy giữa cao tốc, bảo đảm an toàn tính mạng!
 ```
 
 ---
 
 ### 📋 Sơ Đồ 4: Quy Trình Giám Sát Sụt Áp Nguồn PVD & Sao Lưu Khẩn Cấp (PVD Emergency Power-Loss Pipeline)
 
-Mô hình hóa chu trình bộ giám sát điện áp khả trình PVD phát hiện sớm hiện tượng sập nguồn ắc-quy (khi $V_{DD} < 2.9\text{V}$), kích hoạt ngắt ưu tiên tuyệt đối để sao lưu các tham số sống còn vào Backup SRAM trước khi toàn bộ vi điều khiển mất điện:
+Mô hình hóa chu trình bộ giám sát điện áp khả trình PVD phát hiện sớm hiện tượng sập nguồn ắc-quy (khi V_DD < 2.9V), kích hoạt ngắt ưu tiên tuyệt đối để sao lưu các tham số sống còn vào Backup SRAM trước khi toàn bộ vi điều khiển mất điện:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Supply as Nguồn Cấp VDD (Tuột áp 3.3V -> 2.5V)
-    participant PVD as Bộ So Sánh PVD (PWR->CR1)
-    participant EXTI as EXTI Controller (Line 16)
-    participant NVIC as Cortex-M7 NVIC
-    participant ISR as PVD_IRQHandler()
-    participant Backup as Backup SRAM / EEPROM
-    actor SafeState as Hệ Thống Điện Tử Xe Hơi
+    participant Supply as "Nguồn Cấp VDD (Tuột áp 3.3V xuống 2.5V)"
+    participant PVD as "Bộ So Sánh PVD (PWR_CR1)"
+    participant EXTI as "EXTI Controller (Line 16)"
+    participant NVIC as "Cortex-M7 NVIC"
+    participant ISR as "PVD_IRQHandler()"
+    participant Backup as "Backup SRAM / EEPROM"
+    actor SafeState as "Hệ Thống Điện Tử Xe Hơi"
 
     Note over Supply,EXTI: GIAI ĐOẠN 1: CẤU HÌNH NGƯỠNG GIÁM SÁT ĐIỆN ÁP PVD (2.9V)
     Note over PVD: Cài đặt PWR_CR1: PLS[2:0] = 111b (Ngưỡng 2.9V), Bật PVDE = 1
@@ -276,7 +289,7 @@ sequenceDiagram
 
     Note over Supply,PVD: GIAI ĐOẠN 2: SỰ CỐ SẬP NGUỒN (ẮC QUY BỊ TUỘT ÁP DƯỚI 2.9V)
     Supply->>PVD: 1. Điện áp VDD tụt xuống dưới ngưỡng an toàn 2.9V
-    PVD->>PVD: 2. Bộ so sánh phần cứng phát hiện sụt áp ➔ Dựng cờ PVDO = 1 trong PWR_CSR1
+    PVD->>PVD: 2. Bộ so sánh phần cứng phát hiện sụt áp: Dựng cờ PVDO = 1 trong PWR_CSR1
     PVD->>EXTI: 3. Kích hoạt sự kiện phần cứng trên EXTI Line 16
     EXTI->>NVIC: 4. Bắn xung ngắt PVD_IRQn (Preemption Priority = 0 - Tuyệt đối khẩn cấp!)
 
@@ -284,9 +297,9 @@ sequenceDiagram
     NVIC->>ISR: 5. CPU tạm đình chỉ mọi tác vụ khác, nhảy ngay vào PVD_IRQHandler()
     ISR->>Backup: 6. SAO LƯU KHẨN CẤP: Chép nhanh số km hành trình (Odometer) & mã lỗi vào Backup SRAM
     ISR->>SafeState: 7. Đưa các chân điều khiển van nhiên liệu, rơ-le về trạng thái ngắt an toàn (Safe High-Z)
-    ISR->>EXTI: 8. Xóa cờ ngắt EXTI Line 16 bằng lệnh W1C: EXTI->PR = (1 << 16)
-    Supply->>Supply: 9. Điện áp tụt tiếp xuống dưới 1.7V ➔ Chip rơi vào trạng thái Power-Down hoàn toàn!
-    Note over Supply,SafeState: ➔ DỮ LIỆU ĐƯỢC BẢO TOÀN NGUYÊN VẸN CHO LẦN CẮM NGUỒN KẾ TIẾP!
+    ISR->>EXTI: 8. Xóa cờ ngắt EXTI Line 16 bằng lệnh W1C: EXTI_PR = (1 << 16)
+    Supply->>Supply: 9. Điện áp tụt tiếp xuống dưới 1.7V: Chip rơi vào trạng thái Power-Down hoàn toàn!
+    Note over Supply,SafeState: DỮ LIỆU ĐƯỢC BẢO TOÀN NGUYÊN VẸN CHO LẦN CẮM NGUỒN KẾ TIẾP!
 ```
 
 ---
@@ -350,15 +363,15 @@ Tra cứu RM0385 *Chapter 2: Memory map -> Table 1*:
 
 ## 2.2. Bảng Tra cứu Thanh ghi `IWDG` & Mã Khóa An Toàn (`IWDG_KR`)
 
-Tra cứu RM0385 *Chapter 25: Independent watchdog $\rightarrow$ Section 25.4: IWDG registers*:
+Tra cứu RM0385 *Chapter 25: Independent watchdog -> Section 25.4: IWDG registers*:
 
 | Thanh ghi | Offset | Reset Value | Bit / Trường | Access | Ý nghĩa Kỹ thuật Phần cứng |
 | :--- | :---: | :---: | :---: | :---: | :--- |
 | **`IWDG_KR`** | `0x00` | `0x0000 0000` | `KEY[15:0]` | `w` | **Thanh ghi Khóa An toàn:**<br>• Ghi `0x5555`: Cho phép sửa `PR` và `RLR`.<br>• Ghi `0xAAAA`: Nạp lại giá trị `RLR` vào bộ đếm (Kick Dog).<br>• Ghi `0xCCCC`: Kích hoạt khởi động IWDG (Không thể tắt). |
 | **`IWDG_PR`** | `0x04` | `0x0000 0000` | `PR[2:0]` | `RW` | Bộ chia Prescaler: `000`b=/4, `001`b=/8, `010`b=/16, `011`b=/32, `100`b=/64, `101`b=/128, `110`b=/256. |
 | **`IWDG_RLR`**| `0x08` | `0x0000 0FFF` | `RL[11:0]` | `RW` | Giá trị nạp lại ban đầu (12-bit, tối đa 4095). |
-| **`IWDG_SR`** | `0x0C` | `0x0000 0000` | `PVU` (Bit 0) | `RO` | Prescaler Value Update: Đợi bit $= 0$ trước khi đổi PR. |
-| | | | `RVU` (Bit 1) | `RO` | Reload Value Update: Đợi bit $= 0$ trước khi đổi RLR. |
+| **`IWDG_SR`** | `0x0C` | `0x0000 0000` | `PVU` (Bit 0) | `RO` | Prescaler Value Update: Đợi bit = 0 trước khi đổi PR. |
+| | | | `RVU` (Bit 1) | `RO` | Reload Value Update: Đợi bit = 0 trước khi đổi RLR. |
 
 ---
 

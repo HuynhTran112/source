@@ -22,7 +22,7 @@
 
 > 💡 **Tài liệu tiên quyết:** 
 > - Read [**`📘 [NGÀY 0] Nền tảng Cốt lõi Bare-metal & Cơ chế Thanh ghi`**](file:///d:/Project/STM32F7/day00_baremetal_foundations.md) để nắm vững Bitwise RMW, struct pointer mapping, từ khóa `volatile`, và phương pháp tra cứu Reference Manual.
-> - Read [**`📗 [NGÀY 1] Cấu hình 216MHz Over-drive Clock & Reset Logging`**](file:///d:/Project/STM32F7/day01_learning_guide.md) để hiểu nguồn xung nhịp $f_{PCLK2} = 108\text{ MHz}$ cấp cho USART1.
+> - Read [**`📗 [NGÀY 1] Cấu hình 216MHz Over-drive Clock & Reset Logging`**](file:///d:/Project/STM32F7/day01_learning_guide.md) để hiểu nguồn xung nhịp f_PCLK2 = 108 MHz cấp cho USART1.
 
 ---
 
@@ -34,13 +34,25 @@
 | **2** | **Access Type** | **CỰC KỲ QUAN TRỌNG:** Thanh ghi xóa cờ ngắt `USART1->ICR` và `DMA2->LIFCR`/`HIFCR` là dạng `W1C` (Write 1 to Clear) hoặc Write-only. **TUYỆT ĐỐI KHÔNG DÙNG phép OR-gán (toán tử \|=)**, phải ghi gán trực tiếp `=` để tránh xóa nhầm cờ ngắt của các kênh khác! |
 | **3** | **Multi-Bit Clear-Set** | Áp dụng quy tắc xóa trước - gán sau (`REG &= ~MASK;` rồi gán `REG \|= VALUE;`) cho các trường `CHSEL[2:0]`, `PL[1:0]`, `MSIZE[1:0]`, `PSIZE[1:0]`, `DIR[1:0]`, `AFR[3:0]`, `MODER[1:0]`. |
 | **4** | **`volatile` Qualification** | Khai báo `volatile` cho con trỏ ring buffer và các biến chia sẻ giữa ISR và Main (`rx_head`, `rx_tail`, `uart_rx_flag`). |
-| **5** | **Interrupt Workflow** | Quy trình 5 bước: Cờ phần cứng `USART_ISR_IDLE` $\rightarrow$ Bật `USART_CR1_IDLEIE` $\rightarrow$ Bật `NVIC_EnableIRQ(USART1_IRQn)` $\rightarrow$ Trình phục vụ `USART1_IRQHandler()` $\rightarrow$ Xóa cờ bằng `USART1->ICR = USART_ICR_IDLECF`. |
+| **5** | **Interrupt Workflow** | Quy trình 5 bước: Cờ phần cứng `USART_ISR_IDLE` -> Bật `USART_CR1_IDLEIE` -> Bật `NVIC_EnableIRQ(USART1_IRQn)` -> Trình phục vụ `USART1_IRQHandler()` -> Xóa cờ bằng `USART1->ICR = USART_ICR_IDLECF`. |
 | **6** | **RM / DS Lookup** | Cung cấp chính xác Chapter, Section, từ khóa `Ctrl + F`, công thức `Base Address + Offset` cho `USART1`, `DMA2`, `GPIOA`, `GPIOB`. |
-| **7** | **Hardware Rationale & Specs** | Bố trí cơ sở kỹ thuật, giới hạn phần cứng ($f_{PCLK2} \le 108\text{MHz}$, D-Cache Line 32 bytes, Overrun Error ORE freeze) liền kề từng bảng thanh ghi. |
+| **7** | **Hardware Rationale & Specs** | Bố trí cơ sở kỹ thuật, giới hạn phần cứng (f_PCLK2 <= 108 MHz, D-Cache Line 32 bytes, Overrun Error ORE freeze) liền kề từng bảng thanh ghi. |
 
 ---
 
 # 🧠 BƯỚC 1: NGUYÊN LÝ PHẦN CỨNG & CƠ CHẾ VẬT LÝ (HARDWARE ARCHITECTURE)
+
+## 1.0. So Sánh Ba Cơ Chế Nhận Dữ Liệu UART: Polling vs Ngắt Đơn Byte (RXNE) vs DMA Ring Buffer + IDLE Line
+
+Trước khi đi vào sơ đồ Bus Matrix và thanh ghi, hãy so sánh trực diện 3 phương pháp nhận dữ liệu UART phổ biến trong hệ thống nhúng:
+
+| Tiêu chí kỹ thuật | 1. Đọc Vòng Lặp (Polling) | 2. Ngắt Từng Byte (RXNE Interrupt) | 3. DMA Circular Ring Buffer + IDLE Line |
+| :--- | :--- | :--- | :--- |
+| **Tải CPU (CPU Overhead)** | Chiếm 100% CPU đứng chờ cờ `RXNE`, toàn bộ hệ thống bị đóng băng. | CPU bị ngắt liên tục mỗi khi nhận được 1 byte (ở 115,200 baud = 11,520 lần ngắt/giây!). | **Gần như 0% CPU**. Bộ điều khiển DMA tự động bốc dữ liệu từ thanh ghi `USART_RDR` thả vào RAM. |
+| **Xử lý gói tin độ dài biến đổi** | Phải quy định trước kích thước gói cố định hoặc kiểm tra timeout thủ công. | Phải tự đếm số byte trong ISR, rất dễ mất byte nếu ISR khác chạy lâu. | **Phần cứng tự động phát hiện**: Khi kết thúc frame truyền, đường RX rảnh 1 khung thời gian -> kích hoạt cờ `IDLE` đúng 1 lần duy nhất! |
+| **Nguy cơ tràn dữ liệu (Overrun ORE)** | Cực kỳ cao nếu CPU bận thực hiện tác vụ khác. | Rất cao nếu ngắt UART có độ ưu tiên thấp bị ngắt khác chiếm quyền. | **Gần như bằng 0** nhờ bộ đệm vòng tròn (Circular Buffer) tự động quay vòng đầu khi đầy mà không cần CPU can thiệp. |
+| **Đối chiếu với Môi trường RTOS** | Tương đương một Task chạy vòng lặp `while(1)` không chịu nhả CPU (`vTaskDelay`). | Tương đương việc liên tục gọi `xQueueSendFromISR()` từng byte vào Queue, gây ngốn RAM và quá tải ngắt. | **Chuẩn công nghiệp Zero-Copy**: DMA ghi thẳng dữ liệu vào RAM, Task chỉ thức dậy khi có trọn vẹn cả một gói tin sẵn sàng xử lý. |
+
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
@@ -96,9 +108,9 @@ Trong kiến trúc giao tiếp nối tiếp UART, có hai cơ chế nhận dữ 
   - Phần cứng tự động nâng cờ `RXNE = 1` và kích hoạt tín hiệu ngắt gửi tới NVIC.
   - CPU buộc phải dừng chương trình chính, thực hiện **Context Switch** (lưu ngữ cảnh các thanh ghi `R0-R3`, `R12`, `LR`, `PC`, `xPSR` vào Stack), nhảy vào hàm `USART1_IRQHandler()`, đọc `USART_RDR` để lưu vào RAM, rồi khôi phục ngữ cảnh để quay về.
 * **Tác hại kỹ thuật (Interrupt Thrashing ở tốc độ cao):**
-  - Giả sử hệ thống chạy ở Baudrate $921,600\text{ bps}$. Thời gian truyền 1 byte ($10\text{ bits}$) chỉ mất:
-    $$T_{byte} = \frac{10}{921,600} \approx 10.85\,\mu\text{s}$$
-  - Nếu nhận một gói dữ liệu $1000\text{ bytes}$, CPU sẽ bị **ngắt 1000 lần liên tiếp**, mỗi lần cách nhau chỉ $10.85\,\mu\text{s}$!
+  - Giả sử hệ thống chạy ở Baudrate 921,600 bps. Thời gian truyền 1 byte (10 bits) chỉ mất:
+    `T_byte = 10 / 921,600 ~ 10.85 us`
+  - Nếu nhận một gói dữ liệu 1000 bytes, CPU sẽ bị **ngắt 1000 lần liên tiếp**, mỗi lần cách nhau chỉ 10.85,mus!
   - Quá trình Stacking / Unstacking (tối thiểu 24-32 chu kỳ lệnh Cortex-M7) cùng việc hủy luồng lệnh Pipeline lặp lại 1000 lần sẽ **chiếm dụng từ 30% đến 50% thời gian tính toán của CPU**, làm trễ hoặc nghẽn nghiêm trọng các tác vụ thời gian thực khắt khe (Real-time Deadlines) như vòng lặp điều khiển Motor FOC (20 kHz) hoặc ngắt CAN-Bus.
 
 ---
@@ -130,7 +142,7 @@ Trong kiến trúc giao tiếp nối tiếp UART, có hai cơ chế nhận dữ 
 | Tiêu chí kỹ thuật | 1. Polling (`while`) | 2. RXNE Interrupt | 3. DMA + IDLE Line (Tối ưu) |
 | :--- | :--- | :--- | :--- |
 | **Số lần CPU bị ngắt cho 1000 bytes** | `0` (Nhưng CPU bị kẹt cứng) | **1000 lần ngắt** | **1 lần ngắt duy nhất** |
-| **Tải CPU (CPU Overhead)** | $100\%$ (Chờ cờ trong vòng lặp) | $30\% \sim 50\%$ (Context switch liên tục) | $\approx 0\%$ (DMA chạy phần cứng ngầm) |
+| **Tải CPU (CPU Overhead)** | 100% (Chờ cờ trong vòng lặp) | 30% sim 50% (Context switch liên tục) | ~ 0% (DMA chạy phần cứng ngầm) |
 | **Nguy cơ mất dữ liệu (Overrun Error)** | Rất cao nếu có tác vụ khác chạy | Dễ xảy ra nếu bị ngắt ưu tiên cao chặn | Rất thấp (DMA được Bus Matrix ưu tiên) |
 | **Hỗ trợ gói tin độ dài biến thiên** | Khó xác định khi nào hết gói | Phải dùng thêm Timer để timeout | **Tự động bắt chính xác qua cờ IDLE** |
 
@@ -218,7 +230,7 @@ Cortex-M7 có bộ nhớ đệm **L1 Data Cache (32 bytes per Line)**:
 
 ## 1.5. Sơ Đồ Tuần Tự: Quy Trình Cấu Hình & Vận Hành Ngoại Vi (Configuration & Execution Pipeline)
 
-Để ngoại vi chạy được từ trạng thái ban đầu sau khi Reset chip, lập trình viên bare-metal phải tuân thủ đúng **chuỗi thứ tự tác động vào các khối phần cứng (Configuration Pipeline)**: Cấp xung Clock $\rightarrow$ Ghép kênh chân GPIO $\rightarrow$ Cài đặt khối DMA $\rightarrow$ Cài đặt bộ điều khiển USART $\rightarrow$ Kích hoạt ngắt NVIC.
+Để ngoại vi chạy được từ trạng thái ban đầu sau khi Reset chip, lập trình viên bare-metal phải tuân thủ đúng **chuỗi thứ tự tác động vào các khối phần cứng (Configuration Pipeline)**: Cấp xung Clock -> Ghép kênh chân GPIO -> Cài đặt khối DMA -> Cài đặt bộ điều khiển USART -> Kích hoạt ngắt NVIC.
 
 ---
 
@@ -386,10 +398,10 @@ PB7  --> AFRL7[3:0]  = 0111b (AF7) -> USART1_RX
 
 ## 2.3. Công thức tính Baudrate chuẩn cho STM32F7 (`USART_BRR`)
 
-Nguồn xung cấp cho `USART1` thuộc Bus APB2 có tần số $f_{PCLK2} = 108\text{ MHz}$.  
-Với Baudrate mục tiêu = $115200 \text{ bps}$, chế độ Oversampling by 16 (bit `OVER8 = 0` trong `USART_CR1`):
+Nguồn xung cấp cho `USART1` thuộc Bus APB2 có tần số f_PCLK2 = 108 MHz.  
+Với Baudrate mục tiêu = 115200  bps, chế độ Oversampling by 16 (bit `OVER8 = 0` trong `USART_CR1`):
 
-$$\text{USARTDIV} = \frac{f_{PCLK2}}{\text{Baudrate}} = \frac{108,000,000}{115,200} = 937.5$$
+`USARTDIV = f_PCLK2 / Baudrate = 108,000,000 / 115,200 = 937.5`
 
 Trong kiến trúc STM32F7, giá trị nạp vào thanh ghi `USART1->BRR`:
 ```c
@@ -615,12 +627,12 @@ int main(void) {
 ---
 
 ### ❓ Câu 2: Tại sao bắt buộc dùng `__attribute__((aligned(32)))` cho mảng DMA Buffer trên Cortex-M7?
-* **Trả lời:** L1 Data Cache của ARM Cortex-M7 thao tác theo từng Cache Line cố định $32\text{ bytes}$. Nếu mảng không căn lề 32 bytes, phần đầu/đuôi mảng sẽ nằm chung Cache Line với các biến khác. Khi gọi `SCB_InvalidateDCache()`, dữ liệu của các biến nằm chung dòng cache sẽ bị xóa mất giá trị mới do CPU ghi (hiện tượng **False Sharing Corruption**).
+* **Trả lời:** L1 Data Cache của ARM Cortex-M7 thao tác theo từng Cache Line cố định 32 bytes. Nếu mảng không căn lề 32 bytes, phần đầu/đuôi mảng sẽ nằm chung Cache Line với các biến khác. Khi gọi `SCB_InvalidateDCache()`, dữ liệu của các biến nằm chung dòng cache sẽ bị xóa mất giá trị mới do CPU ghi (hiện tượng **False Sharing Corruption**).
 
 ---
 
 ### ❓ Câu 3: Làm thế nào để chứng minh hệ thống đạt "0% CPU Load" khi nhận UART tốc độ cao?
-* **Trả lời:** Dùng **Logic Analyzer** kẹp vào 1 chân GPIO Toggle inside `USART1_IRQHandler()`. Ngắt từng byte (RXNE) khiến GPIO giật liên tục chiếm 20-30% CPU time. Với DMA + IDLE, GPIO chỉ xuất hiện duy nhất 1 xung hẹp ($\sim 0.5\mu s$) khi cả frame dữ liệu dài đã nhận xong trọn vẹn vào RAM!
+* **Trả lời:** Dùng **Logic Analyzer** kẹp vào 1 chân GPIO Toggle inside `USART1_IRQHandler()`. Ngắt từng byte (RXNE) khiến GPIO giật liên tục chiếm 20-30% CPU time. Với DMA + IDLE, GPIO chỉ xuất hiện duy nhất 1 xung hẹp (sim 0.5us) khi cả frame dữ liệu dài đã nhận xong trọn vẹn vào RAM!
 
 ---
 
@@ -642,8 +654,8 @@ int main(void) {
 
 # 🚀 NGHỆM THU NGÀY 2
 
-- [ ] Hiểu rõ sơ đồ Dataflow & Bus Matrix từ UART $\rightarrow$ DMA2 $\rightarrow$ SRAM.
-- [ ] Tính toán đúng `BRR = 938` cho Baudrate 115200 at $f_{PCLK2} = 108\text{MHz}$.
+- [ ] Hiểu rõ sơ đồ Dataflow & Bus Matrix từ UART -> DMA2 -> SRAM.
+- [ ] Tính toán đúng `BRR = 938` cho Baudrate 115200 at f_{PCLK2 = 108MHz.
 - [ ] Tự tay gõ cấu hình GPIO AF7 (`PA9`, `PB7`), `USART1` và `DMA2 Stream 2 Channel 4`.
 - [ ] Nắm vững cách xử lý D-Cache Coherency (`SCB_InvalidateDCache_by_Addr`).
 - [ ] Tự tin trả lời bộ 5 câu hỏi phỏng vấn về ORE error, W1C register, và False Sharing.

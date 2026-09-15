@@ -26,30 +26,40 @@
 
 | STT | Quy tắc An toàn Automotive | Thể hiện cụ thể trong Ngày 12 (Signal Supervision) |
 | :---: | :--- | :--- |
-| **1** | **Never Trust Stale Data** | **QUY TẮC SỐNG CÒN:** Không bao giờ giữ nguyên giá trị cũ trên màn hình khi đã quá hạn thời gian nhận gói tin (Timeout). Nếu sau $100\text{ms}$ không có frame mới, phải đổi trạng thái sang `INVALID` và hiển thị gạch ngang `--` kèm đèn báo lỗi! |
+| **1** | **Never Trust Stale Data** | **QUY TẮC SỐNG CÒN:** Không bao giờ giữ nguyên giá trị cũ trên màn hình khi đã quá hạn thời gian nhận gói tin (Timeout). Nếu sau 100ms không có frame mới, phải đổi trạng thái sang `INVALID` và hiển thị gạch ngang `--` kèm đèn báo lỗi! |
 | **2** | **Unsigned Subtraction Rule** | Khi so sánh thời gian timeout, BẮT BUỘC dùng phép trừ số nguyên không dấu: `(uint32_t)(now_ms - last_rx_ms) >= timeout_ms`. Tuyệt đối không so sánh `now_ms >= last_rx_ms + timeout_ms` vì sẽ gây lỗi chết đứng khi biến đếm tràn số sau 49.7 ngày! |
-| **3** | **Rolling Counter Sequence** | Bộ đếm nhịp sống phải tăng tuần tự $+1$ qua mỗi chu kỳ gửi ($0 \rightarrow 15 \rightarrow 0$). Nếu phát hiện bước nhảy sai hoặc đếm đứng im liên tiếp 3 chu kỳ $\implies$ Hủy bỏ frame và ghi nhận lỗi `E2E_COUNTER_ERROR`. |
-| **4** | **Data ID in CRC-8** | Trong chuẩn AUTOSAR E2E Profile 1, hàm CRC-8 (Đa thức $0x1D$ hoặc $0x2F$) bắt buộc phải tính kèm giá trị bí mật **Data ID (16-bit)** của thông điệp để chống lỗi giả mạo gói tin (Masquerading fault). |
-| **5** | **Bus-Off Limp-Home Delay** | Khi chuyển sang trạng thái Bus-Off, không được phục hồi ngay lập tức (tránh làm tê liệt bus nếu đang chập mạch vật lý). Bắt buộc phải chờ một khoảng thời gian trễ an toàn ($50\text{ms} - 200\text{ms}$) trước khi thử gia nhập lại mạng. |
+| **3** | **Rolling Counter Sequence** | Bộ đếm nhịp sống phải tăng tuần tự +1 qua mỗi chu kỳ gửi (0 -> 15 -> 0). Nếu phát hiện bước nhảy sai hoặc đếm đứng im liên tiếp 3 chu kỳ -> Hủy bỏ frame và ghi nhận lỗi `E2E_COUNTER_ERROR`. |
+| **4** | **Data ID in CRC-8** | Trong chuẩn AUTOSAR E2E Profile 1, hàm CRC-8 (Đa thức 0x1D hoặc 0x2F) bắt buộc phải tính kèm giá trị bí mật **Data ID (16-bit)** của thông điệp để chống lỗi giả mạo gói tin (Masquerading fault). |
+| **5** | **Bus-Off Limp-Home Delay** | Khi chuyển sang trạng thái Bus-Off, không được phục hồi ngay lập tức (tránh làm tê liệt bus nếu đang chập mạch vật lý). Bắt buộc phải chờ một khoảng thời gian trễ an toàn (50ms - 200ms) trước khi thử gia nhập lại mạng. |
 | **6** | **Failsafe Default Values** | Khi phát hiện mất tín hiệu cảm biến (Missing Frame), hệ thống điều khiển phải lập tức nạp giá trị mặc định an toàn (Failsafe Default: ví dụ nhiệt độ gán về mức nguy hiểm cực đại để kích quạt làm mát). |
 | **7** | **Static Diagnostic Logging** | Mọi sự kiện vi phạm E2E (Mất frame, sai CRC, sai Rolling Counter) phải được ghi vào bộ đếm lỗi DTC (Diagnostic Trouble Code) phục vụ máy quét OBD-II trong xưởng dịch vụ. |
 
 ---
 
-# 🧠 BƯỚC 1: NGUYÊN LÝ TIÊU CHUẨN ISO 26262 & CƠ CHẾ BẢO VỆ (SAFETY ARCHITECTURE)
+# 🧠 BƯỚC 1: NGUYÊN LÝ AN TOÀN Ô TÔ (SO SÁNH TRỰC DIỆN VỚI FREERTOS)
 
-## 1.1. Hiểm Họa Tín Hiệu Đóng Băng (Frozen Stale Data) Trong Mạng Xe Hơi
+### 1.1. So Sánh Cơ Chế Giám Sát An Toàn: FreeRTOS vs Zephyr RTOS
 
-Hãy tưởng tượng một chiếc ô tô đang chạy trên đường cao tốc với tốc độ $100\text{ km/h}$. Dây CAN Bus nối từ hộp truyền động sang bảng đồng hồ táp-lô bị chuột cắn đứt:
-* **Nếu không có cơ chế Supervision:** Biến `speed` trong bộ nhớ vi điều khiển vẫn giữ nguyên giá trị cuối cùng nhận được là `100`. Bảng đồng hồ tiếp tục hiển thị $100\text{ km/h}$ trong khi tài xế đã đạp phanh dừng hẳn xe $\implies$ **Tai nạn chết người thảm khốc!**
-* **Cơ chế Giám sát Thời gian thực (Timeout Supervision):**
-  * Thông điệp tốc độ xe được phát định kỳ mỗi **$20\text{ms}$** (Chu kỳ danh định - Nominal Period).
-  * Vi điều khiển đặt một đồng hồ giám sát với ngưỡng trần **$\text{Timeout} = 100\text{ms}$** (gấp 5 lần chu kỳ gửi).
-  * Nếu sau $100\text{ms}$ không có frame mới đến, phần mềm lập tức xóa giá trị `100`, chuyển sang hiển thị gạch ngang `---`, bật đèn báo động cơ check-engine màu vàng và phát còi cảnh báo người lái.
+| Bài toán an toàn | 1. FreeRTOS | 2. Zephyr RTOS | Bản Chất Kỹ Thuật |
+| :--- | :--- | :--- | :--- |
+| **Đo thời gian trôi qua** | `xTaskGetTickCount() * portTICK_PERIOD_MS` | `k_uptime_get_32()` | Đều lấy số mili-giây từ lúc khởi động. Dùng phép trừ không dấu `(now - last) >= timeout` chống tràn số. |
+| **Bộ định thời giám sát** | Tạo FreeRTOS Software Timer (`xTimerCreate()`). | Tạo Zephyr Work Queue hoặc kiểm tra định kỳ trong luồng Worker. | Tránh tạo quá nhiều Software Timer làm phình RAM; gom các tín hiệu vào 1 hàm kiểm tra định kỳ `Supervision_PeriodicCheck()`. |
+| **Phục hồi Bus-Off** | Tự đọc thanh ghi `CAN_ESR`, tự bật bit `ABOM`. | Đăng ký callback `can_set_state_change_callback()` và gọi `can_recover()`. | Không được kết nối lại mạng ngay lập tức mà phải chờ trễ an toàn 100ms để tránh làm tê liệt bus nếu đang chập điện. |
 
 ---
 
-## 1.2. Ba Lớp Bảo Vệ Tính Toàn Vẹn Khung Tin CAN (AUTOSAR E2E Protection)
+### 1.2. Hiểm Họa Tín Hiệu Đóng Băng (Frozen Stale Data) Trong Mạng Xe Hơi
+
+Hãy tưởng tượng một chiếc ô tô đang chạy trên đường cao tốc với tốc độ 100 km/h. Dây CAN Bus nối từ hộp truyền động sang bảng đồng hồ táp-lô bị chuột cắn đứt:
+* **Nếu không có cơ chế Supervision:** Biến `speed` trong bộ nhớ vi điều khiển vẫn giữ nguyên giá trị cuối cùng nhận được là `100`. Bảng đồng hồ tiếp tục hiển thị 100 km/h trong khi tài xế đã đạp phanh dừng hẳn xe -> **Tai nạn chết người thảm khốc!**
+* **Cơ chế Giám sát Thời gian thực (Timeout Supervision):**
+  * Thông điệp tốc độ xe được phát định kỳ mỗi **20 ms** (Chu kỳ danh định - Nominal Period).
+  * Vi điều khiển đặt một đồng hồ giám sát với ngưỡng trần **Timeout = 100 ms** (gấp 5 lần chu kỳ gửi).
+  * Nếu sau 100 ms không có frame mới đến, phần mềm lập tức xóa giá trị `100`, chuyển sang hiển thị gạch ngang `---`, bật đèn báo động cơ check-engine màu vàng và phát còi cảnh báo người lái.
+
+---
+
+### 1.3. Ba Lớp Bảo Vệ Tính Toàn Vẹn Khung Tin CAN (AUTOSAR E2E Protection)
 
 Để đạt chứng chỉ an toàn chức năng ISO 26262 ASIL-B / ASIL-D, gói tin CAN được đóng gói với 3 lớp kiểm tra độc lập:
 
@@ -66,14 +76,14 @@ Hãy tưởng tượng một chiếc ô tô đang chạy trên đường cao t�
 ```
 
 1. **Lớp 1: Rolling Counter (4 bits):** Bắt lỗi **Gói tin bị lặp lại (Repeated Frame)** hoặc **Hộp ECU bị treo đứng (ECU Deadlock)**.
-2. **Lớp 2: E2E CRC-8 Checksum:** Bắt lỗi **Nhiễu điện từ làm biến dạng bit (Bit Corruption)** mà mạch CRC phần cứng của chip CAN bỏ sót (xác suất lỗi không phát hiện của CAN CRC là $\approx 10^{-14}$, nhưng với ô tô chạy hàng tỷ dặm thì bắt buộc cần thêm tầng E2E CRC-8).
+2. **Lớp 2: E2E CRC-8 Checksum:** Bắt lỗi **Nhiễu điện từ làm biến dạng bit (Bit Corruption)** mà mạch CRC phần cứng của chip CAN bỏ sót.
 3. **Lớp 3: Timeout Supervision:** Bắt lỗi **Đứt dây dẫn, mất gói tin trên đường truyền (Missing Frame)**.
 
 ---
 
-## 1.3. Máy Trạng Thái Phục Hồi Lỗi Bus-Off Theo Tiêu Chuẩn ISO 11898-1
+### 1.4. Máy Trạng Thái Phục Hồi Lỗi Bus-Off Theo Tiêu Chuẩn ISO 11898-1
 
-Khi đường truyền CAN bị ngắn mạch xuống mát (GND) hoặc chập đôi dây, bộ đếm lỗi truyền $TEC$ của chip STM32F746 vượt quá $255$, chip sẽ ngắt toàn bộ mạch phát vật lý để không phá hỏng mạng chung (rơi vào trạng thái **`BUS-OFF`**).
+Khi đường truyền CAN bị ngắn mạch xuống mát (GND) hoặc chập đôi dây, bộ đếm lỗi truyền TEC của chip STM32F746 vượt quá 255, chip sẽ ngắt toàn bộ mạch phát vật lý để không phá hỏng mạng chung (rơi vào trạng thái **`BUS-OFF`**).
 
 Phần mềm phải quản lý quá trình phục hồi theo máy trạng thái hữu hạn (**FSM**):
 
@@ -100,6 +110,27 @@ Phần mềm phải quản lý quá trình phục hồi theo máy trạng thái 
 
 ---
 
+### 1.5. Bẫy Tràn Số Sau 49.7 Ngày & Quy Tắc Trừ Số Nguyên Không Dấu
+
+Vi điều khiển đếm thời gian bằng biến 32-bit `uint32_t` (tính bằng mili-giây).
+* Giá trị lớn nhất mà biến này chứa được là `4,294,967,295 ms` (tương đương đúng **49.7 ngày**).
+* Khi xe chạy liên tục qua mốc 49.7 ngày, biến thời gian sẽ bị tràn và tự động quay về `0`.
+
+**Bẫy chết người nếu dùng phép cộng:**
+```c
+// SAI LẦM:
+if (now_ms >= last_rx_ms + timeout_ms) // Sập logic khi last_rx_ms gần chạm trần 49.7 ngày!
+```
+
+👉 **Quy tắc vàng của kỹ sư nhúng (Unsigned Subtraction):**
+```c
+// CHUẨN XÁC 100%:
+if ((uint32_t)(now_ms - last_rx_ms) >= timeout_ms)
+```
+Nhờ cơ chế toán học số bù hai của hệ nhị phân, hiệu số giữa 2 số nguyên không dấu luôn cho ra khoảng thời gian đã trôi qua chính xác tuyệt đối, kể cả khi `now_ms` đã quay về 0 còn `last_rx_ms` nằm ở sát đỉnh!
+
+---
+
 # 📑 BƯỚC 2: THỰC CHIẾN ĐỊNH NGHĨA THAM SỐ GIÁM SÁT (SETUP & LOOKUP)
 
 > 🎯 **NGUYÊN TẮC TRA CỨU TIÊU CHUẨN AN TOÀN Ô TÔ (AUTOMOTIVE SAFETY):**
@@ -115,7 +146,7 @@ Phần mềm phải quản lý quá trình phục hồi theo máy trạng thái 
 1. **Khái niệm khoảng thời gian dung sai lỗi (Fault Tolerant Time Interval - FTTI):**
    * Là khoảng thời gian tối đa từ lúc sự cố phần cứng/truyền thông nổ ra cho đến khi hệ thống bắt buộc phải vào **Trạng thái an toàn (Safe State)** trước khi xảy ra tai nạn.
 2. **Quy tắc thiết lập chu kỳ Timeout:**
-   * $T_{\text{timeout}} \le \frac{1}{2} \times \text{FTTI}$ (ví dụ tín hiệu phanh có FTTI = 100ms ➔ Ngưỡng Timeout tối đa là 50ms).
+   * `T_timeout <= 1/2 * FTTI` (ví dụ tín hiệu phanh có FTTI = 100ms -> Ngưỡng Timeout tối đa là 50ms).
 
 ### 📖 Kênh 2: Cách Tra Cứu Quy Tắc MISRA-C:2012 Dành Cho Driver
 1. **Quy tắc bộ nhớ động (Rule 21.3 - Required):**
@@ -136,16 +167,16 @@ Phần mềm phải quản lý quá trình phục hồi theo máy trạng thái 
 
 | Thông Điệp | CAN ID | Chu Kỳ Gửi (Nominal) | Ngưỡng Timeout | Số Lần Mất Tối Đa | Hành Vi Failsafe Khi Timeout |
 | :--- | :---: | :---: | :---: | :---: | :--- |
-| **`Engine_Telemetry`**| `0x120` | **$20\text{ ms}$** | **$100\text{ ms}$** | 5 chu kỳ | Tốc độ $\rightarrow$ `---`, RPM $\rightarrow$ `0`, Bật đèn báo động cơ. |
-| **`Brake_Dynamics`** | `0x240` | **$10\text{ ms}$** | **$50\text{ ms}$** | 5 chu kỳ | Cảnh báo mất phanh ABS, kích hoạt chuông bíp an toàn. |
-| **`Battery_Status`** | `0x300` | **$100\text{ ms}$** | **$500\text{ ms}$** | 5 chu kỳ | Báo lỗi nguồn ắc quy, tắt các tải phụ trợ màn hình. |
+| **`Engine_Telemetry`**| `0x120` | **20 ms** | **100 ms** | 5 chu kỳ | Tốc độ -> `---`, RPM -> `0`, Bật đèn báo động cơ. |
+| **`Brake_Dynamics`** | `0x240` | **10 ms** | **50 ms** | 5 chu kỳ | Cảnh báo mất phanh ABS, kích hoạt chuông bíp an toàn. |
+| **`Battery_Status`** | `0x300` | **100 ms** | **500 ms** | 5 chu kỳ | Báo lỗi nguồn ắc quy, tắt các tải phụ trợ màn hình. |
 
 ---
 
-## 2.2. Bảng Tra Cứu Đa Thức CRC-8 AUTOSAR (Profile 1: $0x2F$)
+## 2.2. Bảng Tra Cứu Đa Thức CRC-8 AUTOSAR (Profile 1: 0x2F)
 
 Để tính toán CRC-8 nhanh trong vòng vài nano-giây trên Cortex-M7 mà không dùng vòng lặp dịch bit, ta sử dụng **Bảng tra cứu tĩnh (Lookup Table 256 phần tử)** được nạp sẵn trên Flash. Đa thức chuẩn:
-$$P(x) = x^8 + x^5 + x^3 + x^2 + x + 1 \implies \mathbf{\text{Hex: } \texttt{0x2F}}$$
+`P(x) = x^8 + x^5 + x^3 + x^2 + x + 1` (Mã Hex: `0x2F`)
 
 ---
 
@@ -221,7 +252,7 @@ void Supervision_PeriodicCheck(CanMsgSupervisor_t *sup, uint32_t current_time_ms
 
 #### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 2:
 1. **Tra cứu Đa thức CRC-8 AUTOSAR Profile 1:**
-   - Đa thức toán học: $P(x) = x^8 + x^5 + x^3 + x^2 + x + 1$ (Mã Hex: `0x2F`).
+   - Đa thức toán học: $PP(x) = x^8 + x^5 + x^3 + x^2 + x + 1 (Mã Hex: `0x2F`).
    - Giá trị khởi tạo chuẩn: `0xFF`, Giá trị đảo cuối: `^ 0xFF`.
    - Bắt buộc tính toán kèm 2 bytes của trường bí mật `data_id` trước khi quét mảng payload (từ Byte 1 đến Byte n-1).
 
@@ -465,11 +496,11 @@ int main(void)
 
 ### ❓ Câu 1: Tại sao phép so sánh `(uint32_t)(now_ms - last_rx_ms) >= timeout_ms` luôn hoạt động đúng kể cả khi biến đếm thời gian bị tràn số (Wrap-Around)?
 * **Trả lời chuẩn Kỹ sư Automotive:** 
-  * Biến `uint32_t` trên vi điều khiển 32-bit có giá trị cực đại là $2^{32} - 1 = 4,294,967,295\text{ ms}$ (tương đương khoảng $49.71\text{ ngày}$). Khi chạy qua mốc này, giá trị sẽ tự động quay vòng về $0$.
-  * Giả sử: `last_rx_ms` ghi nhận ở thời điểm sát mép: `0xFFFFFFF0` ($4,294,967,280$). Sau đó $20\text{ms}$, biến `now_ms` đã tràn số và có giá trị mới là `0x00000004`.
+  * Biến `uint32_t` trên vi điều khiển 32-bit có giá trị cực đại là `4,294,967,295 ms` (tương đương khoảng 49.71 ngày). Khi chạy qua mốc này, giá trị sẽ tự động quay vòng về `0`.
+  * Giả sử: `last_rx_ms` ghi nhận ở thời điểm sát mép: `0xFFFFFFF0` (`4,294,967,280`). Sau đó 20ms, biến `now_ms` đã tràn số và có giá trị mới là `0x00000004`.
   * Nếu dùng phép cộng: `last_rx_ms + 100` sẽ bị tràn số và dẫn đến so sánh sai logic.
   * Khi dùng **phép trừ số nguyên không dấu 32-bit**:
-    $$0\text{x}00000004 - 0\text{xFFFFFFF0} = \mathbf{20\text{ (Hợp số bù hai tự động triệt tiêu phần tràn!)}}$$
+    `0x00000004 - 0xFFFFFFF0 = 20` (Phép trừ nhị phân bù hai tự động triệt tiêu phần tràn!).
   * Vì vậy, phép trừ không dấu luôn phản ánh khoảng cách thời gian trôi qua một cách chính xác tuyệt đối mà không cần bất kỳ lệnh `if` kiểm tra tràn số nào.
 
 ### ❓ Câu 2: Tiêu chuẩn AUTOSAR E2E (End-to-End) Protection giải quyết những mối nguy hại (Communication Faults) nào?
@@ -485,7 +516,7 @@ int main(void)
 ### ❓ Câu 3: Khi phát hiện tín hiệu tốc độ xe bị Missing Timeout, táp-lô ô tô nên hiển thị số 0 hay gạch ngang `--`?
 * **Trả lời chuẩn Kỹ sư Automotive:**
   * **Tuyệt đối không bao giờ hiển thị số `0`!**
-  * Trong kỹ thuật an toàn ô tô (Functional Safety), số `0` là một **giá trị vật lý hợp lệ** (xe đang dừng bánh). Nếu xe đang lao dốc với tốc độ $80\text{ km/h}$ mà dây CAN đứt, việc táp-lô hiển thị số `0` sẽ khiến tài xế lầm tưởng xe đã dừng hoặc đồng hồ bị lag, dẫn đến thao tác nhả phanh gây tử nạn.
+  * Trong kỹ thuật an toàn ô tô (Functional Safety), số `0` là một **giá trị vật lý hợp lệ** (xe đang dừng bánh). Nếu xe đang lao dốc với tốc độ 80 km/h mà dây CAN đứt, việc táp-lô hiển thị số `0` sẽ khiến tài xế lầm tưởng xe đã dừng hoặc đồng hồ bị lag, dẫn đến thao tác nhả phanh gây tử nạn.
   * **Nguyên tắc Failsafe:** Phải chuyển hiển thị sang trạng thái bất định (Dấu gạch ngang `---`), đổi màu chữ sang màu đỏ hoặc vàng cam, đồng thời kích hoạt đèn cảnh báo nguy hiểm trên bảng điều khiển để người lái lập tức chủ động tấp xe vào lề.
 
 ---
@@ -493,5 +524,5 @@ int main(void)
 ### 🎙️ KỊCH BẢN TRẢ LỜI PHỎNG VẤN 60 GIÂY (ELEVATOR PITCH)
 
 > *"Tại Ngày 12, em nâng cấp thiết bị CAN Gateway đạt các tiêu chí an toàn chức năng nghiêm ngặt theo chuẩn **ISO 26262 ASIL-B** và **AUTOSAR E2E Protection**.  
-> Em thiết kế kiến trúc phòng thủ 3 tầng gồm: Thuật toán tra cứu nhanh **E2E CRC-8** với đa thức chuẩn $0x2F$ có tích hợp Data ID chống làm giả gói tin, bộ giám sát nhịp sống **Rolling Counter (4-bit)** chống lặp thông điệp, và hệ thống **Timeout Supervision** phát hiện đứt cáp theo chu kỳ thời gian thực.  
+> Em thiết kế kiến trúc phòng thủ 3 tầng gồm: Thuật toán tra cứu nhanh **E2E CRC-8** với đa thức chuẩn 0x2F có tích hợp Data ID chống làm giả gói tin, bộ giám sát nhịp sống **Rolling Counter (4-bit)** chống lặp thông điệp, và hệ thống **Timeout Supervision** phát hiện đứt cáp theo chu kỳ thời gian thực.  
 > Để phần mềm hoạt động bền bỉ trong môi trường công nghiệp ô tô nhiều năm không bị treo, em áp dụng quy tắc trừ số nguyên không dấu **Unsigned Subtraction** loại bỏ hoàn toàn bẫy tràn số Timer 49.7 ngày. Cuối cùng, em xây dựng máy trạng thái **Bus-Off Recovery FSM** theo tiêu chuẩn **ISO 11898-1**, giúp Gateway tự động cô lập sự cố khi chập mạch vật lý và tái hòa nhập mạng an toàn khi đường truyền phục hồi."*

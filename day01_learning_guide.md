@@ -33,26 +33,39 @@
 | **2** | **Access Type** | **CỰC KỲ QUAN TRỌNG:** Thanh ghi `RCC_CSR` chứa bit xóa cờ `RMVF` (Remove Reset Flag) là dạng `W1C` (Write 1 to Clear). Bắt buộc ghi trực tiếp `RCC->CSR |= RCC_CSR_RMVF` (hoặc ghi thẳng `RCC->CSR = RCC_CSR_RMVF`) để xóa cờ, không để cờ tồn tại sang chu kỳ boot sau. |
 | **3** | **Multi-Bit Clear-Set** | Áp dụng quy tắc xóa trước - gán sau (`REG &= ~MASK; REG |= VALUE;`) cho các trường đa bit: `VOS[1:0]` (Bits 15:14 trong `PWR_CR1`), `PLLM[5:0]`, `PLLN[8:0]`, `PLLP[1:0]`, `HPRE[3:0]`, `PPRE1[2:0]`, `PPRE2[2:0]`, `LATENCY[3:0]`. |
 | **4** | **`volatile` Qualification** | Mọi struct ánh xạ thanh ghi (`RCC_TypeDef`, `PWR_TypeDef`, `FLASH_TypeDef`) bắt buộc dùng `volatile` để trình biên dịch không tối ưu hóa xóa bỏ các vòng lặp Polling cờ trạng thái phần cứng (`HSERDY`, `PLLRDY`, `ODRDY`, `ODSWRDY`, `SWS`). |
-| **5** | **Hardware Handshake Pipeline** | Tuân thủ quy trình bắt tay tuần tự phần cứng: Cấp xung $\rightarrow$ Chờ cờ Ready $\rightarrow$ Bật tính năng $\rightarrow$ Chờ xác nhận chuyển đổi. Tuyệt đối không nhảy cóc bước. |
+| **5** | **Hardware Handshake Pipeline** | Tuân thủ quy trình bắt tay tuần tự phần cứng: Cấp xung -> Chờ cờ Ready -> Bật tính năng -> Chờ xác nhận chuyển đổi. Tuyệt đối không nhảy cóc bước. |
 | **6** | **RM / DS Lookup** | Cung cấp chính xác Chapter, Section, từ khóa `Ctrl + F`, công thức `Base Address + Offset` cho `RCC`, `PWR`, `FLASH`. |
-| **7** | **Hardware Rationale & Specs** | Bố trí cơ sở kỹ thuật, giới hạn phần cứng ($f_{VCO\_in} = 1\text{MHz}$, $100\text{MHz} \le f_{VCO\_out} \le 432\text{MHz}$, $f_{SYSCLK} \le 216\text{MHz}$, $f_{HCLK} \le 216\text{MHz}$, $f_{PCLK1} \le 54\text{MHz}$, $f_{PCLK2} \le 108\text{MHz}$) liền kề từng bảng thanh ghi. |
+| **7** | **Hardware Rationale & Specs** | Bố trí cơ sở kỹ thuật, giới hạn phần cứng (f_VCO_in = 1 MHz, 100 MHz <= f_VCO_out <= 432 MHz, f_SYSCLK <= 216 MHz, f_HCLK <= 216 MHz, f_PCLK1 <= 54 MHz, f_PCLK2 <= 108 MHz) liền kề từng bảng thanh ghi. |
 
 ---
 
 # 🧠 BƯỚC 1: NGUYÊN LÝ PHẦN CỨNG & CƠ CHẾ VẬT LÝ (HARDWARE ARCHITECTURE)
 
+## 1.0. So Sánh Bản Chất: Cấu Hình Xung Nhịp HAL vs Bare-Metal Register (Nền Tảng Cho RTOS)
+
+Trước khi đi vào từng phép tính của bộ nhân tần PLL, hãy làm rõ sự khác biệt giữa cách lập trình thư viện tự động và điều khiển thanh ghi gốc:
+
+| Đặc tính kỹ thuật | Cấu hình tự động bằng HAL / CubeMX | Cấu hình Bare-Metal Register từ đầu |
+| :--- | :--- | :--- |
+| **Cách tiếp cận** | Gọi hàm cấu trúc `HAL_RCC_OscConfig(&RCC_OscInitStruct)` che giấu hàng trăm dòng mã. | Ghi trực tiếp từng bitfield vào thanh ghi `RCC_CR`, `RCC_PLLCFGR`, `PWR_CR1`, `FLASH_ACR`. |
+| **Bản chất Over-Drive** | Thư viện tự động xử lý ngầm, lập trình viên không nắm được các bước bắt tay phần cứng. | Nắm vững quy trình bắt tay 4 bước: Bật `ODEN` -> Đợi `ODRDY` -> Bật `ODSWEN` -> Đợi `ODSWRDY`. |
+| **Thời gian khởi động (Boot Time)** | Tốn hàng nghìn chu kỳ CPU do overhead kiểm tra trạng thái và chuỗi con trỏ cấu trúc. | Tối ưu tuyệt đối (~18.4 ms), thực thi thẳng vào thanh ghi chỉ trong vài chục chu kỳ máy. |
+| **Độ trễ Flash (Wait States)** | Gọi macro ngầm định, dễ gây sập chip nếu gọi sai thứ tự giữa xung nhịp và độ trễ. | Hiểu rõ giới hạn vật lý: Flash chỉ đọc kịp ở ~30 ns. Ở 216 MHz (chu kỳ 4.63 ns), bắt buộc phải cài 7 Wait States (8 CPU cycles) TRƯỚC KHI chuyển SYSCLK! |
+| **Nền tảng cho RTOS / Ứng dụng** | Bị phụ thuộc vào cấu hình tạo sẵn của công cụ sinh mã. | Là tiền đề để định thời chính xác cho SysTick (1 ms Tick cho FreeRTOS/Zephyr), UART Baudrate, CAN Bit Timing. |
+
+
 ## 1.1. Kiến trúc Cây Xung Nhịp (Clock Tree): HSE 25MHz & Bộ nhân Main PLL
 
-Lõi ARM Cortex-M7 trên STM32F746NG có thể chạy ở tần số tối đa $216\text{ MHz}$. Trên bo mạch STM32F746G-Discovery, nguồn xung nhịp ổn định đầu vào là thạch anh ngoài **HSE = 25 MHz**. 
+Lõi ARM Cortex-M7 trên STM32F746NG có thể chạy ở tần số tối đa 216 MHz. Trên bo mạch STM32F746G-Discovery, nguồn xung nhịp ổn định đầu vào là thạch anh ngoài **HSE = 25 MHz**. 
 
-Để biến $25\text{ MHz}$ thành $216\text{ MHz}$, chip sử dụng khối mạch tích hợp **Main PLL (Phase-Locked Loop)**:
+Để biến 25 MHz thành 216 MHz, chip sử dụng khối mạch tích hợp **Main PLL (Phase-Locked Loop)**:
 
 ### So sánh HSI (Internal) vs HSE (External):
 | Đặc tính | HSI (High-Speed Internal) | HSE (High-Speed External) |
 | :--- | :--- | :--- |
 | **Bản chất** | Mạch dao động RC tích hợp sẵn trong ruột silicon (16MHz). | Thạch anh kim loại vật lý hàn ngoài bo mạch (25MHz). |
-| **Ưu điểm** | Bật nguồn là chạy ngay, không cần linh kiện ngoài. | Cực kỳ chính xác, sai số chỉ $\approx 20\text{ ppm}$ (0.002%). |
-| **Nhược điểm**| Sai số lớn ($\pm 1\% \dots \pm 2\%$) do nhiệt độ môi trường. | Cần vài mili-giây để cơ học rung ổn định (`HSERDY`). |
+| **Ưu điểm** | Bật nguồn là chạy ngay, không cần linh kiện ngoài. | Cực kỳ chính xác, sai số chỉ khoảng 20 ppm (0.002%). |
+| **Nhược điểm**| Sai số lớn (+-1% đến +-2%) do nhiệt độ môi trường. | Cần vài mili-giây để cơ học rung ổn định (`HSERDY`). |
 | **Ứng dụng** | Dùng khi bootup an toàn hoặc ứng dụng tiết kiệm điện. | **Bắt buộc** cho USB, Ethernet, CAN Bus và hệ thống 216MHz. |
 
 ```text
@@ -80,21 +93,21 @@ Lõi ARM Cortex-M7 trên STM32F746NG có thể chạy ở tần số tối đa $
 ```
 
 ### Giới hạn phần cứng bắt buộc (RM0385 Section 5.1.4):
-1. **$f_{VCO\_in} = \frac{f_{HSE}}{\text{PLLM}}$**: Phải nằm trong khoảng $[1.0\text{ MHz} \dots 2.0\text{ MHz}]$ để mạch lọc so pha PFD hoạt động chính xác với độ rung pha (Jitter) thấp nhất. Chọn $\text{PLLM} = 25 \implies f_{VCO\_in} = 1.0\text{ MHz}$.
-2. **$f_{VCO\_out} = f_{VCO\_in} \times \text{PLLN}$**: Phải nằm trong khoảng $[100\text{ MHz} \dots 432\text{ MHz}]$. Chọn $\text{PLLN} = 432 \implies f_{VCO\_out} = 432.0\text{ MHz}$.
-3. **$f_{SYSCLK} = \frac{f_{VCO\_out}}{\text{PLLP}}$**: Tối đa $216\text{ MHz}$. Chọn $\text{PLLP} = 2$ (mã nhị phân `00b`) $\implies f_{SYSCLK} = \frac{432}{2} = 216.0\text{ MHz}$.
-4. **$f_{PLL48CLK} = \frac{f_{VCO\_out}}{\text{PLLQ}}$**: Bắt buộc đúng $48\text{ MHz}$ cho USB. Chọn $\text{PLLQ} = 9 \implies f_{USB} = \frac{432}{9} = 48.0\text{ MHz}$.
+1. **`f_VCO_in = f_HSE / PLLM`**: Phải nằm trong khoảng [1.0 MHz ... 2.0 MHz] để mạch lọc so pha PFD hoạt động chính xác với độ rung pha (Jitter) thấp nhất. Chọn PLLM = 25 -> f_VCO_in = 1.0 MHz.
+2. **`f_VCO_out = f_VCO_in * PLLN`**: Phải nằm trong khoảng [100 MHz ... 432 MHz]. Chọn PLLN = 432 -> f_VCO_out = 432.0 MHz.
+3. **`f_SYSCLK = f_VCO_out / PLLP`**: Tối đa 216 MHz. Chọn PLLP = 2 (mã nhị phân `00b`) -> f_SYSCLK = 432 / 2 = 216.0 MHz.
+4. **`f_PLL48CLK = f_VCO_out / PLLQ`**: Bắt buộc đúng 48 MHz cho USB. Chọn PLLQ = 9 -> f_USB = 432 / 9 = 48.0 MHz.
 
 ---
 
 ## 1.2. Mối quan hệ Phần cứng giữa Tần số Lõi và Flash Access Latency (Wait States)
 
-Bộ nhớ Flash nhúng trên chip STM32F7 có giới hạn vật lý về thời gian truy cập (Access Time $t_{ACC} \approx 30\text{ ns}$):
-* Ở tần số $216\text{ MHz}$, chu kỳ xung nhịp của CPU chỉ kéo dài:
-  $$T_{CPU} = \frac{1}{216\text{ MHz}} \approx 4.63\text{ ns}$$
-* Vì $4.63\text{ ns} \ll 30\text{ ns}$, nếu CPU truy cập đọc mã lệnh Flash ở tốc độ tối đa, tín hiệu dữ liệu chưa kịp ổn định trên bus $\implies$ CPU đọc trúng dữ liệu rác, gây ra lỗi **`HardFault`** hoặc **`BusFault`** ngay lập tức!
+Bộ nhớ Flash nhúng trên chip STM32F7 có giới hạn vật lý về thời gian truy cập (Access Time `t_ACC ~ 30 ns`):
+* Ở tần số 216 MHz, chu kỳ xung nhịp của CPU chỉ kéo dài:
+  `T_CPU = 1 / 216 MHz ~ 4.63 ns`
+* Vì 4.63 ns << 30 ns, nếu CPU truy cập đọc mã lệnh Flash ở tốc độ tối đa, tín hiệu dữ liệu chưa kịp ổn định trên bus -> CPU đọc trúng dữ liệu rác, gây ra lỗi **`HardFault`** hoặc **`BusFault`** ngay lập tức!
 * **Giải pháp phần cứng:** Thanh ghi `FLASH_ACR` cho phép chèn thêm các chu kỳ chờ (**Wait States - WS**):
-  $$\text{Số chu kỳ chờ} = \frac{30\text{ ns}}{4.63\text{ ns}} \approx 6.48 \implies \mathbf{7\text{ chu kỳ CPU (tương ứng 6 Wait States - LATENCY = 6)}} $$
+  $SốSố chu kỳ chờ = 30 ns / 4.63 ns ~ 6.48 -> 7 chu kỳ CPU (tương ứng 6 Wait States - LATENCY = 6)
 
 ```text
 Tra cứu RM0385 Table 5: Number of wait states according to CPU clock (HCLK) frequency:
@@ -119,7 +132,7 @@ Wait States (WS)          | Tần số HCLK tối đa cho phép
 
 ## 1.3. Cơ chế Năng lượng VOS Scale 1 & Bắt tay Over-Drive Mode
 
-Để transistor bên trong vi mạch Cortex-M7 đóng ngắt tin cậy ở tần số $216\text{ MHz}$, nguồn cấp nội bộ cho khối logic số (V_CORE) phải được kích hoạt chế độ **Over-drive Mode**:
+Để transistor bên trong vi mạch Cortex-M7 đóng ngắt tin cậy ở tần số 216 MHz, nguồn cấp nội bộ cho khối logic số (V_CORE) phải được kích hoạt chế độ **Over-drive Mode**:
 
 ```text
                     QUY TRÌNH BẮT TAY OVER-DRIVE MODE (RM0385 Section 5.1.4)
@@ -153,7 +166,7 @@ Wait States (WS)          | Tần số HCLK tối đa cho phép
 
 ## 1.4. Phân tầng Tần số Bus Matrix (AHB, APB1, APB2 Prescalers)
 
-Khi $f_{SYSCLK} = 216\text{ MHz}$, xung nhịp được phân phối tới các bus thông qua các bộ chia (Prescalers) trong thanh ghi `RCC_CFGR`. Phải tuân thủ giới hạn phần cứng tuyệt đối trong Datasheet DS10610:
+Khi f_{SYSCLK = 216 MHz, xung nhịp được phân phối tới các bus thông qua các bộ chia (Prescalers) trong thanh ghi `RCC_CFGR`. Phải tuân thủ giới hạn phần cứng tuyệt đối trong Datasheet DS10610:
 
 ```text
                                 SYSCLK = 216 MHz
@@ -174,7 +187,7 @@ Khi $f_{SYSCLK} = 216\text{ MHz}$, xung nhịp được phân phối tới các 
        └───────────────────────────────┘       └───────────────────────────────┘
 ```
 
-> ⚠️ **HẬU QUẢ NẾU CHIA SAI:** Nếu cài đặt `PPRE1 = /2` (thay vì `/4`), bus APB1 sẽ bị đẩy lên $108\text{ MHz}$ (vượt trần $54\text{ MHz}$). Toàn bộ khối CAN Controller và UART trên bus APB1 sẽ bị lệch Baudrate và sai lệch định thời phần cứng!
+> ⚠️ **HẬU QUẢ NẾU CHIA SAI:** Nếu cài đặt `PPRE1 = /2` (thay vì `/4`), bus APB1 sẽ bị đẩy lên 108 MHz (vượt trần 54 MHz). Toàn bộ khối CAN Controller và UART trên bus APB1 sẽ bị lệch Baudrate và sai lệch định thời phần cứng!
 
 ---
 
@@ -201,7 +214,7 @@ Thanh ghi `RCC_CSR` (Control/Status Register, Offset `0x74`) lưu giữ các c�
 
 ## 1.6. Tổ chức Bản đồ Bộ nhớ RAM, Stack & Heap
 
-Bộ nhớ nội SRAM trên STM32F746 có tổng dung lượng $512\text{ KB}$ (từ `0x2000 0000` đến `0x2005 0000`), được phân bổ thành 4 phân vùng chuẩn:
+Bộ nhớ nội SRAM trên STM32F746 có tổng dung lượng 512 KB (từ `0x2000 0000` đến `0x2005 0000`), được phân bổ thành 4 phân vùng chuẩn:
 
 ```text
 Địa chỉ CAO   ▲ 0x2005 0000 ──┬───────────────────────────────────────────┐
@@ -231,7 +244,7 @@ Bộ nhớ nội SRAM trên STM32F746 có tổng dung lượng $512\text{ KB}$ (
 
 ## 1.7. Sơ Đồ Tuần Tự: Quy Trình Cấu Hình & Vận Hành Hệ Thống Xung Nhịp (Configuration & Execution Pipeline)
 
-Mô hình hóa toàn bộ chuỗi các bước cấu hình tuần tự các thanh ghi (`RCC`, `PWR`, `FLASH`) để đưa hệ thống từ trạng thái Reset ban đầu lên xung nhịp đỉnh cao $216\text{ MHz}$ và chu trình xử lý cờ Reset lúc boot:
+Mô hình hóa toàn bộ chuỗi các bước cấu hình tuần tự các thanh ghi (`RCC`, `PWR`, `FLASH`) để đưa hệ thống từ trạng thái Reset ban đầu lên xung nhịp đỉnh cao 216 MHz và chu trình xử lý cờ Reset lúc boot:
 
 ---
 
@@ -351,7 +364,7 @@ sequenceDiagram
 
 ## 2.1. Bản đồ Địa chỉ Base Address & Ngoại vi Ngày 1
 
-Tra cứu Reference Manual RM0385 *Chapter 2: Memory map $\rightarrow$ Table 1*:
+Tra cứu Reference Manual RM0385 *Chapter 2: Memory map -> Table 1*:
 
 | Tên ngoại vi | Bus | Base Address | Offset | Địa chỉ tuyệt đối | Chức năng chính |
 | :--- | :---: | :---: | :---: | :---: | :--- |
@@ -368,7 +381,7 @@ Tra cứu RM0385 *Chapter 5 (RCC)*, *Chapter 4 (PWR)*, và *Chapter 3 (Flash)*:
 | Module | Thanh ghi | Bit / Trường | Giá trị gán | Ý nghĩa kỹ thuật phần cứng |
 | :--- | :--- | :--- | :---: | :--- |
 | **`RCC`** | `RCC_APB1ENR` | `PWREN` (Bit 28) | `1`b | Cấp xung APB1 cho module điều khiển nguồn PWR. |
-| **`PWR`** | `PWR_CR1` | `VOS[1:0]` (Bit 15:14) | `11`b | Cài đặt điện áp lõi Scale 1 mode (cần thiết cho $f > 180\text{MHz}$). |
+| **`PWR`** | `PWR_CR1` | `VOS[1:0]` (Bit 15:14) | `11`b | Cài đặt điện áp lõi Scale 1 mode (cần thiết cho f > 180MHz). |
 | **`RCC`** | `RCC_CR` | `HSEON` (Bit 16) | `1`b | Bật dao động thạch anh ngoài HSE 25MHz. |
 | | | `HSERDY` (Bit 17) | RO Polling | Chờ thạch anh dao động cơ học ổn định (`HSERDY = 1`). |
 | **`FLASH`**| `FLASH_ACR` | `LATENCY[3:0]` (Bit 3:0) | `0111`b (7WS) | Cài đặt 7 Wait States (hoặc 6WS + ART) cho HCLK = 216MHz. |
@@ -377,11 +390,11 @@ Tra cứu RM0385 *Chapter 5 (RCC)*, *Chapter 4 (PWR)*, và *Chapter 3 (Flash)*:
 | **`RCC`** | `RCC_CFGR` | `HPRE[3:0]` (Bit 7:4) | `0000`b (`/1`) | Bộ chia AHB Prescaler: HCLK = SYSCLK / 1 = 216MHz. |
 | | | `PPRE1[2:0]` (Bit 12:10)| `101`b (`/4`) | Bộ chia APB1 Prescaler: PCLK1 = 216 / 4 = 54MHz. |
 | | | `PPRE2[2:0]` (Bit 15:13)| `100`b (`/2`) | Bộ chia APB2 Prescaler: PCLK2 = 216 / 2 = 108MHz. |
-| **`RCC`** | `RCC_PLLCFGR`| `PLLM[5:0]` (Bit 5:0) | `25`d (`0x19`) | Chia tần số đầu vào HSE: $25\text{MHz} / 25 = 1\text{MHz}$. |
-| | | `PLLN[8:0]` (Bit 14:6) | `432`d (`0x1B0`)| Nhân tần số VCO: $1\text{MHz} \times 432 = 432\text{MHz}$. |
-| | | `PLLP[1:0]` (Bit 17:16)| `00`b (`/2`) | Chia tần số hệ thống: $432\text{MHz} / 2 = 216\text{MHz}$. |
+| **`RCC`** | `RCC_PLLCFGR`| `PLLM[5:0]` (Bit 5:0) | `25`d (`0x19`) | Chia tần số đầu vào HSE: 25MHz / 25 = 1MHz. |
+| | | `PLLN[8:0]` (Bit 14:6) | `432`d (`0x1B0`)| Nhân tần số VCO: 1MHz * 432 = 432MHz. |
+| | | `PLLP[1:0]` (Bit 17:16)| `00`b (`/2`) | Chia tần số hệ thống: 432MHz / 2 = 216MHz. |
 | | | `PLLSRC` (Bit 22) | `1`b | Chọn nguồn cấp cho PLL là HSE. |
-| | | `PLLQ[3:0]` (Bit 27:24)| `9`d (`1001`b) | Chia tần số USB/SDMMC: $432\text{MHz} / 9 = 48\text{MHz}$. |
+| | | `PLLQ[3:0]` (Bit 27:24)| `9`d (`1001`b) | Chia tần số USB/SDMMC: 432MHz / 9 = 48MHz. |
 | **`RCC`** | `RCC_CR` | `PLLON` (Bit 24) | `1`b | Kích hoạt bộ nhân Main PLL. |
 | | | `PLLRDY` (Bit 25) | RO Polling | Chờ vòng khóa pha PLL khóa thành công (`PLLRDY = 1`). |
 | **`PWR`** | `PWR_CR1` | `ODEN` (Bit 16) | `1`b | Kích hoạt chế độ Over-drive mode. |
@@ -600,7 +613,7 @@ int main(void)
 ## 4.1. Bộ 5 Câu Hỏi Phỏng Vấn Chuyên Sâu (Top 5 Deep-Dive Questions)
 
 ### ❓ Câu 1: Tại sao STM32F746 chạy ở 216MHz bắt buộc phải cấu hình Flash Wait States? Nếu không cấu hình, lỗi phần cứng nào sẽ phát sinh?
-* **Trả lời:** Flash nhúng có thời gian truy cập vật lý khoảng $30\text{ ns}$. Ở $216\text{ MHz}$, 1 chu kỳ CPU chỉ kéo dài $4.63\text{ ns}$. Nếu không chèn Wait States, CPU nạp lệnh trước khi Flash kịp đưa dữ liệu ra bus, dẫn đến dữ liệu lệnh bị sai lệch $\rightarrow$ Mạch giải mã lệnh kích hoạt ngoại lệ phần cứng **`HardFault`** hoặc **`BusFault`** (Precise Data Bus Error).
+* **Trả lời:** Flash nhúng có thời gian truy cập vật lý khoảng 30 ns. Ở 216 MHz, 1 chu kỳ CPU chỉ kéo dài 4.63 ns. Nếu không chèn Wait States, CPU nạp lệnh trước khi Flash kịp đưa dữ liệu ra bus, dẫn đến dữ liệu lệnh bị sai lệch -> Mạch giải mã lệnh kích hoạt ngoại lệ phần cứng **`HardFault`** hoặc **`BusFault`** (Precise Data Bus Error).
 
 ---
 
@@ -629,10 +642,10 @@ int main(void)
 * **Trả lời:**
   1. **Heap Fragmentation (Phân mảnh bộ nhớ):** Sau nhiều chu kỳ cấp phát và giải phóng các block có kích thước khác nhau, RAM bị xé vụn. Đến khi cần một block liên tục đủ lớn, `malloc` thất bại và trả về con trỏ `NULL`, dẫn đến sập hệ thống.
   2. **Non-deterministic Latency (Bất định về thời gian):** Thuật toán duyệt danh sách ô nhớ trống của `malloc` tốn thời gian thay đổi tùy theo mức độ phân mảnh, vi phạm nghiêm trọng giới hạn thời gian thực (Hard Real-Time Deadlines).
-  3. **Memory Leak (Rò rỉ bộ nhớ):** Quên giải phóng trong một nhánh rẽ lỗi nhỏ sẽ tích tụ làm cạn kiệt RAM sau thời gian dài chạy 24/7. Giải pháp bắt buộc là cấp phát tĩnh (Static Memory Allocation) $100\%$.
+  3. **Memory Leak (Rò rỉ bộ nhớ):** Quên giải phóng trong một nhánh rẽ lỗi nhỏ sẽ tích tụ làm cạn kiệt RAM sau thời gian dài chạy 24/7. Giải pháp bắt buộc là cấp phát tĩnh (Static Memory Allocation) 100%.
 
 ---
 
 ## 4.2. Kịch bản Trả lời Phỏng vấn 60 Giây (Elevator Pitch)
 
-> *"Trong thiết kế Bare-metal trên STM32F746, em trực tiếp cấu hình hệ thống xung nhịp đạt mức cực đại **216MHz** từ thạch anh ngoài **HSE 25MHz**. Em thiết lập bộ chia Main PLL với $PLLM=25, PLLN=432, PLLP=2$ để đạt $SYSCLK=216\text{MHz}$, đồng thời chia bus $PCLK1=54\text{MHz}$ và $PCLK2=108\text{MHz}$ tuân thủ đúng giới hạn phần cứng trong Datasheet DS10610. Trước khi kích hoạt PLL, em bảo vệ CPU khỏi lỗi HardFault bằng cách nâng **Flash Latency lên 7 Wait States** và bật bộ tăng tốc ART Accelerator. Em triển khai quy trình bắt tay 4 bước để kích hoạt chế độ **Over-drive Mode** trong `PWR_CR1`, và tích hợp cơ chế **Reset Reason Logging** thông qua thanh ghi `RCC_CSR` để ghi nhận chính xác nguyên nhân lỗi hệ thống (như sụt áp BOR hoặc Watchdog timeout) trước khi xóa cờ bằng bit `RMVF`."*
+> *"Trong thiết kế Bare-metal trên STM32F746, em trực tiếp cấu hình hệ thống xung nhịp đạt mức cực đại **216MHz** từ thạch anh ngoài **HSE 25MHz**. Em thiết lập bộ chia Main PLL với PLLM=25, PLLN=432, PLLP=2 để đạt SYSCLK=216MHz, đồng thời chia bus PCLK1=54MHz và PCLK2=108MHz tuân thủ đúng giới hạn phần cứng trong Datasheet DS10610. Trước khi kích hoạt PLL, em bảo vệ CPU khỏi lỗi HardFault bằng cách nâng **Flash Latency lên 7 Wait States** và bật bộ tăng tốc ART Accelerator. Em triển khai quy trình bắt tay 4 bước để kích hoạt chế độ **Over-drive Mode** trong `PWR_CR1`, và tích hợp cơ chế **Reset Reason Logging** thông qua thanh ghi `RCC_CSR` để ghi nhận chính xác nguyên nhân lỗi hệ thống (như sụt áp BOR hoặc Watchdog timeout) trước khi xóa cờ bằng bit `RMVF`."*

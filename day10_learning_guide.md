@@ -29,17 +29,29 @@
 | :---: | :--- | :--- |
 | **1** | **No Raw Global Variables** | Tuyệt đối không dùng biến toàn cục không được bảo vệ để truyền dữ liệu giữa các luồng. Mọi dữ liệu phải đi qua hàng đợi tin nhắn `k_msgq` hoặc biến trạng thái bọc Mutex. |
 | **2** | **Priority Inheritance** | Luôn sử dụng `k_mutex` (mặc định đã bật Priority Inheritance) khi các luồng có mức ưu tiên khác nhau cùng chia sẻ tài nguyên. Không dùng `k_sem` (Binary Semaphore) làm khóa độc quyền vì Semaphore không có tính năng nâng mức ưu tiên! |
-| **3** | **Zero-Copy vs Copy by Value** | Trong `k_msgq`, dữ liệu được copy theo giá trị (`memcpy`). Với cấu trúc dữ liệu nhỏ ($< 32$ bytes như CAN Frame hay telemetry data), cơ chế này an toàn tuyệt đối và không lo con trỏ rác (Dangling Pointer). |
+| **3** | **Zero-Copy vs Copy by Value** | Trong `k_msgq`, dữ liệu được copy theo giá trị (`memcpy`). Với cấu trúc dữ liệu nhỏ (< 32 bytes như CAN Frame hay telemetry data), cơ chế này an toàn tuyệt đối và không lo con trỏ rác (Dangling Pointer). |
 | **4** | **Thread Sleep Obligation** | Mọi luồng trong hệ thống bắt buộc phải có ít nhất một điểm dừng giải phóng CPU (như chờ hàng đợi `k_msgq_get()`, hoặc gọi `k_msleep()`), không để bất kỳ luồng nào chạy vòng lặp đói (Busy-loop). |
-| **5** | **Thread Analyzer Inspection** | Luôn theo dõi báo cáo của `CONFIG_THREAD_ANALYZER`. Nếu một luồng sử dụng quá $80\%$ ngăn xếp, phải lập tức tăng kích thước stack để tránh kích hoạt MPU Stack Guard. |
+| **5** | **Thread Analyzer Inspection** | Luôn theo dõi báo cáo của `CONFIG_THREAD_ANALYZER`. Nếu một luồng sử dụng quá 80% ngăn xếp, phải lập tức tăng kích thước stack để tránh kích hoạt MPU Stack Guard. |
 | **6** | **Shell Non-Blocking Execution** | Các lệnh trong Shell CLI (`SHELL_CMD_REGISTER`) phải thực thi nhanh và trả về ngay. Tuyệt đối không gọi các vòng lặp chờ đợi lâu trong callback của Shell làm tê liệt Console UART. |
 | **7** | **Atomic Operations** | Đối với các biến cờ đếm gói tin (Counters), sử dụng các hàm thao tác nguyên tử `atomic_inc()` / `atomic_get()` thay vì phép toán `++` thông thường để tránh xung đột đa luồng. |
 
 ---
 
-# 🧠 BƯỚC 1: KIẾN TRÚC HỆ THỐNG & CƠ CHẾ HOẠT ĐỘNG (SYSTEM ARCHITECTURE)
+# 🧠 BƯỚC 1: KIẾN TRÚC HỆ THỐNG & CƠ CHẾ HOẠT ĐỘNG (SO SÁNH FREERTOS)
 
-## 1.1. Kiến Trúc Phân Tầng Đa Luồng (The Producer-Consumer Actor Pattern)
+### 1.1. So Sánh Cơ Chế Giao Tiếp Đa Luồng (IPC): FreeRTOS vs Zephyr RTOS
+
+| Khái niệm IPC | 1. FreeRTOS | 2. Zephyr RTOS | Điểm Khác Biệt Trọng Tâm |
+| :--- | :--- | :--- | :--- |
+| **Hàng đợi (Queue)** | `xQueueCreate()`, `QueueHandle_t` | `K_MSGQ_DEFINE()`, `struct k_msgq` | Cả hai đều copy dữ liệu theo giá trị (`memcpy`), chống lỗi con trỏ rác. |
+| **Gửi dữ liệu vào Queue** | Phải phân biệt rõ ràng: Luồng dùng `xQueueSend()`, còn trong ngắt ISR phải dùng `xQueueSendFromISR()`. | **DÙNG CHUNG 1 HÀM DUY NHẤT:** `k_msgq_put()` gọi được từ cả Thread lẫn ngắt ISR (chỉ cần truyền timeout `K_NO_WAIT`). |
+| **Nhận dữ liệu từ Queue** | `xQueueReceive(queue, &buf, portMAX_DELAY)` | `k_msgq_get(&msgq, &buf, K_FOREVER)` | Cả hai đều đưa luồng vào trạng thái Sleep (0% CPU) khi hàng đợi rỗng. |
+| **Khóa Mutex** | `xSemaphoreCreateMutex()` | `K_MUTEX_DEFINE(my_mutex)` | Cả hai đều tự động tích hợp **Priority Inheritance** (Kế thừa mức ưu tiên) chống treo luồng cao. |
+| **Giao diện dòng lệnh (CLI)** | `FreeRTOS-Plus-CLI` (Phải tự viết bộ tách chuỗi UART, tự xử lý ký tự phím bấm). | **Zephyr Shell Subsystem** (`CONFIG_SHELL=y`): Có sẵn phím Tab tự hoàn thành lệnh, phím mũi tên lật lại lịch sử, gõ lệnh trực tiếp qua ST-Link UART! |
+
+---
+
+### 1.2. Kiến Trúc Phân Tầng Đa Luồng (The Producer-Consumer Actor Pattern)
 
 Để xử lý luồng dữ liệu thời gian thực từ mạng CAN Bus đẩy lên màn hình táp-lô mà không làm treo hệ thống, dự án triển khai mô hình đa luồng phân cấp rõ ràng:
 
@@ -86,7 +98,25 @@
 
 ---
 
-## 1.2. Mổ Xẻ Bẫy Đảo Ngược Mức Ưu Tiên (Priority Inversion) & Giải Pháp Priority Inheritance
+### 1.3. Tại Sao Dùng Hàng Đợi (`k_msgq`) Thay Vì Gán Biến Toàn Cục?
+
+Nhiều bạn mới học thường thắc mắc: *"Tại sao không khai báo một biến toàn cục `g_speed`, bên nhận cứ đọc thẳng cho nhanh?"*
+
+**3 lý do kỹ thuật bắt buộc phải dùng Hàng đợi (Message Queue):**
+1. **Tránh xé vụn dữ liệu (Data Race / Torn Read):**
+   * Biến chứa dữ liệu xe thường là struct gồm nhiều trường (`speed`, `rpm`, `temp`).
+   * Vi điều khiển 32-bit Cortex-M ghi từng 4 byte một. Nếu luồng CAN đang ghi dở nửa chừng mà bị luồng GUI nhảy vào đọc ngay -> Luồng GUI sẽ đọc phải nửa giá trị cũ, nửa giá trị mới -> **Dữ liệu hiển thị bị rác hoặc nhảy số loạn xạ!**
+2. **Tiết kiệm 100% CPU (Sleep vs Polling):**
+   * Nếu dùng biến toàn cục: Luồng nhận phải liên tục chạy vòng lặp `while(1)` để kiểm tra xem biến có thay đổi không -> CPU luôn chạy 100% công suất, phát nóng chip.
+   * Nếu dùng `k_msgq`: Luồng nhận gọi `k_msgq_get(..., K_FOREVER)` và lập tức đi ngủ (0% CPU). Khi nào có gói tin tới, nhân hệ điều hành mới đánh thức luồng dậy xử lý.
+3. **Bộ đệm chống mất gói (Buffering):**
+   * Mạng CAN ô tô phát tín hiệu dồn dập từng đợt (burst).
+   * Biến toàn cục chỉ lưu được ĐÚNG 1 giá trị mới nhất (ghi đè làm mất gói trước đó).
+   * Hàng đợi có thể chứa sẵn 8 đến 16 gói tin dự phòng, luồng nhận bốc lần lượt ra xử lý theo thứ tự FIFO (First-In, First-Out).
+
+---
+
+### 1.4. Mổ Xẻ Bẫy Đảo Ngược Mức Ưu Tiên (Priority Inversion) & Giải Pháp Priority Inheritance
 
 Đây là một trong những câu hỏi phỏng vấn kinh điển nhất trong lập trình hệ điều hành thời gian thực (nổi tiếng với sự cố tàu thám hiểm Sao Hỏa Mars Pathfinder năm 1997):
 
@@ -103,7 +133,7 @@ KỊCH BẢN NGUY HIỂM (Priority Inversion khi dùng Khóa không có Kế th�
 * Ngay khi **Luồng Cao** cố gắng lấy Mutex đang bị giữ bởi **Luồng Thấp**:
 * Nhân Zephyr **tự động nâng mức ưu tiên của Luồng Thấp lên ngang bằng với Luồng Cao**!
 * Lúc này, Luồng Trung Bình không thể chen ngang Luồng Thấp được nữa.
-* Luồng Thấp nhanh chóng xử lý xong đoạn găng, nhả Mutex ra $\implies$ Mức ưu tiên của nó hạ về như cũ, và Luồng Cao ngay lập tức giành quyền thực thi.
+* Luồng Thấp nhanh chóng xử lý xong đoạn găng, nhả Mutex ra -> Mức ưu tiên của nó hạ về như cũ, và Luồng Cao ngay lập tức giành quyền thực thi.
 
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Zephyr Synchronization Primitives:**
 > 1. **Tra cứu Cơ chế Mutex:** Mở `https://docs.zephyrproject.org/latest/kernel/services/synchronization/mutexes.html`.
@@ -112,7 +142,7 @@ KỊCH BẢN NGUY HIỂM (Priority Inversion khi dùng Khóa không có Kế th�
 
 ---
 
-## 1.3. So Sánh Cơ Chế IPC: `k_msgq` vs `k_fifo` vs `k_sem`
+### 1.5. So Sánh Cơ Chế IPC: `k_msgq` vs `k_fifo` vs `k_sem`
 
 | Tiêu chí kỹ thuật | `k_msgq` (Message Queue) | `k_fifo` (First-In First-Out) | `k_sem` (Semaphore) |
 | :--- | :--- | :--- | :--- |
@@ -123,7 +153,7 @@ KỊCH BẢN NGUY HIỂM (Priority Inversion khi dùng Khóa không có Kế th�
 
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Zephyr Data Passing:**
 > 1. **Tra cứu Message Queue:** Mở `https://docs.zephyrproject.org/latest/kernel/services/data_passing/message_queues.html`.
->    * Xem cấu trúc hàng đợi Ring Buffer tĩnh: Các thao tác `k_msgq_put()` và `k_msgq_get()` thực hiện copy an toàn theo giá trị với độ phức tạp $O(1)$.
+>    * Xem cấu trúc hàng đợi Ring Buffer tĩnh: Các thao tác `k_msgq_put()` và `k_msgq_get()` thực hiện copy an toàn theo giá trị với độ phức tạp O(1).
 > 2. **Tra cứu Shell Subsystem:** Mở `https://docs.zephyrproject.org/latest/services/shell/index.html` để hiểu kiến trúc dòng lệnh CLI không chặn (Non-blocking UART backend).
 
 ---

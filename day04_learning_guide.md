@@ -1,7 +1,7 @@
 # 🏆 [NGÀY 4] CẨM NANG TOÀN DIỆN BARE-METAL: FMC SDRAM, LTDC DISPLAY & TEARING-FREE DOUBLE BUFFERING
 ## Lộ trình 4 Bước: Nguyên Lý Phần Cứng ➔ Thực Chiến RM0385 ➔ Gõ Code Driver ➔ Phỏng Vấn Chuyên Sâu
 
-> **Mục tiêu:** Làm chủ từ gốc rễ mạch điều khiển bộ nhớ ngoài FMC (Flexible Memory Controller), tra cứu Reference Manual (RM0385) và Datasheet (DS10610), cấu hình chip SDRAM IS42S32400F/MT48LC4M32B2 ($8\text{ MB}$, Bus 16-bit, $108\text{ MHz}$), tính toán chu kỳ làm tươi Refresh Rate Counter, cấu hình bộ quét màn hình đồ họa LTDC (RGB Parallel $480 \times 272$), triệt tiêu hiện tượng xé hình (Tearing-free Double Buffering) và cấu hình vùng nhớ MPU Non-cacheable chống lỗi D-Cache trên STM32F746 (ARM Cortex-M7).  
+> **Mục tiêu:** Làm chủ từ gốc rễ mạch điều khiển bộ nhớ ngoài FMC (Flexible Memory Controller), tra cứu Reference Manual (RM0385) và Datasheet (DS10610), cấu hình chip SDRAM IS42S32400F/MT48LC4M32B2 (8 MB, Bus 16-bit, 108 MHz), tính toán chu kỳ làm tươi Refresh Rate Counter, cấu hình bộ quét màn hình đồ họa LTDC (RGB Parallel 480x272), triệt tiêu hiện tượng xé hình (Tearing-free Double Buffering) và cấu hình vùng nhớ MPU Non-cacheable chống lỗi D-Cache trên STM32F746 (ARM Cortex-M7).  
 > **Nguyên tắc kỹ thuật:** **Đi thẳng vào cơ chế phần cứng, thanh ghi, công thức toán học, bảng tra cứu và phân chia file rõ ràng — KHÔNG dùng ví dụ ẩn dụ ngoài lề dài dòng.**
 
 ---
@@ -32,17 +32,30 @@
 | **2** | **Access Type** | **CỰC KỲ QUAN TRỌNG:** Thanh ghi nạp cờ nạp lại bộ đệm `LTDC_SRCR` (bit `VBR` - Vertical Blanking Reload) là dạng `rs` (Write 1 to Set). Thanh ghi xóa cờ ngắt `LTDC_ICR` là dạng `W1C` (ghi 1 xóa cờ `CLIF`). Tuyệt đối không dùng `|=`. |
 | **3** | **Multi-Bit Clear-Set** | Áp dụng quy tắc xóa trước - gán sau (`REG &= ~MASK; REG |= VALUE;`) cho các trường `MWID[1:0]`, `NR[1:0]`, `NC[1:0]`, `NB`, `CAS[1:0]`, `SDCLK[1:0]`, `PF[2:0]`, `VBR`. |
 | **4** | **`volatile` Qualification** | Mọi con trỏ bộ nhớ trỏ vào Framebuffer SDRAM (`0xC000 0000`) bắt buộc ép kiểu con trỏ `volatile uint16_t*` hoặc `volatile uint32_t*` để trình biên dịch không tối ưu hóa xóa mất các lệnh ghi pixel đồ họa. |
-| **5** | **Hardware Handshake Pipeline** | Tuân thủ nghiêm ngặt chuỗi khởi tạo phần cứng 5 bước bắt buộc của chip SDRAM: Cấp xung $\rightarrow$ Precharge All $\rightarrow$ Auto-Refresh $\rightarrow$ Mode Register Set $\rightarrow$ Cài đặt bộ đếm Refresh Timer. |
+| **5** | **Hardware Handshake Pipeline** | Tuân thủ nghiêm ngặt chuỗi khởi tạo phần cứng 5 bước bắt buộc của chip SDRAM: Cấp xung -> Precharge All -> Auto-Refresh -> Mode Register Set -> Cài đặt bộ đếm Refresh Timer. |
 | **6** | **RM / DS Lookup** | Cung cấp chính xác Chapter, Section, từ khóa `Ctrl + F`, công thức `Base Address + Offset` cho `FMC`, `LTDC`, và hơn 30 chân GPIO ghép kênh (AF12 / AF14). |
-| **7** | **Hardware Rationale & Specs** | Bố trí cơ sở kỹ thuật, giới hạn phần cứng ($f_{SDCLK} = 108\text{MHz}$, độ phân giải $480 \times 272$, chu kỳ làm tươi $64\text{ms}$ cho $4096\text{ rows}$, băng thông bus 16-bit) liền kề từng bảng thanh ghi. |
+| **7** | **Hardware Rationale & Specs** | Bố trí cơ sở kỹ thuật, giới hạn phần cứng (f_SDCLK = 108 MHz, độ phân giải 480x272, chu kỳ làm tươi 64 ms cho 4096 rows, băng thông bus 16-bit) liền kề từng bảng thanh ghi. |
 
 ---
 
 # 🧠 BƯỚC 1: NGUYÊN LÝ PHẦN CỨNG & CƠ CHẾ VẬT LÝ (HARDWARE ARCHITECTURE)
 
+## 1.0. So Sánh Bản Chất: Màn Hình Ngoại Vi SPI/I2C vs Hệ Thống Đồ Họa LTDC + FMC SDRAM
+
+Trước khi đi vào chuỗi lệnh JEDEC của SDRAM và các thanh ghi quét hình LTDC, hãy so sánh trực diện hai thế giới hiển thị đồ họa trong hệ thống nhúng:
+
+| Tiêu chí kỹ thuật | Màn hình Ngoại vi SPI / I2C (Truyền thống) | Hệ thống Đồ họa Chuyên dụng LTDC + FMC SDRAM (STM32F7) |
+| :--- | :--- | :--- |
+| **Bộ nhớ Framebuffer** | Lưu trong IC điều khiển ngoài (như ILI9341, ST7789). CPU vi điều khiển phải đẩy từng pixel qua bus SPI nối tiếp. | Lưu trực tiếp trong thanh RAM ngoài **SDRAM 8MB** gắn trên bus song song 32-bit (FMC) với tốc độ 108 MHz. |
+| **Tốc độ làm tươi (Refresh Rate)** | Bị nghẽn bởi tốc độ bus nối tiếp (thường chỉ 10 - 20 FPS), hình ảnh chuyển động bị giật lag và xé ngang. | **Cực đại 60 FPS mượt mà**: Bộ điều khiển LTDC hoạt động như một "card màn hình mini", tự động đọc SDRAM qua DMA nội bộ và bắn ra màn hình RGB 24-bit. |
+| **Tải CPU (CPU Load)** | Chiếm 70% - 90% CPU chỉ để vẽ và gửi từng byte màu ra chân SPI. | **0% CPU khi giữ nguyên hình**: CPU không cần làm gì, phần cứng LTDC tự động quét liên tục ra màn hình LCD. |
+| **Hiện tượng Rách Hình (Screen Tearing)** | Rất dễ xảy ra do CPU đang ghi dữ liệu vào màn hình đúng lúc màn hình đang quét điểm ảnh. | **Triệt tiêu 100% rách hình** nhờ cơ chế Double Buffering (2 bộ đệm) kết hợp đồng bộ khung quét dọc (`VSYNC Reload`). |
+| **Đối chiếu với Môi trường RTOS** | Task vẽ giao diện phải liên tục chiếm quyền CPU, làm trễ các Task thời gian thực khác. | Task đồ họa chỉ cập nhật vào bộ đệm ẩn (Back Buffer), sau đó chuyển cờ tráo bộ đệm `LTDC_SRCR` trong vài nano-giây. |
+
+
 ## 1.1. Kiến trúc Bộ nhớ Ngoài FMC SDRAM Controller trên STM32F746-Discovery
 
-Lõi STM32F746 có bộ nhớ SRAM nội $512\text{ KB}$. Để chứa các lớp đồ họa Framebuffer độ phân giải cao ($480 \times 272 \times 2\text{ bytes} \approx 261\text{ KB}$ cho mỗi lớp), bo mạch Discovery tích hợp một chip **SDRAM ngoài (IS42S32400F hoặc MT48LC4M32B2)** dung lượng $8\text{ MBytes}$ ($64\text{ Mbits}$):
+Lõi STM32F746 có bộ nhớ SRAM nội 512 KB. Để chứa các lớp đồ họa Framebuffer độ phân giải cao (480 x 272 x 2 bytes ~ 261 KB cho mỗi lớp), bo mạch Discovery tích hợp một chip **SDRAM ngoài (IS42S32400F hoặc MT48LC4M32B2)** dung lượng 8 MBytes (64 Mbits):
 
 ```text
  ┌────────────────────────────────────────────────────────────────────────────────────────┐
@@ -79,7 +92,7 @@ Lõi STM32F746 có bộ nhớ SRAM nội $512\text{ KB}$. Để chứa các lớ
 * **Số đường địa chỉ Hàng (`NR`):** **12 Rows** (`01b` - từ `A0` đến `A11`).
 * **Số đường địa chỉ Cột (`NC`):** **8 Columns** (`00b` - từ `A0` đến `A7`).
 * **Tần số xung nhịp SDRAM Clock (`SDCLK`):**
-  $$f_{SDCLK} = \frac{f_{HCLK}}{2} = \frac{216\text{ MHz}}{2} = \mathbf{108\text{ MHz}} \implies T_{SDCLK} \approx 9.26\text{ ns}$$
+  `f_SDCLK = f_HCLK / 2 = 216 MHz / 2 = 108 MHz -> T_SDCLK ~ 9.26 ns`
 * **CAS Latency (`CAS`):** Cài đặt **2 chu kỳ** (`10b`).
 
 ---
@@ -124,30 +137,30 @@ Không giống như SRAM thông thường (cấp điện là đọc/ghi được
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385):**
 > 1. **Mở file `RM0385.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`SDRAM initialization sequence`**
 > 2. Đọc kỹ 8 bước khởi tạo tiêu chuẩn tại **Section 13.4.3: SDRAM initialization sequence**:
->    * Hãng quy định chặt chẽ: Bắt buộc cấp clock và duy trì mức điện áp ổn định tối thiểu $100\,\mu\text{s}$ bằng lệnh NOP, tiếp theo là lệnh Precharge All (`PALL`), nạp ít nhất 2 chu kỳ Auto-Refresh (`NRFS`), và phát lệnh `MRS` nạp Mode Register trước khi chip có thể nhận lệnh đọc/ghi bình thường.
+>    * Hãng quy định chặt chẽ: Bắt buộc cấp clock và duy trì mức điện áp ổn định tối thiểu 100 mus bằng lệnh NOP, tiếp theo là lệnh Precharge All (`PALL`), nạp ít nhất 2 chu kỳ Auto-Refresh (`NRFS`), và phát lệnh `MRS` nạp Mode Register trước khi chip có thể nhận lệnh đọc/ghi bình thường.
 >    * Quan sát **Figure 83. Command mode timing diagram** để thấy quan hệ thời gian giữa tín hiệu `SDCKE`, `SDCS` và các chu kỳ lệnh JEDEC.
 
 ### Công thức tính toán Bộ đếm Refresh Timer (`FMC_SDRTR`):
-Theo Datasheet của chip SDRAM: Toàn bộ $4096\text{ hàng}$ phải được làm tươi trong vòng tối đa $64\text{ ms}$:
-$$\text{Thời gian làm tươi cho 1 hàng} = \frac{64\text{ ms}}{4096\text{ Rows}} = 15.625\,\mu\text{s}$$
+Theo Datasheet của chip SDRAM: Toàn bộ 4096 hàng phải được làm tươi trong vòng tối đa 64 ms:
+`Thời gian làm tươi cho 1 hàng = 64 ms / 4096 Rows = 15.625 us`
 
-Với tần số $f_{SDCLK} = 108\text{ MHz}$ ($1\text{ chu kỳ} = 9.26\text{ ns}$):
-$$\text{Số chu kỳ Clock} = 15.625\,\mu\text{s} \times 108\text{ MHz} = 1687.5\text{ chu kỳ}$$
+Với tần số f_{SDCLK = 108 MHz (1 chu kỳ = 9.26 ns):
+`Số chu kỳ Clock = 15.625 us * 108 MHz = 1687.5 chu kỳ`
 
-Theo Reference Manual RM0385 (Section 13.7.7), giá trị nạp vào trường `COUNT[12:0]` có biên dự phòng $20\text{ chu kỳ}$:
-$$\mathbf{\text{COUNT}} = (\text{Refresh Rate} \times f_{SDCLK}) - 20 = 1687 - 20 = \mathbf{1667} \quad (\mathbf{\text{Mã Hex: } 0x0683})$$
+Theo Reference Manual RM0385 (Section 13.7.7), giá trị nạp vào trường `COUNT[12:0]` có biên dự phòng 20 chu kỳ:
+`COUNT = (Refresh Rate * f_SDCLK) - 20 = 1687 - 20 = 1667 (Mã Hex: 0x0683)`
 
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385):**
 > 1. **Mở file `RM0385.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`SDRAM Refresh Timer register`**
 > 2. Nhảy đến **Section 13.7.7: FMC_SDRTR**:
->    * Đối chiếu công thức tính trường `COUNT[12:0]` do ST quy định: $\text{COUNT} = (\text{SDRAM refresh rate} \times f_{SDCLK}) - 20$.
->    * Giải thích kỹ thuật: Trừ đi $20\text{ chu kỳ}$ clock là yêu cầu an toàn phần cứng để đảm bảo xung làm tươi không bị vi phạm thời gian trễ tối đa $t_{REF}$ khi bộ điều khiển FMC đang bận xử lý giao dịch dữ liệu dở dang trên bus.
+>    * Đối chiếu công thức tính trường `COUNT[12:0]` do ST quy định: COUNT = (SDRAM refresh rate x f_{SDCLK) - 20.
+>    * Giải thích kỹ thuật: Trừ đi 20 chu kỳ clock là yêu cầu an toàn phần cứng để đảm bảo xung làm tươi không bị vi phạm thời gian trễ tối đa t_{REF khi bộ điều khiển FMC đang bận xử lý giao dịch dữ liệu dở dang trên bus.
 
 ---
 
 ## 1.3. Kiến trúc Bộ Điều khiển Màn hình LTDC & Tín hiệu Quét RGB Parallel
 
-Khối **LTDC (LCD-TFT Display Controller)** điều khiển màn hình màu $4.3\text{ inch}$ ($480 \times 272$) trên bo mạch qua giao diện 24-bit song song (RGB888 / RGB565):
+Khối **LTDC (LCD-TFT Display Controller)** điều khiển màn hình màu 4.3 inch (480x272) trên bo mạch qua giao diện 24-bit song song (RGB888 / RGB565):
 
 ```text
  ┌────────────────────────────────────────────────────────────────────────────────────────┐
@@ -176,7 +189,7 @@ Khối **LTDC (LCD-TFT Display Controller)** điều khiển màn hình màu $4.
 ## 1.4. Cơ chế Triệt tiêu Xé hình (Tearing-Free Double Buffering)
 
 ### Hiện tượng Xé hình (Screen Tearing) là gì?
-Tearing xảy ra khi tia quét phần cứng của LTDC đang quét dở nửa màn hình trên từ Framebuffer, thì CPU/DMA lại ghi đè khung hình mới vào cùng địa chỉ đó. Kết quả: nửa trên màn hình hiển thị khung hình cũ, nửa dưới hiển thị khung hình mới $\implies$ Tạo ra vết nứt gãy ngang hình ảnh rất khó chịu!
+Tearing xảy ra khi tia quét phần cứng của LTDC đang quét dở nửa màn hình trên từ Framebuffer, thì CPU/DMA lại ghi đè khung hình mới vào cùng địa chỉ đó. Kết quả: nửa trên màn hình hiển thị khung hình cũ, nửa dưới hiển thị khung hình mới -> Tạo ra vết nứt gãy ngang hình ảnh rất khó chịu!
 
 ```text
  ┌────────────────────────────────────────────────────────────────────────────────────────┐
@@ -324,7 +337,7 @@ sequenceDiagram
 
 ### 📋 Sơ Đồ 3: Quy Trình Cấu Hình Vùng Nhớ MPU Bảo Vệ Framebuffer (MPU Region Configuration Pipeline)
 
-Mô hình hóa chuỗi thao tác cấu hình khối MPU để gán thuộc tính **Non-cacheable** cho $8\text{ MB}$ SDRAM ngoài, triệt tiêu hiện tượng trễ ghi D-Cache (Write-back lag) gây sọc rác trên màn hình:
+Mô hình hóa chuỗi thao tác cấu hình khối MPU để gán thuộc tính **Non-cacheable** cho 8 MB SDRAM ngoài, triệt tiêu hiện tượng trễ ghi D-Cache (Write-back lag) gây sọc rác trên màn hình:
 
 ```mermaid
 sequenceDiagram
@@ -475,11 +488,11 @@ Tra cứu PM0253 *Section 4.5.5 Table: Memory attribute encoding*:
 | **`MPU_RNR`** | `0xE000 ED98` | `REGION[7:0]` | `0` | Chọn cấu hình Region 0 cho dải SDRAM 8 MB. |
 | **`MPU_RBAR`** | `0xE000 ED9C` | `ADDR[31:5]` | `0xC000 0000` | Địa chỉ gốc SDRAM Bank 1 (Căn lề chuẩn 8 MB). |
 | **`MPU_RASR`** | `0xE000 EDA0` | `ENABLE` (Bit 0) | `1`b | Bật Region 0. |
-| | | `SIZE[5:1]` | `22`d (`10110`b)| Kích thước vùng nhớ = $2^{(22+1)} = 2^{23}\text{ bytes} = 8\text{ MB}$. |
+| | | `SIZE[5:1]` | `22`d (`10110`b)| Kích thước vùng nhớ = 2^{(22+1) = 2^{23 bytes = 8 MB. |
 | | | `SRD[15:8]` | `0x00` | Cả 8 subregions đều kích hoạt. |
 | | | `B` (Bit 16) | `0`b | Non-bufferable. |
 | | | `C` (Bit 17) | `0`b | Non-cacheable (Bỏ qua L1 D-Cache, chống sọc rác LTDC!). |
-| | | `TEX[2:0]` (Bits 21:19)| `001`b | Normal memory type kết hợp $C=0, B=0$. |
+| | | `TEX[2:0]` (Bits 21:19)| `001`b | Normal memory type kết hợp C=0, B=0. |
 | | | `AP[2:0]` (Bits 26:24) | `011`b | Full access (Cả Privileged và User code đều được đọc/ghi). |
 | | | `XN` (Bit 28) | `1`b | Execute Never (Cấm nạp lệnh thực thi mã từ Framebuffer). |
 
@@ -843,14 +856,14 @@ int main(void)
 
 ### ❓ Câu 1: Trình bày sự khác biệt căn bản về mặt vật lý giữa SRAM và SDRAM? Tại sao SDRAM bắt buộc phải có chu kỳ làm tươi (Refresh Cycles)?
 * **Trả lời:**
-  * **SRAM (Static RAM):** Mỗi ô nhớ cấu tạo từ $4 \sim 6\text{ transistor}$ ghép thành mạch chốt Flip-Flop. Miễn là có nguồn điện thì dữ liệu được giữ cố định mãi mãi mà không bao giờ mất.
-  * **SDRAM (Synchronous Dynamic RAM):** Mỗi ô nhớ chỉ cấu tạo từ $1\text{ transistor}$ và $1\text{ tụ điện siêu nhỏ (Tụ MOS)}$. Dữ liệu 1/0 được lưu bằng việc nạp hoặc xả điện tích trên tụ. Do hiện tượng rò rỉ điện tích qua lớp cách điện (Dielectric Leakage), điện tích trên tụ sẽ bị biến mất sau vài mili-giây. Do đó, mạch điều khiển bắt buộc phải đọc lại và sạc lại điện tích cho toàn bộ các hàng ô nhớ định kỳ (**Refresh Cycle**), nếu không toàn bộ dữ liệu sẽ bị hủy hoại.
+  * **SRAM (Static RAM):** Mỗi ô nhớ cấu tạo từ 4 sim 6 transistor ghép thành mạch chốt Flip-Flop. Miễn là có nguồn điện thì dữ liệu được giữ cố định mãi mãi mà không bao giờ mất.
+  * **SDRAM (Synchronous Dynamic RAM):** Mỗi ô nhớ chỉ cấu tạo từ 1 transistor và 1 tụ điện siêu nhỏ (Tụ MOS). Dữ liệu 1/0 được lưu bằng việc nạp hoặc xả điện tích trên tụ. Do hiện tượng rò rỉ điện tích qua lớp cách điện (Dielectric Leakage), điện tích trên tụ sẽ bị biến mất sau vài mili-giây. Do đó, mạch điều khiển bắt buộc phải đọc lại và sạc lại điện tích cho toàn bộ các hàng ô nhớ định kỳ (**Refresh Cycle**), nếu không toàn bộ dữ liệu sẽ bị hủy hoại.
 
 ---
 
 ### ❓ Câu 2: Trình bày quy trình 5 bước theo chuẩn JEDEC để khởi tạo một chip SDRAM từ trạng thái Reset?
 * **Trả lời:**
-  1. **Clock Configuration Enable:** Bật xung nhịp SDCLK và duy trì lệnh `NOP` tối thiểu $100\,\mu\text{s}$ để điện áp nguồn bên trong chip ổn định.
+  1. **Clock Configuration Enable:** Bật xung nhịp SDCLK và duy trì lệnh `NOP` tối thiểu 100 mus để điện áp nguồn bên trong chip ổn định.
   2. **Precharge All (PALL):** Nạp điện áp chuẩn bị và đưa tất cả các Banks về trạng thái rảnh ban đầu.
   3. **Auto-Refresh:** Kích hoạt ít nhất 2 đến 8 chu kỳ làm tươi tự động để định hình điện tích cho các tụ nhớ.
   4. **Mode Register Set (MRS):** Nạp thanh ghi chế độ cấu hình độ trễ CAS Latency (ví dụ CAS = 2 hoặc 3), độ dài chuỗi truyền Burst Length (BL = 1) và kiểu truyền Burst Type.
@@ -861,7 +874,7 @@ int main(void)
 ### ❓ Câu 3: Hiện tượng Xé hình (Screen Tearing) phát sinh do nguyên nhân nào? Cơ chế VBR (Vertical Blanking Reload) của LTDC giải quyết triệt để vấn đề này ra sao?
 * **Trả lời:**
   * Xé hình xảy ra khi con trỏ Framebuffer bị thay đổi ngay trong lúc chùm tia quét của LTDC đang quét dở dang giữa khung hình. Nửa trên của màn hình lấy từ Frame cũ, nửa dưới lấy từ Frame mới, tạo nên vết gãy nứt chuyển động.
-  * **Cơ chế VBR:** Khi phần mềm muốn đổi Framebuffer, thay vì nạp ngay lập tức (`IMR`), phần mềm ghi vào bit `VBR` trong `LTDC_SRCR`. Thanh ghi địa chỉ mới sẽ được giữ lại ở bộ đệm bóng (Shadow Register). Phần cứng LTDC đợi tia quét đi hết màn hình vào khoảng lặng dọc **VBLANK (Vertical Blanking)** mới nạp địa chỉ mới vào thanh ghi thực thi. Việc tráo đệm diễn ra trong bóng tối khi màn hình không phát sáng, triệt tiêu $100\%$ hiện tượng xé hình.
+  * **Cơ chế VBR:** Khi phần mềm muốn đổi Framebuffer, thay vì nạp ngay lập tức (`IMR`), phần mềm ghi vào bit `VBR` trong `LTDC_SRCR`. Thanh ghi địa chỉ mới sẽ được giữ lại ở bộ đệm bóng (Shadow Register). Phần cứng LTDC đợi tia quét đi hết màn hình vào khoảng lặng dọc **VBLANK (Vertical Blanking)** mới nạp địa chỉ mới vào thanh ghi thực thi. Việc tráo đệm diễn ra trong bóng tối khi màn hình không phát sáng, triệt tiêu 100% hiện tượng xé hình.
 
 ---
 
@@ -872,12 +885,12 @@ int main(void)
 
 ### ❓ Câu 5: Công thức tính toán giá trị nạp vào thanh ghi `FMC_SDRTR` (Refresh Timer) trên STM32F7 là gì?
 * **Trả lời:**
-  $$\text{COUNT} = \left( \frac{T_{Refresh}}{\text{Số Hàng}} \times f_{SDCLK} \right) - 20$$
-  Với chip SDRAM trên board Discovery ($T_{Refresh} = 64\text{ ms}$, $\text{Số Hàng} = 4096$, $f_{SDCLK} = 108\text{ MHz}$):
-  $$\text{COUNT} = \left( \frac{0.064}{4096} \times 108,000,000 \right) - 20 = 1687.5 - 20 = \mathbf{1667} \quad (\mathbf{\text{Hex: } 0x0683})$$
+  `COUNT = ( (T_Refresh / Số Hàng) * f_SDCLK ) - 20`
+  Với chip SDRAM trên board Discovery (T_{Refresh = 64 ms, Số Hàng = 4096, f_{SDCLK = 108 MHz):
+  `COUNT = ( (0.064 / 4096) * 108,000,000 ) - 20 = 1687.5 - 20 = 1667 (Hex: 0x0683)`
 
 ---
 
 ## 4.2. Kịch bản Trả lời Phỏng vấn 60 Giây (Elevator Pitch)
 
-> *"Trong thiết kế hệ thống hiển thị đồ họa cao cấp trên STM32F746, em trực tiếp phát triển driver Bare-metal cho bộ điều khiển bộ nhớ ngoài **FMC SDRAM** và bộ quét màn hình **LTDC**. Em triển khai chuẩn xác chuỗi khởi tạo 5 bước JEDEC cho chip SDRAM ngoài 8MB ở tần số $108\text{MHz}$, tính toán bộ đếm làm tươi **Refresh Timer COUNT = 1667** để chống mất dữ liệu tụ nhớ. Em cấu hình khối **LTDC** quét tấm nền $480 \times 272$ ở tốc độ 60fps qua giao diện song song RGB, thiết lập kỹ thuật **Double Buffering** kết hợp đồng bộ hóa **Vertical Blanking Reload (VBR)** để triệt tiêu hoàn toàn hiện tượng xé hình (Tearing-Free). Đồng thời, em làm chủ kiến trúc bộ nhớ Cortex-M7 bằng cách dùng **MPU** cô lập dải địa chỉ Framebuffer thành Non-cacheable, giải quyết triệt để lỗi mất đồng bộ L1 D-Cache giữa CPU và bộ quét phần cứng LTDC."*
+> *"Trong thiết kế hệ thống hiển thị đồ họa cao cấp trên STM32F746, em trực tiếp phát triển driver Bare-metal cho bộ điều khiển bộ nhớ ngoài **FMC SDRAM** và bộ quét màn hình **LTDC**. Em triển khai chuẩn xác chuỗi khởi tạo 5 bước JEDEC cho chip SDRAM ngoài 8MB ở tần số 108 MHz, tính toán bộ đếm làm tươi **Refresh Timer COUNT = 1667** để chống mất dữ liệu tụ nhớ. Em cấu hình khối **LTDC** quét tấm nền 480x272 ở tốc độ 60fps qua giao diện song song RGB, thiết lập kỹ thuật **Double Buffering** kết hợp đồng bộ hóa **Vertical Blanking Reload (VBR)** để triệt tiêu hoàn toàn hiện tượng xé hình (Tearing-Free). Đồng thời, em làm chủ kiến trúc bộ nhớ Cortex-M7 bằng cách dùng **MPU** cô lập dải địa chỉ Framebuffer thành Non-cacheable, giải quyết triệt để lỗi mất đồng bộ L1 D-Cache giữa CPU và bộ quét phần cứng LTDC."*

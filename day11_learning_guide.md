@@ -1,7 +1,7 @@
 # 🏆 [NGÀY 11] CẨM NANG TOÀN DIỆN AUTOMOTIVE PROTOCOL: GIẢI MÃ MA TRẬN TÍN HIỆU CAN THEO CHUẨN VECTOR DBC (BIT UNPACKING & ENDIANNESS)
 ## Lộ trình 4 Bước: Nguyên Lý DBC ➔ Thực Chiến Bit Unpacking ➔ Gõ Code Driver ➔ Phỏng Vấn Chuyên Sâu
 
-> **Mục tiêu:** Làm chủ kỹ thuật cốt lõi trong ngành công nghiệp ô tô (Automotive Software Engineering): Phân tích và hiện thực hóa công cụ giải mã ma trận tín hiệu **Vector DBC (DataBase CAN)** trên vi điều khiển STM32F746: Làm chủ giải thuật bóc tách bit lẻ (**Zero-Copy Bit Unpacking**), giải mã chính xác hai định dạng byte kinh điển **Intel (Little-Endian)** và **Motorola (Big-Endian)**, chuyển đổi giá trị thô (Raw Value) sang giá trị vật lý (Physical Value) qua công thức **$V = (\text{Raw} \times \text{Factor}) + \text{Offset}$** bằng số học số nguyên định điểm (**Fixed-Point Arithmetic**), và xử lý dấu bù hai (Two's Complement) cho các tín hiệu âm.  
+> **Mục tiêu:** Làm chủ kỹ thuật cốt lõi trong ngành công nghiệp ô tô (Automotive Software Engineering): Phân tích và hiện thực hóa công cụ giải mã ma trận tín hiệu **Vector DBC (DataBase CAN)** trên vi điều khiển STM32F746: Làm chủ giải thuật bóc tách bit lẻ (**Zero-Copy Bit Unpacking**), giải mã chính xác hai định dạng byte kinh điển **Intel (Little-Endian)** và **Motorola (Big-Endian)**, chuyển đổi giá trị thô (Raw Value) sang giá trị vật lý (Physical Value) qua công thức `V = (Raw * Factor) + Offset` bằng số học số nguyên định điểm (**Fixed-Point Arithmetic**), và xử lý dấu bù hai (Two's Complement) cho các tín hiệu âm.  
 > **Nguyên tắc kỹ thuật:** **Đi thẳng vào cơ chế phần cứng, cấu trúc bit trong byte, công thức toán học, bảng tín hiệu DBC và phân chia file rõ ràng — KHÔNG dùng ví dụ ẩn dụ ngoài lề dài dòng.**
 
 ---
@@ -28,17 +28,34 @@
 | :---: | :--- | :--- |
 | **1** | **Motorola Bit Order Trap** | **QUY TẮC SỐNG CÒN:** Trong chuẩn Motorola (Big-Endian `@0`), Start Bit được định nghĩa là bit có trọng số lớn nhất (**MSB**). Các bit tiếp theo lan lùi về các byte phía trước theo thứ tự zíc-zắc. Lầm tưởng Start Bit là LSB như Intel sẽ làm đảo lộn toàn bộ dữ liệu! |
 | **2** | **Zero-Copy Bit Shifting** | Bóc tách bit trực tiếp từ mảng 8 bytes bằng các phép toán dịch bit (`<<`, `>>`) và mặt nạ (`&`). Tuyệt đối không sao chép mảng sang chuỗi nhị phân (String) gây tiêu hao bộ nhớ và làm mất tính thời gian thực. |
-| **3** | **Fixed-Point Scaling** | Tránh dùng số thực dấu phẩy động `float/double` trong các vòng lặp giải mã thời gian thực. Sử dụng phép toán số nguyên nhân tử số rồi chia mẫu số (hoặc Fixed-point $Q_{8.8}$ / $Q_{16.16}$) để CPU ARM không bị trễ chu kỳ tính toán FPU. |
-| **4** | **Signed Two's Complement** | Với các tín hiệu có dấu (như Nhiệt độ nước `-40` đến `+125` hoặc Góc lái vô lăng `-720` đến `+720`), nếu bit MSB của trường bit $= 1$, phải thực hiện mở rộng dấu (Sign Extension) trước khi cộng với Offset. |
+| **3** | **Fixed-Point Scaling** | Tránh dùng số thực dấu phẩy động `float/double` trong các vòng lặp giải mã thời gian thực. Sử dụng phép toán số nguyên nhân tử số rồi chia mẫu số (hoặc Fixed-point Q8.8 / Q16.16) để CPU ARM không bị trễ chu kỳ tính toán FPU. |
+| **4** | **Signed Two's Complement** | Với các tín hiệu có dấu (như Nhiệt độ nước `-40` đến `+125` hoặc Góc lái vô lăng `-720` đến `+720`), nếu bit MSB của trường bit bằng 1, phải thực hiện mở rộng dấu (Sign Extension) trước khi cộng với Offset. |
 | **5** | **DLC Boundary Protection** | Trước khi trích xuất bất kỳ tín hiệu nào, bắt buộc kiểm tra chiều dài gói tin: `if (frame->dlc < required_bytes) return ERROR;`. Không đọc vượt quá số byte thực nhận để tránh đọc ô nhớ rác. |
-| **6** | **Min/Max Saturation Clamping** | Sau khi tính toán giá trị vật lý, phải kiểm tra ranh giới $[Min, Max]$ trong DBC. Nếu giá trị vượt ngưỡng (ví dụ cảm biến bị ngắn mạch), phải chặn bão hòa (Clamp) hoặc gán mã lỗi `SIGNAL_INVALID`. |
-| **7** | **Static Table Lookup** | Toàn bộ thông số metadata của tín hiệu (Start bit, Length, Factor, Offset) phải được khai báo bằng từ khóa `const` để nằm cố định trên bộ nhớ **FLASH (`.rodata`)**, tiết kiệm $100\%$ dung lượng RAM SRAM. |
+| **6** | **Min/Max Saturation Clamping** | Sau khi tính toán giá trị vật lý, phải kiểm tra ranh giới [Min, Max] trong DBC. Nếu giá trị vượt ngưỡng (ví dụ cảm biến bị ngắn mạch), phải chặn bão hòa (Clamp) hoặc gán mã lỗi `SIGNAL_INVALID`. |
+| **7** | **Static Table Lookup** | Toàn bộ thông số metadata của tín hiệu (Start bit, Length, Factor, Offset) phải được khai báo bằng từ khóa `const` để nằm cố định trên bộ nhớ **FLASH (`.rodata`)**, tiết kiệm 100% dung lượng RAM SRAM. |
 
 ---
 
-# 🧠 BƯỚC 1: NGUYÊN LÝ PHẦN CỨNG & CƠ CHẾ VẬT LÝ (HARDWARE ARCHITECTURE)
+# 🧠 BƯỚC 1: NGUYÊN LÝ FILE DBC & MA TRẬN TÍN HIỆU XE HƠI
 
-## 1.1. Cấu Trúc Định Nghĩa Tín Hiệu Trong File Chuẩn Vector DBC
+### 1.1. Bản Chất File DBC Là Gì? (Giải Thích Đơn Giản Đi Thẳng Vào Vấn Đề)
+
+Trên đường dây CAN Bus của xe hơi, các hộp điều khiển ECU chỉ bắn qua lại những gói tin thô gồm **8 byte nhị phân** (ví dụ: `80 07 70 17 00 00 00 00`).
+* Người lập trình nhìn vào 8 byte này sẽ không thể biết đâu là vận tốc xe, đâu là vòng tua máy, đâu là nhiệt độ nước làm mát.
+* **File `.dbc` (CAN Database)** chính là **"cuốn từ điển giải mã"** do hãng xe cung cấp. Nó chỉ rõ:
+  * Từ bit số mấy đến bit số mấy là tín hiệu gì?
+  * Chiều dài bao nhiêu bit?
+  * Lấy số thô đó nhân với bao nhiêu (Factor) và cộng với bao nhiêu (Offset) thì ra giá trị thực tế ngoài đời (km/h, RPM, độ C)?
+
+| Khía cạnh giải mã | Cách làm thủ công (Bare-Metal / FreeRTOS) | Thiết kế Driver Chuẩn (DBC Engine) |
+| :--- | :--- | :--- |
+| **Bóc tách bit** | Lập trình viên tự viết các phép `>>`, `&` cứng (hardcode) rải rác khắp các task. Khó bảo trì khi hãng đổi vị trí chân tín hiệu. | Tạo bảng `DbcSignalMeta_t` tĩnh trên Flash. Chỉ cần 1 hàm giải mã chung `DBC_DecodeSignal()` xử lý mọi tín hiệu! |
+| **Hệ quy chiếu byte** | Thường chỉ hỗ trợ Intel. Khi gặp gói tin Motorola từ hộp số hoặc động cơ thì bị đọc sai hoàn toàn. | Hỗ trợ song song cả hai chuẩn Intel (Little-Endian) và Motorola (Big-Endian). |
+| **Phép toán số học** | Dùng số thực `float` gây tốn chu kỳ FPU và không an toàn thời gian thực. | Dùng số nguyên định điểm (Fixed-point: nhân tử số rồi chia mẫu số), nhanh gấp 10 lần và an toàn tuyệt đối. |
+
+---
+
+### 1.2. Cấu Trúc Định Nghĩa Tín Hiệu Trong File Chuẩn Vector DBC
 
 Trong ngành công nghiệp ô tô toàn cầu, file `.dbc` là "bản thiết kế giao tiếp" thống nhất giữa các hãng xe (OEM) và nhà cung cấp linh kiện Tier-1 (Bosch, Continental, Denso). Một dòng định nghĩa thông điệp và tín hiệu chuẩn có cú pháp:
 
@@ -50,16 +67,16 @@ BO_ 288 Vehicle_Dynamics: 8 Gateway_ECU
 ```
 
 ### Ý nghĩa của các trường thông số:
-* `BO_ 288`: Message ID $= 288$ (Hex: `0x120`), độ dài $\text{DLC} = 8\text{ bytes}$.
+* `BO_ 288`: Message ID = 288 (Hex: `0x120`), độ dài DLC = 8 bytes.
 * `SG_ Vehicle_Speed`:
   * `0|12`: **Start Bit = 0**, **Độ dài = 12 bits**.
   * `@1+`: `@1` nghĩa là định dạng **Intel (Little-Endian)**; dấu `+` nghĩa là số không âm (**Unsigned**).
-  * `(0.0625,0)`: $\text{Factor} = 0.0625$ (tức là chia cho 16: $\times 1/16$), $\text{Offset} = 0$.
-  * `[0|255]`: Ranh giới vật lý từ $0$ đến $255\text{ km/h}$.
+  * `(0.0625,0)`: Factor = 0.0625 (tức là chia cho 16: nhân 1/16), Offset = 0.
+  * `[0|255]`: Ranh giới vật lý từ 0 đến 255 km/h.
 * `SG_ Steering_Angle`:
   * `32|12`: Start Bit = 32, Độ dài = 12 bits.
   * `@0-`: `@0` nghĩa là định dạng **Motorola (Big-Endian)**; dấu `-` nghĩa là số có dấu (**Signed** bù hai).
-  * `(0.5,-1024)`: $\text{Factor} = 0.5$, $\text{Offset} = -1024$.
+  * `(0.5,-1024)`: Factor = 0.5, Offset = -1024.
 
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Vector CANdb++ Specification:**
 > 1. **Tra cứu Tài liệu Đặc tả Vector DBC:** Tìm kiếm tài liệu *Vector CANdb++ File Format Specification* hoặc mở phần trợ giúp (Help Documentation) của phần mềm Vector CANdb++ Editor.
@@ -67,7 +84,7 @@ BO_ 288 Vehicle_Dynamics: 8 Gateway_ECU
 
 ---
 
-## 1.2. Bản Chất Sự Khác Biệt Giữa Định Dạng Intel và Motorola Trên Mạng CAN
+### 1.3. Bản Chất Sự Khác Biệt Giữa Định Dạng Intel và Motorola Trên Mạng CAN
 
 Trong một gói tin CAN 8 bytes (từ Byte 0 đến Byte 7), mỗi byte có 8 bits (Bit 0 là LSB, Bit 7 là MSB):
 
@@ -81,7 +98,7 @@ Byte 3: [31 30 29 28 27 26 25 24 ]
 
 ### 🔹 Định dạng Intel (Little-Endian - `@1`):
 * **Start Bit là LSB (Bit có trọng số thấp nhất)**.
-* Tín hiệu phát triển **TIẾN LÊN PHÍA TRƯỚC** theo thứ tự chỉ số bit tăng dần ($0 \rightarrow 1 \rightarrow 2 \dots$).
+* Tín hiệu phát triển **TIẾN LÊN PHÍA TRƯỚC** theo thứ tự chỉ số bit tăng dần (0 -> 1 -> 2 ...).
 * Nếu tín hiệu dài 12 bits bắt đầu từ Bit 0: Nó chiếm từ Bit 0 đến Bit 7 của Byte 0, và nối tiếp sang Bit 8 đến Bit 11 của Byte 1.
 * 👉 **Giải thuật:** Rất đơn giản, ghép các byte lại theo thứ tự LSB trước MSB sau rồi dịch phải.
 
@@ -99,25 +116,31 @@ Byte 3: [31 30 29 28 27 26 25 24 ]
 
 ---
 
-## 1.3. Giải Thuật Chuyển Đổi Vật Lý Bằng Số Nguyên Định Điểm (Fixed-Point Scaling)
+### 1.4. Giải Thuật Chuyển Đổi Vật Lý Bằng Số Nguyên Định Điểm (Fixed-Point Scaling)
 
 Công thức toán học:
-$$\text{Physical Value} = (\text{Raw Value} \times \text{Factor}) + \text{Offset}$$
+```text
+Giá trị thực tế = (Giá trị thô x Factor) + Offset
+```
 
 * **Nếu dùng Float thông thường:**
   ```c
   float speed = (raw_val * 0.0625f) + 0.0f; // Tốn chu kỳ lệnh FPU, không chuẩn MISRA-C thời gian thực!
   ```
 * **Giải pháp Số nguyên Định điểm (Integer Scaling):**
-  Nhận thấy $\text{Factor} = 0.0625 = \frac{1}{16} = \frac{1}{2^4}$.  
+  Nhận thấy Factor = 0.0625 = 1/16 = 1/(2^4).  
   Ta chỉ cần thực hiện phép dịch bit phải:
-  $$\text{Speed (km/h)} = \text{raw\_val} \gg 4$$
-* Với các hệ số phức tạp như $\text{Factor} = 0.1$ (tương đương chia 10), ta lưu hệ số dưới dạng **Tử số / Mẫu số**:
-  $$\text{Value} = \frac{\text{raw\_val} \times \text{Factor\_Numerator}}{\text{Factor\_Denominator}} + \text{Offset}$$
+  ```c
+  Speed_kmh = raw_val >> 4;
+  ```
+* Với các hệ số phức tạp như Factor = 0.1 (tương đương chia 10), ta lưu hệ số dưới dạng **Tử số / Mẫu số**:
+  ```c
+  Value = ((int64_t)raw_val * factor_num) / factor_den + offset;
+  ```
 
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Tiêu Chuẩn AUTOSAR & MISRA:**
 > 1. **Tra cứu AUTOSAR E2E Specification:** Xem tài liệu *AUTOSAR Specification of End-to-End Communication Protection (E2E Protocol)*.
->    * Tra cứu đa thức CRC-8 Profile 1 (`0x1D` hoặc `0x2F`) và cách trường Alive Counter (4-bit, chu kỳ $0 \dots 15$) bảo vệ gói tin chống đứng gói (Frozen message).
+>    * Tra cứu đa thức CRC-8 Profile 1 (`0x1D` hoặc `0x2F`) và cách trường Alive Counter (4-bit, chu kỳ 0 đến 15) bảo vệ gói tin chống đứng gói (Frozen message).
 > 2. **Tra cứu Quy chuẩn MISRA-C Số học:** Quy tắc cấm phép toán dấu phẩy động không tất định trong bộ điều khiển ECU thời gian thực, khuyến nghị sử dụng số nguyên tỷ lệ (Scaled Integers).
 
 ---
@@ -147,7 +170,7 @@ Khi mở file `.dbc` bằng bất kỳ trình soạn thảo nào hoặc phần m
 ### 📖 Kênh 2: Cách Tra Cứu Đa Thức Kiểm Tra Toàn Vẹn E2E CRC-8 (AUTOSAR)
 Trong mạng ô tô (chống lỗi rớt bit phần cứng hoặc can thiệp dữ liệu):
 1. **Tra cứu tài liệu chuẩn AUTOSAR E2E Profile 1/2:**
-   * Đa thức CRC-8 chuẩn công nghiệp ô tô: $P(x) = x^8 + x^4 + x^3 + x^2 + 1$ (Mã Hex: **`0x1D`** hoặc **`0x2F`**).
+   * Đa thức CRC-8 chuẩn công nghiệp ô tô: $PP(x) = x^8 + x^4 + x^3 + x^2 + 1 (Mã Hex: **`0x1D`** hoặc **`0x2F`**).
    * Giá trị khởi tạo (Init Value): **`0xFF`**.
    * Giá trị XOR ngõ ra (XOR Out): **`0xFF`**.
 2. **Alive Counter:** Bộ đếm 4-bit (`0x0` đến `0xF`) tăng liên tục sau mỗi chu kỳ gửi để phát hiện lỗi đứng gói (Frozen Message).
@@ -158,10 +181,10 @@ Trong mạng ô tô (chống lỗi rớt bit phần cứng hoặc can thiệp d�
 
 | Tên Tín Hiệu | Message ID | Start Bit | Độ Dài | Byte Order | Signed? | Factor | Offset | Đơn Vị | Dải Đo |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **`Vehicle_Speed`** | `0x120` | 0 | 12 bits | **Intel** (`@1`) | Unsigned | $0.0625$ ($1/16$) | 0 | km/h | $0 \dots 255$ |
-| **`Engine_RPM`** | `0x120` | 16 | 14 bits | **Intel** (`@1`) | Unsigned | $0.5$ ($1/2$) | 0 | RPM | $0 \dots 8191$ |
-| **`Coolant_Temp`** | `0x120` | 32 | 8 bits | **Intel** (`@1`) | Signed | $1.0$ | $-40$ | $^\circ\text{C}$ | $-40 \dots 215$ |
-| **`Steering_Angle`**| `0x240` | 7 | 14 bits | **Motorola** (`@0`)| Signed | $0.1$ ($1/10$) | $-720$ | Độ ($^\circ$)| $-720 \dots 720$ |
+| **`Vehicle_Speed`** | `0x120` | 0 | 12 bits | **Intel** (`@1`) | Unsigned | 0.0625 (1/16) | 0 | km/h | 0 đến 255 |
+| **`Engine_RPM`** | `0x120` | 16 | 14 bits | **Intel** (`@1`) | Unsigned | 0.5 (1/2) | 0 | RPM | 0 đến 8191 |
+| **`Coolant_Temp`** | `0x120` | 32 | 8 bits | **Intel** (`@1`) | Signed | 1.0 | -40 | độ C | -40 đến 215 |
+| **`Steering_Angle`**| `0x240` | 7 | 14 bits | **Motorola** (`@0`)| Signed | 0.1 (1/10) | -720 | Độ | -720 đến 720 |
 
 ---
 
@@ -449,7 +472,7 @@ int main(void)
 * **Trả lời chuẩn Kỹ sư Automotive:**
   * Thứ nhất, phép tính số thực dấu phẩy động (Floating-point) không có tính tiền định tuyệt đối về mặt thời gian (Non-deterministic latency): Một phép chia float có thể tốn từ hàng chục đến hàng trăm chu kỳ CPU tùy thuộc vào giá trị có bị Denormalized hay không, gây trồi sụt độ trễ (Jitter) trong vòng lặp thời gian thực.
   * Thứ hai, sai số làm tròn số thực (Floating-point Rounding Error) có thể tích lũy qua hàng triệu chu kỳ lặp khiến việc so sánh giá trị bằng lệnh `==` bị sai lệch.
-  * Sử dụng số học số nguyên định điểm (**Fixed-point arithmetic**) với phép nhân trước chia sau đảm bảo tính toán chính xác $100\%$, tốc độ thực thi trong 1 chu kỳ lệnh hợp ngữ và an toàn tuyệt đối theo tiêu chuẩn an toàn chức năng ISO 26262 ASIL-B.
+  * Sử dụng số học số nguyên định điểm (**Fixed-point arithmetic**) với phép nhân trước chia sau đảm bảo tính toán chính xác 100%, tốc độ thực thi trong 1 chu kỳ lệnh hợp ngữ và an toàn tuyệt đối theo tiêu chuẩn an toàn chức năng ISO 26262 ASIL-B.
 
 ---
 

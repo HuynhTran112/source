@@ -1,7 +1,7 @@
 # 🏆 [NGÀY 8] CẨM NANG TOÀN DIỆN ZEPHYR CAN SUBSYSTEM: ASYNCHRONOUS MESSAGE QUEUE & TRANSCEIVER STANDBY CONTROL
 ## Lộ trình 4 Bước: Kiến Trúc Subsystem ➔ Thực Chiến Devicetree/Kconfig ➔ Gõ Code Driver ➔ Phỏng Vấn Chuyên Sâu
 
-> **Mục tiêu:** Làm chủ hệ thống truyền thông mạng ô tô thời gian thực qua **Zephyr CAN Subsystem** trên STM32F746: Khai báo cấu hình phần cứng CAN Controller và Pinctrl trên Devicetree overlay ($500\text{ kbps}$, Sample Point $87.5\%$), giải quyết triệt để lỗi "bus im lặng" bằng mạch điều khiển chân **Transceiver Standby (STB/EN)**, ứng dụng cơ chế gắn bộ lọc phần cứng thẳng vào hàng đợi tin nhắn nhân hệ điều hành **`can_add_rx_filter_msgq`** giúp giải phóng hoàn toàn ngữ cảnh ngắt ISR, và xử lý giám sát trạng thái mạng tự động (**Bus-Off State Change Callback**).  
+> **Mục tiêu:** Làm chủ hệ thống truyền thông mạng ô tô thời gian thực qua **Zephyr CAN Subsystem** trên STM32F746: Khai báo cấu hình phần cứng CAN Controller và Pinctrl trên Devicetree overlay (`500 kbps`, Sample Point `87.5%`), giải quyết triệt để lỗi "bus im lặng" bằng mạch điều khiển chân **Transceiver Standby (STB/EN)**, ứng dụng cơ chế gắn bộ lọc phần cứng thẳng vào hàng đợi tin nhắn nhân hệ điều hành **`can_add_rx_filter_msgq`** giúp giải phóng hoàn toàn ngữ cảnh ngắt ISR, và xử lý giám sát trạng thái mạng tự động (**Bus-Off State Change Callback**).  
 > **Nguyên tắc kỹ thuật:** **Đi thẳng vào cơ chế phân tầng hệ thống, cấu trúc Devicetree node, Kconfig symbols, giải thuật hàng đợi bất đồng bộ và phân chia file rõ ràng — KHÔNG dùng ví dụ ẩn dụ ngoài lề dài dòng.**
 
 ---
@@ -29,7 +29,7 @@
 | :---: | :--- | :--- |
 | **1** | **Transceiver STB Drive** | **QUY TẮC SỐNG CÒN:** Trên board có chip transceiver ngoài (`TJA1050`/`SN65HVD230`), chân Standby (STB) mặc định thả nổi sẽ khiến transceiver ngủ đông. Bắt buộc phải cấu hình GPIO kéo chân này xuống `LOW` trước khi gọi `can_start()`. |
 | **2** | **Filter-to-MsgQ Binding** | Sử dụng API `can_add_rx_filter_msgq()` để gắn bộ lọc phần cứng trực tiếp vào `k_msgq`. Tránh dùng callback `can_add_rx_filter_cb()` nếu tác vụ xử lý frame tốn thời gian, tránh làm trễ các ngắt khác của nhân. |
-| **3** | **Explicit Sample Point** | Khai báo rõ ràng `sample-point = <875>;` (tương đương $87.5\%$) trong node Devicetree. Không để Zephyr tự tính toán bừa làm sai lệch vị trí lấy mẫu so với mạng ô tô chuẩn CiA 301. |
+| **3** | **Explicit Sample Point** | Khai báo rõ ràng `sample-point = <875>;` (tương đương `87.5%`) trong node Devicetree. Không để Zephyr tự tính toán bừa làm sai lệch vị trí lấy mẫu so với mạng ô tô chuẩn CiA 301. |
 | **4** | **Filter Allocation Limit** | Kiểm tra `CONFIG_CAN_MAX_FILTER`. Giá trị mặc định thường là 5; nếu đăng ký nhiều hơn mà không tăng thông số này trong `prj.conf`, hàm `can_add_rx_filter` sẽ trả về mã lỗi `-ENOSPC` (No space left). |
 | **5** | **Thread-Safe Queue Size** | Kích thước của `k_msgq` phải được tính toán đủ chứa burst frames: `sizeof(struct can_frame) * N`. Nếu queue đầy, gói tin mới sẽ bị drop. |
 | **6** | **Asynchronous Non-blocking TX** | Khi truyền dữ liệu bằng `can_send()`, truyền kèm callback hoặc dùng `K_MSEC(timeout)`. Không truyền vô tận `K_FOREVER` trong luồng điều khiển chính để tránh bị khóa chết (Deadlock) khi bus bị ngắt. |
@@ -37,50 +37,44 @@
 
 ---
 
-# 🧠 BƯỚC 1: KIẾN TRÚC HỆ THỐNG & CƠ CHẾ HOẠT ĐỘNG (SYSTEM ARCHITECTURE)
+# 🧠 BƯỚC 1: KIẾN TRÚC HỆ THỐNG (SO SÁNH TRỰC DIỆN VỚI FREERTOS)
 
-## 1.1. Kiến Trúc Phân Tầng Zephyr CAN Subsystem
+### 1.1. So Sánh Cơ Chế Lập Trình CAN: Bare-Metal / FreeRTOS vs Zephyr
 
-Trong Bare-metal ở Ngày 3, chúng ta phải tự quản lý 3 Transmit Mailbox, tự gõ bit nạp `TI0R`, tự đọc `RDLR/RDHR` và kiểm tra cờ `FMP0`.  
-**Zephyr CAN Subsystem trừu tượng hóa toàn bộ phần cứng thành kiến trúc hướng dịch vụ:**
-
-```text
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                        ỨNG DỤNG NGƯỜI DÙNG (CAN Worker Thread)                         │
-│   • can_send(dev, &frame, timeout, callback, user_data)                                │
-│   • k_msgq_get(&can_rx_msgq, &rx_frame, K_FOREVER)  <-- Nhận frame dạng Zero-CPU     │
-└───────────────────────────────────────────▲────────────────────────────────────────────┘
-                                            │ (k_msgq_put an toàn)
-┌───────────────────────────────────────────┴────────────────────────────────────────────┐
-│                    ZEPHYR CAN CONTROLLER CORE DRIVER (can_stm32.c)                     │
-│   • Quản lý ngắt phần cứng CAN1_RX0_IRQHandler / CAN1_TX_IRQHandler                    │
-│   • Tự động ánh xạ 28 Filter Banks vào phần cứng bxCAN                                 │
-│   • Phục vụ hàng đợi k_msgq ngay trong ISR mà không tốn context switch                 │
-└───────────────────────────────────────────▲────────────────────────────────────────────┘
-                                            │ (Cấu hình tự động từ Devicetree)
-┌───────────────────────────────────────────┴────────────────────────────────────────────┐
-│                             PHẦN CỨNG BÁN DẪN (HARDWARE)                               │
-│   • bxCAN Controller (APB1 54MHz) ──► Chân PB8 (RX), PB9 (TX)                          │
-│   • GPIO Điều Khiển STB (Active LOW) ──► Kéo xuống 0V để đánh thức Transceiver         │
-│   • CAN Transceiver SN65HVD230 / TJA1050 ──► Bus Vi Sai CAN_H / CAN_L                  │
-└────────────────────────────────────────────────────────────────────────────────────────┘
-```
-
-> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Tài Liệu Zephyr CAN Controller:**
-> 1. **Tra cứu Kiến trúc CAN Driver:** Mở tài liệu Zephyr tại `https://docs.zephyrproject.org/latest/hardware/peripherals/can/index.html` (Mục *Controller Area Network (CAN)*).
-> 2. Đọc luồng kiến trúc: Phân biệt giữa 2 tầng: Tầng ứng dụng giao tiếp qua API đồng bộ/bất đồng bộ (`can.h`) và Tầng Low-Level Controller Driver triển khai cho vi điều khiển STM32 (`drivers/can/can_stm32.c`).
+| Khía cạnh | 1. Bare-Metal / FreeRTOS (HAL) | 2. Zephyr CAN Subsystem |
+| :--- | :--- | :--- |
+| **Tính toán Baudrate** | Phải tự tính toán thanh ghi `CAN_BTR` (Prescaler, Tseg1, Tseg2, Sample Point 87.5%) | Khai báo 2 dòng trong `app.overlay` (`bus-speed = <500000>; sample-point = <875>;`). Zephyr tự tính toán 100%! |
+| **Bộ lọc ID phần cứng** | Phải tự cấu hình 28 Filter Banks (thanh ghi `CAN_FMR`, `CAN_FA1R`, nạp Mask ID) | Định nghĩa struct `can_filter` và gọi hàm `can_add_rx_filter_msgq()` |
+| **Cơ chế nhận dữ liệu** | Trong ngắt ISR phải gọi `HAL_CAN_GetRxMessage()`, rồi tự gọi `xQueueSendFromISR()` | **TỰ ĐỘNG 100%:** Zephyr tự bốc gói tin từ phần cứng ném thẳng vào Message Queue ngay trong ngắt |
+| **Bảo vệ luồng Task** | Task trong FreeRTOS phải tự kiểm tra lỗi bus CAN | Zephyr có sẵn Callback tự động báo khi bus chuyển sang trạng thái Bus-Off |
 
 ---
 
-## 1.2. Giải Pháp Gắn Bộ Lọc Phần Cứng Trực Tiếp Vào Message Queue (`can_add_rx_filter_msgq`)
+### 1.2. Tính Năng "Đắt Giá" Nhất: Gắn Bộ Lọc Thẳng Vào Message Queue (`can_add_rx_filter_msgq`)
 
-Đây là tính năng độc đáo và mạnh mẽ nhất của Zephyr RTOS dành cho kỹ sư Automotive:
-* Khi nhận được một frame hợp lệ trên bus, khối phần cứng bxCAN lọc ID qua Filter Bank.
-* Thay vì đánh thức CPU chạy một hàm callback C phức tạp, nhân Zephyr **copy trực tiếp cấu trúc `struct can_frame` vào hàng đợi `k_msgq` ngay trong ngữ cảnh ngắt cấp thấp**.
-* Luồng xử lý dữ liệu (`can_rx_thread`) chỉ cần nằm ngủ chờ ở lệnh `k_msgq_get()`. Khi có frame đến, nó được bộ lập lịch đánh thức dậy xử lý một cách mượt mà, **triệt tiêu hoàn toàn nguy cơ nghẽn ngắt (ISR Starvation)**.
+Trong FreeRTOS truyền thống, để nhận một gói tin CAN và đưa lên Task xử lý:
+1. Bạn phải tự viết hàm ngắt `HAL_CAN_RxFifo0MsgPendingCallback()`.
+2. Trong hàm ngắt, bạn phải gọi `xQueueSendFromISR()` để ném dữ liệu sang Task.
+
+**Trong Zephyr RTOS, bạn chỉ cần gọi ĐÚNG 1 DÒNG LỆNH lúc khởi động:**
+```c
+struct can_filter filter = {
+    .id = 0x123,
+    .mask = CAN_STD_ID_MASK,
+    .flags = 0
+};
+
+// Gắn trực tiếp bộ lọc phần cứng vào Message Queue:
+can_add_rx_filter_msgq(can_dev, &can_rx_msgq, &filter);
+```
+
+* **Luồng chạy tự động:**
+  * Mỗi khi có gói tin CAN ID `0x123` bay tới, phần cứng bxCAN lọc khớp ID.
+  * Driver ngầm của Zephyr tự động copy nguyên vẹn cấu trúc `struct can_frame` vào hàng đợi `can_rx_msgq`.
+  * Luồng `can_rx_thread` ở tầng ứng dụng chỉ việc nằm ngủ `k_msgq_get(&can_rx_msgq, &frame, K_FOREVER)`. Khi có frame tới, Task tự động bật dậy xử lý, **triệt tiêu 100% việc phải tự viết code trong hàm ngắt ISR**!
 
 ```text
-CAN Bus Frame đến ──► bxCAN Hardware Filter Match ──► ISR Driver ──► k_msgq_put() ──► Đánh thức Worker Thread!
+CAN Bus Frame đến ──► bxCAN Hardware Filter Match ──► Zephyr Driver ISR ──► k_msgq_put() ──► Đánh thức Worker Thread!
 ```
 
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Zephyr CAN API:**
@@ -90,18 +84,18 @@ CAN Bus Frame đến ──► bxCAN Hardware Filter Match ──► ISR Driver 
 
 ---
 
-## 1.3. Căn Bệnh "Im Lặng Vĩnh Viễn": Cơ Chế Chân Standby (STB/EN) của Transceiver Ngoài
+### 1.3. Căn Bệnh "Im Lặng Vĩnh Viễn": Chân Standby (STB) Của CAN Transceiver Ngoài
 
-Bo mạch STM32F746G-Discovery không có chip CAN Transceiver onboard. Khi gắn module ngoài (`SN65HVD230` hoặc `TJA1050`):
-* Chân **`STB` (Standby)** là công tắc tiết kiệm năng lượng:
-  * `STB = HIGH (3.3V / 5V)`: Transceiver rơi vào chế độ **Standby / Sleep**. Mạch phát (Driver) bị ngắt điện, mạch thu (Receiver) chuyển sang chế độ phản hồi chậm. **Vi điều khiển gửi dữ liệu ra chân TX nhưng ngoài bus vật lý không có tín hiệu gì!**
-  * `STB = LOW (0V - Nối GND)`: Transceiver hoạt động ở chế độ **Normal High-Speed Mode**. Tín hiệu logic từ PB9 được chuyển đổi thành điện áp vi sai $CAN\_H - CAN\_L$ với tốc độ lên tới $1\text{ Mbps}$.
-* 👉 **Nguyên tắc kỹ thuật:** Bắt buộc phải dùng 1 chân GPIO của STM32 để kéo chân STB xuống mức `0V` ngay khi khởi động.
+Bo mạch STM32F746G-Discovery không tích hợp sẵn chip chuyển đổi mức tín hiệu CAN (Transceiver). Khi cắm module ngoài (`SN65HVD230` hoặc `TJA1050`):
+* Trên module ngoài luôn có một chân tên là **`STB` (hoặc `Rs`)**:
+  * **`STB = 3.3V` (hoặc thả nổi):** Chip transceiver rơi vào chế độ **Standby (Ngủ đông)** để tiết kiệm điện. Lúc này, vi điều khiển STM32 bắn dữ liệu ra chân TX ầm ầm nhưng chip transceiver bị khóa, **ngoài bus vật lý CAN không hề có tín hiệu gì**!
+  * **`STB = 0V` (Nối đất GND):** Chip transceiver thức dậy, hoạt động ở chế độ **Normal High-Speed** bình thường. Tín hiệu logic từ PB9 được chuyển đổi thành điện áp vi sai CAN_H - CAN_L với tốc độ lên tới 1 Mbps.
+* 👉 **Quy tắc thực chiến:** Bắt buộc phải dùng 1 chân GPIO của STM32 kéo chân STB này xuống mức `0V` (LOW) thì mạng CAN mới phát được dữ liệu!
 
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Datasheet CAN Transceiver (SN65HVD230 / TJA1050):**
 > 1. **Mở file Datasheet của chip Transceiver ngoài:** Tìm mục *Operating Modes* hoặc *Pin Description*.
 > 2. Đọc bảng chân chức năng: Chân `Rs` (hoặc `STB`):
->    * Mức logic HIGH ($V_{CC}$): Kích hoạt chế độ Low-Current Standby Mode (Bộ phát TX bị vô hiệu hóa hoàn toàn).
+>    * Mức logic HIGH (VCC): Kích hoạt chế độ Low-Current Standby Mode (Bộ phát TX bị vô hiệu hóa hoàn toàn).
 >    * Mức logic LOW (GND): Kích hoạt chế độ High-Speed Operation Mode (Bộ phát và bộ thu hoạt động đầy đủ).
 
 ---
@@ -471,13 +465,13 @@ int main(void)
 
 ### ❓ Câu 2: Chân Standby (STB) của chip CAN Transceiver ngoài có tác dụng gì? Nếu quên cấu hình thì hiện tượng gì xảy ra?
 * **Trả lời chuẩn Kỹ sư RTOS:** 
-  * Chân STB dùng để điều khiển chế độ tiêu thụ năng lượng của chip thu phát vật lý: Mức CAO ($3.3\text{V}/5\text{V}$) là chế độ Standby (tắt khối phát công suất), mức THẤP ($0\text{V}$) là chế độ Normal High-Speed.
-  * Nếu kỹ sư quên cấu hình hoặc thả nổi chân STB (nhiều module có điện trở nội kéo lên VCC), Transceiver sẽ bị khóa cứng ở trạng thái Standby. Lúc này code trên STM32 nạp vào thanh ghi `TDR` vẫn báo gửi thành công nhưng trên hai dây vật lý `CAN_H` và `CAN_L` không hề xuất hiện chênh lệch điện áp vi sai $\implies$ **Bus bị câm hoàn toàn!**
+  * Chân STB dùng để điều khiển chế độ tiêu thụ năng lượng của chip thu phát vật lý: Mức CAO (`3.3V` hoặc `5V`) là chế độ Standby (tắt khối phát công suất), mức THẤP (`0V`) là chế độ Normal High-Speed.
+  * Nếu kỹ sư quên cấu hình hoặc thả nổi chân STB (nhiều module có điện trở nội kéo lên VCC), Transceiver sẽ bị khóa cứng ở trạng thái Standby. Lúc này code trên STM32 nạp vào thanh ghi `TDR` vẫn báo gửi thành công nhưng trên hai dây vật lý `CAN_H` và `CAN_L` không hề xuất hiện chênh lệch điện áp vi sai -> **Bus bị câm hoàn toàn!**
 
 ### ❓ Câu 3: Làm thế nào để phát hiện và xử lý sự cố Bus-Off trong Zephyr CAN Subsystem?
 * **Trả lời chuẩn Kỹ sư RTOS:**
   * Đăng ký hàm giám sát bằng `can_set_state_change_callback(dev, callback, user_data)`.
-  * Khi bộ đếm lỗi truyền vượt quá $TEC > 255$, phần cứng tự động chuyển sang `CAN_STATE_BUS_OFF` và gọi callback.
+  * Khi bộ đếm lỗi truyền vượt quá `TEC > 255`, phần cứng tự động chuyển sang `CAN_STATE_BUS_OFF` và gọi callback.
   * Tại đây, hệ thống có thể lựa chọn 2 phương án:
     1. Để phần cứng tự động phục hồi nếu trong Devicetree có cấu hình phục hồi tự động.
     2. Hoặc gọi hàm `can_recover(dev, timeout)` để chủ động yêu cầu nhân Zephyr khởi động lại khối CAN controller sau khi kiểm tra bus đã an toàn.
@@ -487,5 +481,5 @@ int main(void)
 ### 🎙️ KỊCH BẢN TRẢ LỜI PHỎNG VẤN 60 GIÂY (ELEVATOR PITCH)
 
 > *"Tại Ngày 8 của dự án, em nâng cấp hạ tầng truyền thông CAN Bus lên hệ thống **Zephyr CAN Subsystem**.  
-> Em xử lý triệt để bài toán phần cứng bằng cách cấu hình node **`pinctrl`** và sử dụng một chân GPIO phụ để kéo chân **Standby (STB)** của transceiver ngoài `SN65HVD230` xuống mức LOW, đưa mạch vào chế độ truyền tốc độ cao $500\text{ kbps}$ chuẩn xác.  
+> Em xử lý triệt để bài toán phần cứng bằng cách cấu hình node **`pinctrl`** và sử dụng một chân GPIO phụ để kéo chân **Standby (STB)** của transceiver ngoài `SN65HVD230` xuống mức LOW, đưa mạch vào chế độ truyền tốc độ cao `500 kbps` chuẩn xác.  
 > Để tối ưu hóa hiệu năng đa luồng, em ứng dụng cơ chế **`can_add_rx_filter_msgq`**, liên kết trực tiếp bộ lọc định danh phần cứng vào hàng đợi tin nhắn nhân **`k_msgq`**. Giải pháp này giải phóng hoàn toàn thời gian xử lý trong hàm ngắt ISR, cho phép luồng **CAN RX Worker** nhận diện và phân phối các frame táp-lô ô tô một cách an toàn mà không làm gián đoạn các luồng đồ họa hay giao tiếp khác."*

@@ -1,7 +1,7 @@
 # 🏆 [NGÀY 3] CẨM NANG TOÀN DIỆN BARE-METAL: bxCAN CONTROLLER, 28 FILTER BANKS & AUTOMOTIVE BUS-OFF RECOVERY
 ## Lộ trình 4 Bước: Nguyên Lý Phần Cứng ➔ Thực Chiến RM0385 ➔ Gõ Code Driver ➔ Phỏng Vấn Chuyên Sâu
 
-> **Mục tiêu:** Làm chủ từ gốc rễ mạch vi sai CAN Bus, tra cứu Reference Manual (RM0385) và Datasheet (DS10610), tính toán thông số Bit Timing chuẩn CiA 301 ($500\text{ kbps}$, Sample Point $87.5\%$), cấu hình 28 Filter Banks (Mask/List Mode), quản lý 3 Transmit Mailboxes / 2 Receive FIFOs, xử lý ngắt nhận dữ liệu và thuật toán phục hồi lỗi chuẩn công nghiệp ô tô (**Automotive Bus-Off Recovery**) trên STM32F746 (ARM Cortex-M7).  
+> **Mục tiêu:** Làm chủ từ gốc rễ mạch vi sai CAN Bus, tra cứu Reference Manual (RM0385) và Datasheet (DS10610), tính toán thông số Bit Timing chuẩn CiA 301 (500 kbps, Sample Point 87.5%), cấu hình 28 Filter Banks (Mask/List Mode), quản lý 3 Transmit Mailboxes / 2 Receive FIFOs, xử lý ngắt nhận dữ liệu và thuật toán phục hồi lỗi chuẩn công nghiệp ô tô (**Automotive Bus-Off Recovery**) trên STM32F746 (ARM Cortex-M7).  
 > **Nguyên tắc kỹ thuật:** **Đi thẳng vào cơ chế phần cứng, thanh ghi, công thức toán học, bảng tra cứu và phân chia file rõ ràng — KHÔNG dùng ví dụ ẩn dụ ngoài lề dài dòng.**
 
 ---
@@ -29,13 +29,26 @@
 | **2** | **Access Type** | **CỰC KỲ QUAN TRỌNG:** Thanh ghi `CAN_TSR` (các cờ `RQCPx`, `TXOKx`) và `CAN_RFR` (cờ `FULLx`, bit giải phóng `RFOMx`) là dạng `rc_w1` (Write 1 to Clear) hoặc `rs` (Write 1 to Set). **TUYỆT ĐỐI KHÔNG DÙNG `|=`**, phải ghi gán trực tiếp `=` để không xóa nhầm trạng thái của Mailbox khác! |
 | **3** | **Multi-Bit Clear-Set** | Áp dụng quy tắc xóa trước - gán sau (`REG &= ~MASK; REG |= VALUE;`) cho các trường đa bit: `TS1[3:0]`, `TS2[2:0]`, `SJW[1:0]`, `BRP[9:0]`, `CAN2SB[5:0]`, `DLC[3:0]`, `STID[10:0]`. |
 | **4** | **`volatile` Qualification** | Mọi struct ánh xạ thanh ghi CAN và các biến chia sẻ giữa ngắt ISR và main (`can_rx_count`, `can_bus_off_flag`) bắt buộc khai báo `volatile`. |
-| **5** | **Interrupt Workflow** | Quy trình 5 bước ngắt nhận `CAN1_RX0_IRQHandler`: Cờ phần cứng `FMP0 > 0` $\rightarrow$ Bật `CAN_IER_FMPIE0` $\rightarrow$ Bật `NVIC_EnableIRQ(CAN1_RX0_IRQn)` $\rightarrow$ Đọc dữ liệu từ `CAN_RDLR`/`CAN_RDHR` trong ISR $\rightarrow$ Giải phóng mailbox bằng lệnh `CAN1->RF0R = CAN_RF0R_RFOM0`. |
+| **5** | **Interrupt Workflow** | Quy trình 5 bước ngắt nhận `CAN1_RX0_IRQHandler`: Cờ phần cứng `FMP0 > 0` -> Bật `CAN_IER_FMPIE0` -> Bật `NVIC_EnableIRQ(CAN1_RX0_IRQn)` -> Đọc dữ liệu từ `CAN_RDLR`/`CAN_RDHR` trong ISR -> Giải phóng mailbox bằng lệnh `CAN1->RF0R = CAN_RF0R_RFOM0`. |
 | **6** | **RM / DS Lookup** | Cung cấp chính xác Chapter, Section, từ khóa `Ctrl + F`, công thức `Base Address + Offset` cho `CAN1`, `CAN2`, `CAN Filters`, `GPIOB`. |
-| **7** | **Hardware Rationale & Specs** | Bố trí cơ sở kỹ thuật, giới hạn phần cứng ($f_{PCLK1} \le 54\text{MHz}$, Bit Timing chuẩn CiA 301 Sample Point $87.5\%$, 3 Transmit Mailboxes, 2 FIFO nhận 3 tầng) liền kề từng bảng thanh ghi. |
+| **7** | **Hardware Rationale & Specs** | Bố trí cơ sở kỹ thuật, giới hạn phần cứng (f_PCLK1 <= 54 MHz, Bit Timing chuẩn CiA 301 Sample Point 87.5%, 3 Transmit Mailboxes, 2 FIFO nhận 3 tầng) liền kề từng bảng thanh ghi. |
 
 ---
 
 # 🧠 BƯỚC 1: NGUYÊN LÝ PHẦN CỨNG & CƠ CHẾ VẬT LÝ (HARDWARE ARCHITECTURE)
+
+## 1.0. So Sánh Bản Chất: Mạng CAN Bare-Metal bxCAN vs UART / SPI vs Môi Trường RTOS
+
+Trước khi đi vào vi sai điện áp và thanh ghi, hãy làm rõ vị trí và ưu thế vượt trội của CAN Bus so với các chuẩn truyền thông khác:
+
+| Tiêu chí kỹ thuật | UART / SPI Truyền thống | Mạng CAN Bare-Metal (bxCAN STM32F7) | Đối chiếu với Môi trường RTOS |
+| :--- | :--- | :--- | :--- |
+| **Kiến trúc Đường truyền** | Điểm - Điểm (Point-to-Point) hoặc Master-Slave đơn giản. Dễ nhiễu khi dây dài. | **Bus Đa Chủ (Multi-Master)**: Mọi node đều có quyền phát khi bus rảnh. Tự phân xử tranh chấp phần cứng bằng ID! | Mọi Task ở các ECU khác nhau có thể bắn bản tin lên mạng mà không sợ va chạm xung đột. |
+| **Khả năng Chống nhiễu** | Tín hiệu đơn 3.3V/5V: Cực kỳ nhạy cảm với sụt áp và nhiễu sóng điện từ môi trường xe hơi. | **Đường truyền vi sai (CAN_H & CAN_L)**: Nhiễu cảm ứng tác động đều lên cả 2 dây, hiệu điện thế vi sai `V_diff = CAN_H - CAN_L` triệt tiêu 100% nhiễu! | Đảm bảo tính toàn vẹn dữ liệu cho các hệ thống an toàn cao (ABS, Airbag, Động cơ). |
+| **Cơ chế Truyền (TX)** | CPU ngồi chờ cờ rảnh rồi đẩy dữ liệu, nếu đường truyền bận thì CPU bị nghẽn. | **3 Hộp thư Truyền (3 TX Mailboxes)**: CPU chỉ nạp ID + Data vào Mailbox rảnh rồi đi làm việc khác. Phần cứng bxCAN tự động xếp hàng và phát. | Task gọi gửi tin và lập tức nhả CPU; ngắt TX giải phóng Mailbox đánh thức Task tiếp theo. |
+| **Cơ chế Lọc Gói tin (Filtering)** | CPU phải nhận hết mọi gói tin, đọc ID rồi dùng lệnh `if...else` phần mềm để lọc (rất tốn CPU). | **28 Filter Banks phần cứng**: Tự động chặn đứng các gói tin rác ngay tại cổng vật lý; chỉ gói tin khớp ID mới lọt vào FIFO! | Giảm tải 100% gián đoạn ngắt cho CPU/RTOS; Task chỉ thức dậy khi có đúng bản tin ứng dụng quan tâm. |
+| **Bảo vệ Hệ thống (Safety)** | Khi đường truyền chập/hở, UART/SPI treo âm thầm hoặc gửi dữ liệu rác liên tục. | **Bộ đếm lỗi phần cứng (TEC / REC) & Bus-Off FSM**: Tự động cách ly node bị hỏng khỏi bus để bảo vệ toàn mạng không bị tê liệt. | RTOS kết hợp với FSM Bus-off để thực hiện chu trình phục hồi tự động an toàn theo chuẩn ISO 11898-1. |
+
 
 ## 1.1. Kiến trúc Mạng CAN & Sự Cần Thiết của CAN Transceiver Rời
 
@@ -58,7 +71,7 @@ Chip STM32F746NG chỉ tích hợp khối **CAN Controller (bxCAN)**, chịu tr�
 > [!NOTE]
 > **Thực hành trên Kit STM32F746G-DISCO (Không có CAN Transceiver):**  
 > Bo mạch Discovery STM32F746G-DISCO **không hàn sẵn chip CAN Transceiver ngoài**. Nếu chưa cắm thêm module SN65HVD230 ngoài, bạn hãy cấu hình bit **`CAN_BTR_LBKM = 1` (Loopback Mode)** trong thanh ghi `CAN1->BTR`.  
-> Ở chế độ Loopback, khối phần cứng `bxCAN` tự động nối tín hiệu `TX` chui thẳng ngược về `RX` ngay bên trong vi điều khiển, giúp bạn thực hành tự gửi/nhận ngắt CAN hoàn hảo $100\%$ trên duy nhất 1 bo mạch mà không cần cắm thêm bất kỳ linh kiện nào ngoài.
+> Ở chế độ Loopback, khối phần cứng `bxCAN` tự động nối tín hiệu `TX` chui thẳng ngược về `RX` ngay bên trong vi điều khiển, giúp bạn thực hành tự gửi/nhận ngắt CAN hoàn hảo 100% trên duy nhất 1 bo mạch mà không cần cắm thêm bất kỳ linh kiện nào ngoài.
 
 ```text
 ┌───────────────────────────────── STM32F746NG Microcontroller ──────────────────────────────────┐
@@ -81,18 +94,18 @@ Chip STM32F746NG chỉ tích hợp khối **CAN Controller (bxCAN)**, chịu tr�
 
 ### Mức logic trên Bus Vi sai CAN (Differential Bus):
 * **Trạng thái Dominant (Mức logic 0 - Mức Thống trị):**
-  * Chân `CAN_H` được kéo lên $\approx 3.5\text{ V}$. Chân `CAN_L` được kéo xuống $\approx 1.5\text{ V}$.
-  * Điện áp vi sai: $V_{DIFF} = V_{CAN\_H} - V_{CAN\_L} \approx 2.0\text{ V} > 0.9\text{ V}$.
+  * Chân `CAN_H` được kéo lên khoảng 3.5V. Chân `CAN_L` được kéo xuống khoảng 1.5V.
+  * Điện áp vi sai: V_{DIFF = V_{CAN_H - V_{CAN_L ~ 2.0 V > 0.9 V.
   * Nếu một node phát mức 0 và một node phát mức 1 cùng lúc, mức 0 sẽ đè bẹp mức 1 trên bus (Cơ chế phân định quyền ưu tiên Bus Arbitration).
 * **Trạng thái Recessive (Mức logic 1 - Mức Ẩn / Trạng thái Nghỉ):**
-  * Cả hai dây `CAN_H` và `CAN_L` đều được thả về mức điện áp trung gian $\approx 2.5\text{ V}$.
-  * Điện áp vi sai: $V_{DIFF} = V_{CAN\_H} - V_{CAN\_L} \approx 0\text{ V} < 0.5\text{ V}$.
+  * Cả hai dây `CAN_H` và `CAN_L` đều được thả về mức điện áp trung gian khoảng 2.5V.
+  * Điện áp vi sai: V_{DIFF = V_{CAN_H - V_{CAN_L ~ 0 V < 0.5 V.
 
 ---
 
 ## 1.1b. Cấu Trúc Khung Truyền CAN 2.0A/B: Giải Phẫu Data Frame, Vùng Bit Stuffing & Khung Báo Lỗi (Error Frame)
 
-Mặc dù khối phần cứng `bxCAN` trên STM32F7 tự động hóa $100\%$ việc đóng gói và giải mã khung truyền, việc hiểu rõ từng bit trong **CAN Frame** là điều kiện tiên quyết để phân tích gói tin trên máy hiện sóng (Oscilloscope/Logic Analyzer) và chẩn đoán các mã lỗi trong thanh ghi `CAN_ESR`.
+Mặc dù khối phần cứng `bxCAN` trên STM32F7 tự động hóa 100% việc đóng gói và giải mã khung truyền, việc hiểu rõ từng bit trong **CAN Frame** là điều kiện tiên quyết để phân tích gói tin trên máy hiện sóng (Oscilloscope/Logic Analyzer) và chẩn đoán các mã lỗi trong thanh ghi `CAN_ESR`.
 
 ### 1. Giải Phẫu Khung Dữ Liệu Chuẩn (Standard CAN 2.0A Data Frame)
 
@@ -124,9 +137,9 @@ Một gói tin CAN dữ liệu chuẩn 11-bit ID gồm **7 trường liên tiế
    * `IDE` (Identifier Extension - 1 bit): `0` = Khung chuẩn Standard 11-bit (CAN 2.0A); `1` = Khung mở rộng Extended 29-bit (CAN 2.0B).
    * `r0` (Reserved bit - 1 bit): Bit dự phòng, bắt buộc phát mức Dominant (`0`).
    * `DLC[3:0]` (Data Length Code - 4 bits): Báo số byte dữ liệu trong Data Field (từ `0` đến `8`).
-4. **`Data Field` (Trường Dữ liệu - $0 \sim 8\text{ Bytes}$):** Chứa payload truyền thực tế (tối đa 64 bits), truyền bit trọng số lớn (MSB) trước.
+4. **`Data Field` (Trường Dữ liệu - 0 sim 8 Bytes):** Chứa payload truyền thực tế (tối đa 64 bits), truyền bit trọng số lớn (MSB) trước.
 5. **`CRC Field` (Trường Kiểm tra Mã Thừa Tuần Hoàn - 16 bits):**
-   * `CRC Sequence` (15 bits): Mã băm đa thức $x^{15} + x^{14} + x^{10} + x^8 + x^7 + x^4 + x^3 + 1$ để bảo vệ tính toàn vẹn của SOF, Arbitration, Control và Data.
+   * `CRC Sequence` (15 bits): Mã băm đa thức x^{15 + x^{14 + x^{10 + x^8 + x^7 + x^4 + x^3 + 1 để bảo vệ tính toàn vẹn của SOF, Arbitration, Control và Data.
    * `CRC Delimiter` (1 bit Recessive '1'): Bit ranh giới cố định ngăn cách giữa CRC và ACK.
 6. **`ACK Field` (Trường Xác nhận - 2 bits):**
    * `ACK Slot` (1 bit): Node phát truyền ra mức Recessive (`1`). Mọi node nhận đúng dữ liệu và khớp CRC trên bus sẽ **chủ động kéo bus xuống Dominant (`0`)** tại chu kỳ bit này để báo xác nhận nhận thành công!
@@ -141,9 +154,9 @@ Một gói tin CAN dữ liệu chuẩn 11-bit ID gồm **7 trường liên tiế
 ### 2. Quy Luật Bit Stuffing & Vùng Miễn Trừ
 
 * **Quy tắc Chuẩn ISO 11898-1:** Trong vùng dữ liệu, nếu xuất hiện **5 bit liên tiếp có cùng mức logic**, phần cứng bộ điều khiển CAN tự động chèn thêm **1 bit có mức logic đảo ngược**:
-  * Chuỗi `00000` $\implies$ Tự động chèn `1` thành `00000`**`1`**.
-  * Chuỗi `11111` $\implies$ Tự động chèn `0` thành `11111`**`0`**.
-* **Phía nhận (Destuffing):** Bộ thu tự động kiểm tra bit thứ 6. Nếu là bit đảo, nó xóa bỏ bit đó để khôi phục luồng dữ liệu gốc. Nếu bit thứ 6 trùng mức logic với 5 bit trước $\implies$ Báo lỗi **Stuff Error**.
+  * Chuỗi `00000` -> Tự động chèn `1` thành `00000`**`1`**.
+  * Chuỗi `11111` -> Tự động chèn `0` thành `11111`**`0`**.
+* **Phía nhận (Destuffing):** Bộ thu tự động kiểm tra bit thứ 6. Nếu là bit đảo, nó xóa bỏ bit đó để khôi phục luồng dữ liệu gốc. Nếu bit thứ 6 trùng mức logic với 5 bit trước -> Báo lỗi **Stuff Error**.
 * **Vùng Áp Dụng:** Bắt đầu từ **`SOF`** đến hết trường **`CRC Sequence`**.
 * **Vùng Miễn Trừ (Tuyệt đối KHÔNG áp dụng Bit Stuffing):**
   * `CRC Delimiter` (1 bit '1')
@@ -170,7 +183,7 @@ Khung Báo Lỗi Chủ Động (Active Error Frame):
 #### Phản ứng dây chuyền bẻ gãy Bit Stuffing (Error Cascade):
 1. Node phát hiện lỗi lập tức cưỡng bức phát ra **`Active Error Flag = 6 bit Dominant ('0')` liên tiếp**.
 2. **Kích hoạt phản ứng dây chuyền:** Vì trong vùng dữ liệu tối đa chỉ có 5 bit 0 liên tiếp (do luật Bit Stuffing), khi chuỗi 6 bit 0 này xuất hiện, **TẤT CẢ các node khác trên bus lập tức phát hiện vi phạm luật Bit Stuffing (Stuff Error)**!
-3. Toàn bộ các node nhận cũng đồng loạt phóng ra 6 bit Dominant của riêng chúng $\implies$ Kết quả là trên bus xuất hiện một chuỗi từ **6 đến tối đa 12 bit Dominant ('0')**.
+3. Toàn bộ các node nhận cũng đồng loạt phóng ra 6 bit Dominant của riêng chúng -> Kết quả là trên bus xuất hiện một chuỗi từ **6 đến tối đa 12 bit Dominant ('0')**.
 4. Gói tin bị hủy bỏ hoàn toàn trên toàn mạng. Sau đó các node cùng phát **`Error Delimiter = 8 bit Recessive ('1')`** để trả bus về trạng thái cân bằng.
 5. Node phát ban đầu sẽ tự động phát lại gói tin (Automatic Retransmission) sau khoảng thời gian Intermission.
 
@@ -211,14 +224,14 @@ Khung Yêu Cầu Dữ Liệu (Remote Frame - RTR = 1):
 
 #### Đặc điểm kỹ thuật của Remote Frame:
 1. **Bit RTR = 1 (Recessive - Mức 1):** Báo hiệu đây là khung yêu cầu dữ liệu từ xa, không mang payload.
-2. **HOÀN TOÀN KHÔNG CÓ Data Field:** Dù trường `DLC[3:0]` vẫn chứa giá trị từ $0 \sim 8$ (để báo cho node sở hữu ID biết số byte dữ liệu mà node yêu cầu đang mong muốn nhận về), phần cứng CAN Controller **nhảy thẳng từ Control Field sang CRC Field** mà không truyền bất kỳ byte dữ liệu nào trên bus!
-3. **Quy trình bắt tay:** Node Master (ví dụ: Màn hình hiển thị) phát một Remote Frame với `ID = 0x200, RTR = 1, DLC = 4`. Node Slave (Cảm biến áp suất dầu) nhận diện đúng ID `0x200` của mình $\implies$ Node Slave lập tức kích hoạt phát một **Data Frame (`ID = 0x200, RTR = 0, DLC = 4, Data = [..]`)** để trả lời.
+2. **HOÀN TOÀN KHÔNG CÓ Data Field:** Dù trường `DLC[3:0]` vẫn chứa giá trị từ 0 sim 8 (để báo cho node sở hữu ID biết số byte dữ liệu mà node yêu cầu đang mong muốn nhận về), phần cứng CAN Controller **nhảy thẳng từ Control Field sang CRC Field** mà không truyền bất kỳ byte dữ liệu nào trên bus!
+3. **Quy trình bắt tay:** Node Master (ví dụ: Màn hình hiển thị) phát một Remote Frame với `ID = 0x200, RTR = 1, DLC = 4`. Node Slave (Cảm biến áp suất dầu) nhận diện đúng ID `0x200` của mình -> Node Slave lập tức kích hoạt phát một **Data Frame (`ID = 0x200, RTR = 0, DLC = 4, Data = [..]`)** để trả lời.
 4. **Luật Trọng tài Phân định khi Đụng độ (Arbitration Clashing):**
    * *Tình huống:* Node A phát Remote Frame (`ID = 0x200, RTR = 1`), cùng thời điểm đó Node B cũng chuẩn bị sẵn dữ liệu và phát Data Frame (`ID = 0x200, RTR = 0`).
-   * *Kết quả:* Hai bên cùng phát 11 bit ID giống hệt nhau $\to$ Đến bit thứ 12 (`RTR`):
+   * *Kết quả:* Hai bên cùng phát 11 bit ID giống hệt nhau to Đến bit thứ 12 (`RTR`):
      * Node B phát mức `0` (Dominant).
      * Node A phát mức `1` (Recessive).
-     * Mức `0` đè bẹp mức `1` $\implies$ **Data Frame của Node B CHIẾN THẮNG PHÂN ĐỊNH tuyệt đối!**
+     * Mức `0` đè bẹp mức `1` -> **Data Frame của Node B CHIẾN THẮNG PHÂN ĐỊNH tuyệt đối!**
      * Node A thua cuộc, lập tức rút lui chuyển sang chế độ nhận, và vừa vặn đọc được ngay gói Data Frame mà nó đang cần!
 
 ---
@@ -267,7 +280,7 @@ Khung Báo Quá Tải (Overload Frame):
              • Đọc thấy mức RECESSIVE ('1') ➔ Không có ai nhận (ACK Error ➔ TEC += 8 ➔ Phát lại).
 ```
 
-* **Zero Protocol Overhead:** Việc xác nhận (ACK) không cần phải gửi thêm một bản tin phản hồi riêng biệt tốn băng thông như TCP hay các giao thức UART/SPI, mà hoàn tất ngay trong chu kỳ $2\,\mu	ext{s}$ của bit ACK!
+* **Zero Protocol Overhead:** Việc xác nhận (ACK) không cần phải gửi thêm một bản tin phản hồi riêng biệt tốn băng thông như TCP hay các giao thức UART/SPI, mà hoàn tất ngay trong chu kỳ 2 mu	ext{s của bit ACK!
 
 ---
 
@@ -275,8 +288,8 @@ Khung Báo Quá Tải (Overload Frame):
 
 | Loại Khung (Frame Type) | Mục Đích Sử Dụng | Vị Trí / Đặc Điểm Nhận Dạng | Bit RTR | Có Data Field? |
 | :--- | :--- | :--- | :---: | :---: |
-| **Data Frame** | Truyền tải dữ liệu thực tế từ bên phát tới toàn bộ mạng. | Bắt đầu bằng SOF '0', kết thúc bằng 7 bit EOF '1'. | **`0`** (Dominant) | **CÓ** ($0 \sim 8$ Bytes) |
-| **Remote Frame** | Bắt tay yêu cầu (hỏi) dữ liệu từ node khác mà không cần phát định kỳ. | Bắt đầu bằng SOF '0', cấu trúc giống Data Frame nhưng không có Data. | **`1`** (Recessive) | **KHÔNG** ($0$ Bytes) |
+| **Data Frame** | Truyền tải dữ liệu thực tế từ bên phát tới toàn bộ mạng. | Bắt đầu bằng SOF '0', kết thúc bằng 7 bit EOF '1'. | **`0`** (Dominant) | **CÓ** (0 sim 8 Bytes) |
+| **Remote Frame** | Bắt tay yêu cầu (hỏi) dữ liệu từ node khác mà không cần phát định kỳ. | Bắt đầu bằng SOF '0', cấu trúc giống Data Frame nhưng không có Data. | **`1`** (Recessive) | **KHÔNG** (0 Bytes) |
 | **Error Frame** | Báo động và phá hủy gói tin tức thì khi phát hiện vi phạm quy chuẩn. | Phát bất kỳ lúc nào khi gặp lỗi: 6 bit Dominant '0' (Active) hoặc 6 bit '1' (Passive). | Không áp dụng | **KHÔNG** |
 | **Overload Frame** | Bắt tay xin hoãn truyền frame kế tiếp khi bộ đệm chưa kịp xử lý. | Phát tại vùng Intermission (sau EOF): 6 bit Dominant '0' + 8 bit Recessive '1'. | Không áp dụng | **KHÔNG** |
 
@@ -388,7 +401,7 @@ Chu kỳ 1 bit CAN được chia làm 4 phân đoạn liên tiếp với nhiệm
   * **Cơ sở vật lý:** Điểm lấy mẫu giải quyết mâu thuẫn giữa 2 yêu cầu kỹ thuật:
     * *Muốn đẩy lùi càng về cuối bit càng tốt (> 80%):* Để đoạn `Prop_Seg` đủ dài, cho phép kết nối chiều dài dây cáp đạt tối đa (100 mét ở tốc độ 500 kbps).
     * *Không được đẩy quá sát đuôi bit (< 90%):* Để đoạn `Phase_Seg2` còn đủ không gian cho phần cứng co ngắn bit bù trừ độ trôi tần số (Clock Drift) do thạch anh biến thiên theo nhiệt độ.
-    * $\implies$ Điểm cân bằng cực trị hội tụ chính xác tại **87.5%**.
+    * -> Điểm cân bằng cực trị hội tụ chính xác tại **87.5%**.
 
 #### 6. Biên Độ Nhảy Bù Pha SJW (Synchronization Jump Width)
 * Là số lượng `tq` tối đa mà phần cứng được phép co hoặc dãn trên `Phase_Seg1` và `Phase_Seg2` trong mỗi chu kỳ tái đồng bộ (cấu hình qua trường `SJW[1:0]`, thường chọn `1 tq` đến `4 tq`).
@@ -413,7 +426,7 @@ Chu kỳ 1 bit CAN được chia làm 4 phân đoạn liên tiếp với nhiệm
    ```
 2. **Ràng buộc:**
    * Phần cứng quy định: `8 <= N_q <= 25`.
-   * BRP nguyên $\implies$ **N_q bắt buộc phải là ƯỚC SỐ của 108**.
+   * BRP nguyên -> **N_q bắt buộc phải là ƯỚC SỐ của 108**.
 3. **Tìm các ước số của 108 trong đoạn [8, 25]:**
    Các ước số của 108 gồm: `1, 2, 3, 4, 6, 9, 12, 18, 27, 36, 54, 108`.  
    Trong khoảng `[8, 25]`, ta có đúng **3 ứng viên**:
@@ -569,7 +582,7 @@ Bus CAN là giao thức **truyền thông không đồng bộ (Asynchronous)** �
    * Xảy ra **duy nhất 1 lần khi bắt đầu Frame** — tại cạnh xuống của bit **SOF (Start of Frame)** sau trạng thái Bus Idle.
    * Bộ đếm Time Quanta nội bộ của Node nhận bị **RESET TỨC THÌ VỀ 0**, ép cạnh này bắt đầu chính xác tại phân đoạn `Sync_Seg`.
 2. **Resynchronization (Tái đồng bộ Mềm):**
-   * Xảy ra ở tất cả các cạnh Recessive $\rightarrow$ Dominant tiếp theo bên trong bản tin.
+   * Xảy ra ở tất cả các cạnh Recessive -> Dominant tiếp theo bên trong bản tin.
    * Đo sai số pha: `e = vị trí cạnh thực tế - vị trí Sync_Seg kỳ vọng`. Phần cứng tự động co hoặc dãn bằng giá trị `SJW`.
 
 ---
@@ -654,11 +667,11 @@ Trục t_q của từng Bit |  . . .       t_q 16  │t_q 17│(BỎ    │t_q 0
 Bên cạnh 3 kịch bản tái đồng bộ tại sườn xuống `1 -> 0` (In-Sync, Late Edge, Early Edge), hệ thống còn gặp 2 trạng thái bus đặc thù:
 
 1. **Trường hợp chuyển mức 0 -> 1 (Dominant sang Recessive - Cạnh lên 0.0V -> 3.3V trên chân RX):**
-   * **Bản chất phần cứng:** Các khóa MOSFET trong chip Transceiver ngắt hoàn toàn (High-Z). Hai dây `CAN_H` và `CAN_L` không còn nguồn ép, toàn bộ điện tích tích tụ trên điện dung ký sinh của dây cáp phải tự xả qua điện trở đầu cuối $60\ \Omega$ theo hằng số thời gian $\tau = R \cdot C$.
-   * **Hệ quả kỹ thuật:** Sườn chuyển mức này có độ dốc thoai thoải, phụ thuộc vào chiều dài đường dây và số node trong mạng (dao động từ $100\text{ ns}$ đến hơn $300\text{ ns}$). Do sai số thời gian quá lớn, chuẩn **ISO 11898-1 nghiêm cấm sử dụng sườn này để tái đồng bộ**.
+   * **Bản chất phần cứng:** Các khóa MOSFET trong chip Transceiver ngắt hoàn toàn (High-Z). Hai dây `CAN_H` và `CAN_L` không còn nguồn ép, toàn bộ điện tích tích tụ trên điện dung ký sinh của dây cáp phải tự xả qua điện trở đầu cuối 60 Omega theo hằng số thời gian tau = R cdot C.
+   * **Hệ quả kỹ thuật:** Sườn chuyển mức này có độ dốc thoai thoải, phụ thuộc vào chiều dài đường dây và số node trong mạng (dao động từ 100 ns đến hơn 300 ns). Do sai số thời gian quá lớn, chuẩn **ISO 11898-1 nghiêm cấm sử dụng sườn này để tái đồng bộ**.
 
 2. **Trường hợp các bit đồng mức logic liên tiếp (0 -> 0 hoặc 1 -> 1):**
-   * **Bản chất phần cứng:** Điện áp trên bus duy trì phẳng lặng hoàn toàn (giữ nguyên $V_{DIFF} \approx 2.0\text{V}$ hoặc $0.0\text{V}$). Không có bất kỳ sườn chuyển mức nào xuất hiện.
+   * **Bản chất phần cứng:** Điện áp trên bus duy trì phẳng lặng hoàn toàn (giữ nguyên V_{DIFF ~ 2.0V hoặc 0.0V). Không có bất kỳ sườn chuyển mức nào xuất hiện.
    * **Hệ quả kỹ thuật:** Bộ đếm Time Quanta của các node phải chạy tự do (free-running). Sự sai lệch tần số thạch anh giữa các node sẽ tích lũy dần theo từng bit trôi qua.
    * **Cơ chế khắc phục bằng Bit Stuffing:** Để ngăn sai số thạch anh tích lũy quá lớn làm trượt điểm lấy mẫu, chuẩn CAN áp dụng quy tắc **Bit Stuffing**: Sau **5 bit liên tiếp có cùng mức logic**, bên phát bắt buộc phải tự động chèn thêm **1 bit có mức logic đảo ngược (Stuff Bit)**. Điều này đảm bảo cứ tối đa 5 bit chắc chắn sẽ xuất hiện một sườn chuyển mức `1 -> 0` để khóa pha đồng hồ trở lại.
 
@@ -669,16 +682,16 @@ Bên cạnh 3 kịch bản tái đồng bộ tại sườn xuống `1 -> 0` (In-
 > [!IMPORTANT]
 > **TỔNG KẾT BẢN CHẤT VẬT LÝ VÀ QUY TRÌNH ĐỒNG BỘ BIT TRÊN BUS CAN:**
 >
-> 1. **Chuyển mức `1 -> 0`:** Do các khóa **MOSFET của Transceiver chủ động kích hoạt (Active Drive)** để bơm nguồn ép bus về đúng điện áp chuẩn ($3.5\text{V} / 1.5\text{V}$), dập tắt điện dung ký sinh cực nhanh trong $10 - 20\text{ ns}$ $\rightarrow$ Sườn dốc đứng, thời gian chuyển mức chuẩn xác nên **sai số được hạn chế tối đa**.
-> 2. **Chuyển mức `0 -> 1`:** Do **MOSFET tắt hoàn toàn (High-Z)**, năng lượng tích tụ trên tụ ký sinh của dây cáp **tự xả tự do** qua điện trở đầu cuối $60\ \Omega$ $\rightarrow$ Thời gian xả biến động theo độ dài cáp và số lượng node nên **sai số rất cao** (bị cấm dùng để đồng bộ).
+> 1. **Chuyển mức `1 -> 0`:** Do các khóa **MOSFET của Transceiver chủ động kích hoạt (Active Drive)** để bơm nguồn ép bus về đúng điện áp chuẩn (3.5V / 1.5V), dập tắt điện dung ký sinh cực nhanh trong 10 - 20 ns -> Sườn dốc đứng, thời gian chuyển mức chuẩn xác nên **sai số được hạn chế tối đa**.
+> 2. **Chuyển mức `0 -> 1`:** Do **MOSFET tắt hoàn toàn (High-Z)**, năng lượng tích tụ trên tụ ký sinh của dây cáp **tự xả tự do** qua điện trở đầu cuối 60 Omega -> Thời gian xả biến động theo độ dài cáp và số lượng node nên **sai số rất cao** (bị cấm dùng để đồng bộ).
 > 3. **Mục đích chia 3 kịch bản ở sườn `1 -> 0`:** Nhằm đo đạc và điều chỉnh `Phase_Seg` (co/dãn bằng `SJW`) để **khắc phục sai số tần số thạch anh** giữa các Node tích lũy qua cả chuỗi chuyển mức `1 -> 0` lẫn `0 -> 1`.
-> 4. **Kiểm soát sai số tụ điện và sóng phản xạ:** Toàn bộ sai số do quá trình nạp/xả tụ ký sinh và sóng dao động phản xạ ở cả 2 trường hợp (`0 -> 1` hoặc `1 -> 0`) được **kiểm soát triệt để bằng Điểm lấy mẫu (Sample Point)** đặt muộn ở mức **$87.5\% - 88.89\%$** (tại mốc $1777\text{ ns}$ trên bit $2000\text{ ns}$), đảm bảo dữ liệu chỉ được chốt khi điện áp vi sai trên bus đã ổn định thành đường thẳng DC phẳng lặng tuyệt đối.
+> 4. **Kiểm soát sai số tụ điện và sóng phản xạ:** Toàn bộ sai số do quá trình nạp/xả tụ ký sinh và sóng dao động phản xạ ở cả 2 trường hợp (`0 -> 1` hoặc `1 -> 0`) được **kiểm soát triệt để bằng Điểm lấy mẫu (Sample Point)** đặt muộn ở mức **87.5% - 88.89%** (tại mốc 1777 ns trên bit 2000 ns), đảm bảo dữ liệu chỉ được chốt khi điện áp vi sai trên bus đã ổn định thành đường thẳng DC phẳng lặng tuyệt đối.
 
 ---
 
 ## 1.4. Cơ chế 28 Filter Banks & Phân Quyền CAN1 Master
 
-Hệ thống có **28 Filter Banks (từ Bank 0 đến Bank 27)** dùng để lọc phần cứng các Identifier không mong muốn, giải phóng $100\%$ tải CPU:
+Hệ thống có **28 Filter Banks (từ Bank 0 đến Bank 27)** dùng để lọc phần cứng các Identifier không mong muốn, giải phóng 100% tải CPU:
 
 ```text
  ┌────────────────────────────────────────────────────────────────────────────────────────┐
@@ -721,7 +734,7 @@ Trong 1 ngăn 16-bit, vi điều khiển phân bổ các bit như sau:
 * **Bit `[4]` (1 bit):** Cờ `RTR` (`0` = Data Frame mang dữ liệu, `1` = Remote Frame xin dữ liệu).
 * **Bit `[3]` (1 bit):** Cờ `IDE` (`0` = Bắt buộc Standard ID 11-bit, `1` = Extended ID).
 * **Bit `[2:0]` (3 bits):** Dành riêng hoặc chứa 3 bit cao của Extended ID.
-$\rightarrow$ Nhờ chỉ tốn 16 bit cho mỗi bộ lọc Standard ID, khi chuyển sang **16-bit List Mode**, 1 Bank duy nhất (64 bit) chẻ thành 4 ngăn 16-bit độc lập, **chứa trọn vẹn 4 Standard IDs khác nhau!**
+-> Nhờ chỉ tốn 16 bit cho mỗi bộ lọc Standard ID, khi chuyển sang **16-bit List Mode**, 1 Bank duy nhất (64 bit) chẻ thành 4 ngăn 16-bit độc lập, **chứa trọn vẹn 4 Standard IDs khác nhau!**
 
 ---
 
@@ -734,8 +747,8 @@ $\rightarrow$ Nhờ chỉ tốn 16 bit cho mỗi bộ lọc Standard ID, khi chu
   * Ngăn 3 (`FR2_Low`):  `0x103` (Tốc độ bánh sau trái - RL Wheel Speed)
   * Ngăn 4 (`FR2_High`): `0x104` (Tốc độ bánh sau phải - RR Wheel Speed)
 * **Kết quả thực thi của mạch phần cứng:**
-  * Gói tin bay tới có ID là `0x101`, `0x102`, `0x103` hoặc `0x104`: **KHỚP 100% $\rightarrow$ Đẩy vào FIFO**.
-  * Gói tin mang ID `0x200` (Hộp số) hoặc bất kỳ ID nào khác: **SAI $\rightarrow$ DROP ngay lập tức (Zero CPU Load)**.
+  * Gói tin bay tới có ID là `0x101`, `0x102`, `0x103` hoặc `0x104`: **KHỚP 100% -> Đẩy vào FIFO**.
+  * Gói tin mang ID `0x200` (Hộp số) hoặc bất kỳ ID nào khác: **SAI -> DROP ngay lập tức (Zero CPU Load)**.
 
 ##### 2. Tổ hợp 3: `16-bit Scale + Mask Mode (FS1R = 0, FM1R = 0)` — Lọc 2 dải Standard IDs:
 * **Yêu cầu bài toán:** Muốn nhận toàn bộ một nhóm gồm 4 ID liên tiếp từ `0x200` đến `0x203`:
@@ -747,9 +760,9 @@ $\rightarrow$ Nhờ chỉ tốn 16 bit cho mỗi bộ lọc Standard ID, khi chu
   * Nhận xét: **9 bit đầu (`0b 010 0000 00..`) hoàn toàn giống hệt nhau**, chỉ có **2 bit cuối là biến thiên (`00`, `01`, `10`, `11`)**.
 * **Cài đặt cặp lọc thứ nhất (`FR1`):**
   * Ngăn ID (`FR1_Low`): `0x200` (ID mẫu kỳ vọng).
-  * Ngăn Mask (`FR1_High`): `0x7FC` (`0b 111 1111 1100` $\rightarrow$ 9 bit đầu bằng `1` bắt buộc trùng khớp 100%, 2 bit cuối bằng `0` là Don't Care!).
+  * Ngăn Mask (`FR1_High`): `0x7FC` (`0b 111 1111 1100` -> 9 bit đầu bằng `1` bắt buộc trùng khớp 100%, 2 bit cuối bằng `0` là Don't Care!).
 * **Kết quả:**
-  * Bất kỳ gói nào mang ID từ `0x200` đến `0x203`: **KHỚP $\rightarrow$ Đẩy vào FIFO**.
+  * Bất kỳ gói nào mang ID từ `0x200` đến `0x203`: **KHỚP -> Đẩy vào FIFO**.
   * Gói mang ID `0x204` (`0b 010 0000 0100` — bit thứ 3 bằng `1`, sai lệch với bit thứ 3 của `0x200` bằng `0`): **DROP ngay lập tức!**
   * *(Cặp lọc thứ 2 trong `FR2` cấu hình độc lập để lọc thêm 1 dải khác, ví dụ dải `0x300` - `0x307`)*.
 
@@ -757,7 +770,7 @@ $\rightarrow$ Nhờ chỉ tốn 16 bit cho mỗi bộ lọc Standard ID, khi chu
 * **Yêu cầu bài toán:** Khi mới bắt đầu phát triển driver hoặc làm bộ phân tích CAN Sniffer (như Wireshark), ta muốn MCU nhận **TẤT CẢ** các gói tin trên bus mà không bỏ sót bất kỳ gói nào.
 * **Cài đặt:**
   * Thanh ghi ID (`FR1`): `0x0000 0000`
-  * Thanh ghi Mask (`FR2`): `0x0000 0000` *(Toàn bộ 32 bit đều bằng 0 $\rightarrow$ Don't care toàn bộ!)*
+  * Thanh ghi Mask (`FR2`): `0x0000 0000` *(Toàn bộ 32 bit đều bằng 0 -> Don't care toàn bộ!)*
 * **Kết quả:** Mọi gói tin (Standard hay Extended, bất kể ID bằng bao nhiêu) đều lọt qua bộ lọc 100%.
 
 ##### 4. Tổ hợp 2: `32-bit Scale + List Mode (FS1R = 1, FM1R = 1)` — Lọc đích danh 2 Extended IDs (29-bit):
@@ -813,8 +826,8 @@ graph TD
      * **Nếu KHỚP:** Chuyển tiếp frame sang Bước 4.
   4. **Bước 4 — Phân luồng FIFO qua thanh ghi `CAN_FFA1R`:**
      * Phần cứng nhìn vào bit tương ứng của Bank trong `CAN_FFA1R`:
-       * Nếu bit bằng `0`: Ghi frame vào **Receive FIFO 0** $\rightarrow$ Tăng số đếm `FMP0` $\rightarrow$ Kích hoạt ngắt `CAN1_RX0_IRQHandler`.
-       * Nếu bit bằng `1`: Ghi frame vào **Receive FIFO 1** $\rightarrow$ Tăng số đếm `FMP1` $\rightarrow$ Kích hoạt ngắt `CAN1_RX1_IRQHandler`.
+       * Nếu bit bằng `0`: Ghi frame vào **Receive FIFO 0** -> Tăng số đếm `FMP0` -> Kích hoạt ngắt `CAN1_RX0_IRQHandler`.
+       * Nếu bit bằng `1`: Ghi frame vào **Receive FIFO 1** -> Tăng số đếm `FMP1` -> Kích hoạt ngắt `CAN1_RX1_IRQHandler`.
      * *Ý nghĩa kỹ thuật:* Giúp phân tách luồng dữ liệu theo độ ưu tiên: Các bản tin khẩn cấp (thắng, túi khí) đẩy vào FIFO 0 gắn ngắt ưu tiên cao; các bản tin giải trí, cảm biến nhiệt độ đẩy vào FIFO 1 gắn ngắt ưu tiên thấp.
 
 ---
@@ -875,12 +888,12 @@ Hai bộ đếm `TEC` và `REC` được phần cứng bxCAN tự động cộng
 | :--- | :---: | :---: | :--- |
 | **Bên nhận phát hiện lỗi thông thường** (CRC sai, Stuff Error, Form Error trong frame dữ liệu) | **`REC`** | **`+1`** | Lỗi thụ động: Bên nhận chỉ là nạn nhân của nhiễu đường truyền, chỉ phạt nhẹ +1 điểm. |
 | **Bên phát gây ra lỗi** (Bit Error ngoài vùng phân định, phát hiện vi phạm khi đang truyền) | **`TEC`** | **`+8`** | Lỗi chủ động: Bên phát là nguồn gây ô nhiễm mạng, phải phạt nặng gấp 8 lần để cách ly nhanh. |
-| **Không có node nào gửi ACK** (Acknowledgment Error) | **`TEC`** | **`+8`** | Node phát gửi gói tin mà không có ai xác nhận $\to$ tăng TEC +8. |
-| **Bên nhận gặp lỗi nghiêm trọng trong Error Flag** (Phát hiện Bit Error khi đang phát Active Error Flag / Overload Flag) | **`REC`** | **`+8`** | **NGOẠI LỆ REC TĂNG +8:** Khi node nhận đang cố báo lỗi mà đường truyền của nó lại bị lỗi bit tiếp $\to$ chứng tỏ khối thu của nó bị hỏng nặng, phạt ngay +8 điểm! |
+| **Không có node nào gửi ACK** (Acknowledgment Error) | **`TEC`** | **`+8`** | Node phát gửi gói tin mà không có ai xác nhận to tăng TEC +8. |
+| **Bên nhận gặp lỗi nghiêm trọng trong Error Flag** (Phát hiện Bit Error khi đang phát Active Error Flag / Overload Flag) | **`REC`** | **`+8`** | **NGOẠI LỆ REC TĂNG +8:** Khi node nhận đang cố báo lỗi mà đường truyền của nó lại bị lỗi bit tiếp to chứng tỏ khối thu của nó bị hỏng nặng, phạt ngay +8 điểm! |
 | **Bên nhận thấy bit Dominant ngay sau Error Flag** (Bit đầu tiên của Error Delimiter bị kéo xuống '0') | **`REC`** | **`+8`** | **NGOẠI LỆ REC TĂNG +8:** Vi phạm ranh giới phân định Error Delimiter, phạt ngay +8 điểm. |
 | **Bên phát truyền thành công 1 frame** | **`TEC`** | **`-1`** | Thưởng khi phát tốt (giảm dần về 0). |
 | **Bên nhận nhận thành công 1 frame khi `REC <= 127`** | **`REC`** | **`-1`** | Thưởng khi nhận tốt (giảm dần về 0). |
-| **Bên nhận nhận thành công 1 frame khi `REC > 127`** *(Đang ở trạng thái Error Passive)* | **`REC`** | **KÉO LÙI VỀ DẢI `[119 ~ 127]`** | **CƠ CHẾ KHOAN HỒNG ĐẶC BIỆT:** Không trừ -1 lắt nhắt, mà lập tức đưa REC về ngưỡng mép $119 \sim 127$, giúp node chỉ cần nhận tốt thêm một vài frame nữa là lập tức thoát khỏi Error Passive về lại Error Active! |
+| **Bên nhận nhận thành công 1 frame khi `REC > 127`** *(Đang ở trạng thái Error Passive)* | **`REC`** | **KÉO LÙI VỀ DẢI `[119 ~ 127]`** | **CƠ CHẾ KHOAN HỒNG ĐẶC BIỆT:** Không trừ -1 lắt nhắt, mà lập tức đưa REC về ngưỡng mép 119 sim 127, giúp node chỉ cần nhận tốt thêm một vài frame nữa là lập tức thoát khỏi Error Passive về lại Error Active! |
 
 ---
 
@@ -894,10 +907,10 @@ Hai bộ đếm `TEC` và `REC` được phần cứng bxCAN tự động cộng
 
 #### ❓ Triết lý 2: Tại sao REC có thể vượt ngưỡng 127 trước TEC?
 * Ở các node **thuần nhận (Receive-Only)** như hộp đồng hồ táp-lô, màn hình giải trí, hoặc bộ ghi dữ liệu (CAN Logger): Node này hầu như không bao giờ phát (`TEC = 0`).
-* Nếu đường dây nhận `RX` bị nhiễu điện từ (EMI) hoặc lệch tần số thạch anh: Mỗi frame bay qua bus, node này nhận sai $\implies$ `REC` liên tục tăng `+1` (hoặc `+8`), nhanh chóng vượt mốc `127` để rơi vào **`Error Passive`**, trong khi `TEC` vẫn bằng đúng `0`!
+* Nếu đường dây nhận `RX` bị nhiễu điện từ (EMI) hoặc lệch tần số thạch anh: Mỗi frame bay qua bus, node này nhận sai -> `REC` liên tục tăng `+1` (hoặc `+8`), nhanh chóng vượt mốc `127` để rơi vào **`Error Passive`**, trong khi `TEC` vẫn bằng đúng `0`!
 
 #### ❓ Triết lý 3: Tại sao chuẩn ISO 11898-1 KHÔNG CHO PHÉP REC gây ra Bus-Off?
-* **Node phát (Transmitter) là kẻ phá hoại tiềm tàng:** Nếu hỏng, nó liên tục bơm các bit Dominant ('0') ra bus, có thể đè bẹp và làm sập toàn bộ hệ thống mạng trên xe hơi $\implies$ Bắt buộc phải có án "tử hình": Khi `TEC > 255`, ngắt kết nối chân TX hoàn toàn (**Bus-Off**).
+* **Node phát (Transmitter) là kẻ phá hoại tiềm tàng:** Nếu hỏng, nó liên tục bơm các bit Dominant ('0') ra bus, có thể đè bẹp và làm sập toàn bộ hệ thống mạng trên xe hơi -> Bắt buộc phải có án "tử hình": Khi `TEC > 255`, ngắt kết nối chân TX hoàn toàn (**Bus-Off**).
 * **Node nhận (Receiver) là kẻ vô hại:** Khi `REC > 127`, node đã bị giáng cấp xuống `Error Passive`. Ở trạng thái này, khi phát hiện lỗi nó **chỉ được phép phát Passive Error Flag bằng 6 bit Recessive ('1')**. Vì mức Recessive là mức điện áp thả nổi (yếu), nó **hoàn toàn không thể đè bẹp hay can thiệp vào dữ liệu của các node khác**!
 * Do đó, một node nhận bị lỗi chỉ tự làm nó "điếc", chứ không làm hại ai. Chuẩn CAN không bao giờ cách ly (Bus-Off) một node chỉ vì lỗi nhận, và luôn mở rộng cửa cho nó tự phục hồi thông qua **cơ chế kéo lùi REC về dải 119 ~ 127** ngay khi nhận được một frame sạch!
 
@@ -915,7 +928,7 @@ Hai bộ đếm `TEC` và `REC` được phần cứng bxCAN tự động cộng
 
 ## 1.6. Hệ Thống Sơ Đồ Tuần Tự: Quy Trình Cấu Hình & Vận Hành Ngoại Vi bxCAN (Configuration & Execution Pipelines)
 
-Mô hình hóa tuần tự toàn bộ các bước tương tác giữa Mã Ứng Dụng $\leftrightarrow$ Thanh ghi điều khiển $\leftrightarrow$ Khối Silicon Engine & Bus Vật lý để đưa bộ điều khiển `bxCAN` từ trạng thái Reset vào vận hành thực tế:
+Mô hình hóa tuần tự toàn bộ các bước tương tác giữa Mã Ứng Dụng <=ftrightarrow Thanh ghi điều khiển <=ftrightarrow Khối Silicon Engine & Bus Vật lý để đưa bộ điều khiển `bxCAN` từ trạng thái Reset vào vận hành thực tế:
 
 ---
 
@@ -1074,7 +1087,7 @@ sequenceDiagram
 
 ## 2.1. Bản đồ Địa chỉ Base Address & Vector Ngắt bxCAN
 
-Tra cứu RM0385 *Chapter 2: Memory map $\rightarrow$ Table 1* & *Chapter 10: Interrupt vector table*:
+Tra cứu RM0385 *Chapter 2: Memory map -> Table 1* & *Chapter 10: Interrupt vector table*:
 
 | Ngoại vi | Bus | Base Address | Offset | Địa chỉ tuyệt đối | IRQ Number | Hàm xử lý ngắt (ISR) |
 | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
@@ -1090,8 +1103,8 @@ Tra cứu RM0385 *Chapter 2: Memory map $\rightarrow$ Table 1* & *Chapter 10: In
 ## 2.2. Ghép kênh chân GPIO (Pin Multiplexing cho CAN1 trên Discovery)
 
 Tra cứu Datasheet DS10610 *Table 11: Alternate function mapping*:
-* **`CAN1_RX`:** Chân **`PB8`** $\rightarrow$ Mã **`AF9`** (Alternate Function 9).
-* **`CAN1_TX`:** Chân **`PB9`** $\rightarrow$ Mã **`AF9`** (Alternate Function 9).
+* **`CAN1_RX`:** Chân **`PB8`** -> Mã **`AF9`** (Alternate Function 9).
+* **`CAN1_TX`:** Chân **`PB9`** -> Mã **`AF9`** (Alternate Function 9).
 
 ```text
 PB8  --> AFRH8[3:0] = 1001b (AF9) -> CAN1_RX
@@ -1111,16 +1124,16 @@ Tra cứu RM0385 *Chapter 31: Controller area network (bxCAN)*:
 | | `ABOM` (Bit 6) | `1`b | Bật tự động phục hồi khỏi trạng thái lỗi Bus-Off. |
 | | `TXFP` (Bit 2) | `1`b | Ưu tiên gửi theo thứ tự thời gian nạp (FIFO Priority). |
 | **`CAN_MSR`** | `INAK` (Bit 0) | RO Polling | Chờ phần cứng xác nhận đã vào chế độ Khởi tạo (`INAK = 1`). |
-| **`CAN_BTR`** | `BRP[9:0]` | `5`d | Prescaler chia 6 ($54\text{MHz} / 6 = 9\text{MHz} \implies t_q = 111.11\text{ns}$). |
-| | `TS1[3:0]` | `14`d (`0xE`) | Time Segment 1 $= 15\,t_q$. |
-| | `TS2[2:0]` | `1`d (`0x1`) | Time Segment 2 $= 2\,t_q$. |
-| | `SJW[1:0]` | `0`d (`0x0`) | Resynchronization Jump Width $= 1\,t_q$. |
+| **`CAN_BTR`** | `BRP[9:0]` | `5`d | Prescaler chia 6 (54MHz / 6 = 9MHz -> t_q = 111.11ns). |
+| | `TS1[3:0]` | `14`d (`0xE`) | Time Segment 1 = 15 t_q. |
+| | `TS2[2:0]` | `1`d (`0x1`) | Time Segment 2 = 2 t_q. |
+| | `SJW[1:0]` | `0`d (`0x0`) | Resynchronization Jump Width = 1 t_q. |
 | **`CAN_FMR`** | `FINIT` (Bit 0) | `1`b | Mở khóa cấu hình bộ lọc Filter Initialization. |
 | | `CAN2SB[5:0]` | `14`d | Ranh giới chia sẻ: Bank 0-13 cho CAN1, Bank 14-27 cho CAN2. |
 | **`CAN_FA1R`** | `FACT0` (Bit 0) | `1`b | Kích hoạt (Activate) Filter Bank 0. |
 | **`CAN_TSR`** | `TME0` (Bit 26) | RO Flag | Cờ báo Transmit Mailbox 0 đang trống (`TME0 = 1`). |
 | | `RQCP0` (Bit 0) | `rc_w1` | Cờ báo yêu cầu truyền Mailbox 0 đã hoàn tất. |
-| **`CAN_RF0R`** | `FMP0[1:0]` (Bit 1:0)| RO Counter | Số lượng bản tin đang nằm trong FIFO 0 ($0 \rightarrow 3$). |
+| **`CAN_RF0R`** | `FMP0[1:0]` (Bit 1:0)| RO Counter | Số lượng bản tin đang nằm trong FIFO 0 (0 rightarrow 3). |
 | | `RFOM0` (Bit 5) | `rs` (`1`b) | **Release FIFO 0 Output Mailbox:** Giải phóng bản tin vừa đọc. |
 
 ---
@@ -1446,26 +1459,26 @@ int main(void)
 
 ---
 
-### ❓ Câu 2: Tại sao khi tính toán Bit Timing cho CAN trên STM32F7, điểm lấy mẫu (Sample Point) lại được khuyến nghị đặt ở $87.5\%$ thay vì $50\%$?
-* **Trả lời:** Chuẩn công nghiệp ô tô CiA 301 và ISO 11898-1 khuyến nghị Sample Point trong dải $75\% \sim 90\%$, tối ưu ở $87.5\%$. Lý do: Trong môi trường cáp dài và có độ trễ truyền dẫn (Propagation Delay) của linh kiện Transceiver và cách ly quang, xung điện áp cần thời gian lan truyền trên đường dây. Đặt điểm lấy mẫu muộn ở $87.5\%$ cho phép tối đa hóa đoạn $T_{Prop\_Seg}$, đảm bảo tín hiệu điện áp vi sai đã phản hồi và ổn định hoàn toàn trước khi chip đo mẫu.
+### ❓ Câu 2: Tại sao khi tính toán Bit Timing cho CAN trên STM32F7, điểm lấy mẫu (Sample Point) lại được khuyến nghị đặt ở 87.5% thay vì 50%?
+* **Trả lời:** Chuẩn công nghiệp ô tô CiA 301 và ISO 11898-1 khuyến nghị Sample Point trong dải 75% sim 90%, tối ưu ở 87.5%. Lý do: Trong môi trường cáp dài và có độ trễ truyền dẫn (Propagation Delay) của linh kiện Transceiver và cách ly quang, xung điện áp cần thời gian lan truyền trên đường dây. Đặt điểm lấy mẫu muộn ở 87.5% cho phép tối đa hóa đoạn T_{Prop_Seg, đảm bảo tín hiệu điện áp vi sai đã phản hồi và ổn định hoàn toàn trước khi chip đo mẫu.
 
 ---
 
 ### ❓ Câu 3: Giải thích mối quan hệ kiến trúc giữa CAN1 và CAN2 trên STM32F7 liên quan đến 28 Filter Banks?
-* **Trả lời:** Trên STM32F7, `CAN1` là **Master** và `CAN2` là **Slave**. Toàn bộ 28 Filter Banks đều thuộc khối điều khiển logic của CAN1. Thanh ghi `CAN1->FMR` chứa trường `CAN2SB[5:0]` (CAN2 Start Bank) đóng vai trò làm con trỏ phân chia: các Bank từ $0$ đến $CAN2SB - 1$ được cấp cho CAN1, các Bank từ $CAN2SB$ đến $27$ được cấp cho CAN2. Nếu không cấp xung nhịp APB1 cho CAN1, toàn bộ bộ lọc của CAN2 sẽ bị vô hiệu hóa.
+* **Trả lời:** Trên STM32F7, `CAN1` là **Master** và `CAN2` là **Slave**. Toàn bộ 28 Filter Banks đều thuộc khối điều khiển logic của CAN1. Thanh ghi `CAN1->FMR` chứa trường `CAN2SB[5:0]` (CAN2 Start Bank) đóng vai trò làm con trỏ phân chia: các Bank từ 0 đến CAN2SB - 1 được cấp cho CAN1, các Bank từ CAN2SB đến 27 được cấp cho CAN2. Nếu không cấp xung nhịp APB1 cho CAN1, toàn bộ bộ lọc của CAN2 sẽ bị vô hiệu hóa.
 
 ---
 
 ### ❓ Câu 4: Phân biệt sự khác nhau giữa Identifier Mask Mode và Identifier List Mode trong Filter Bank?
 * **Trả lời:**
-  * **Identifier Mask Mode:** Dùng 1 thanh ghi ID và 1 thanh ghi Mặt nạ (Mask). Bit nào trong Mask bằng 1 thì bit tương ứng của frame nhận vào phải trùng khớp $100\%$ với Filter ID; bit nào bằng 0 thì không quan tâm (don't care). Cho phép lọc cả một dải ID lớn.
+  * **Identifier Mask Mode:** Dùng 1 thanh ghi ID và 1 thanh ghi Mặt nạ (Mask). Bit nào trong Mask bằng 1 thì bit tương ứng của frame nhận vào phải trùng khớp 100% với Filter ID; bit nào bằng 0 thì không quan tâm (don't care). Cho phép lọc cả một dải ID lớn.
   * **Identifier List Mode:** Cả 2 thanh ghi đều dùng làm ID tuyệt đối. Gói tin nhận vào phải có ID khớp chính xác với 1 trong 2 giá trị đã chỉ định. Dùng khi hệ thống chỉ cần lắng nghe một vài ID cụ thể.
 
 ---
 
 ### ❓ Câu 5: Trình bày cơ chế Bus-Off trong mạng CAN ô tô? Làm thế nào để hệ thống tự phục hồi mà không cần can thiệp Reset chip?
-* **Trả lời:** Khi một node gặp sự cố phần cứng hoặc nhiễu đường truyền làm bộ đếm lỗi truyền $TEC > 255$, phần cứng CAN tự động ngắt kết nối ngõ ra TX để cách ly node lỗi (Trạng thái **Bus-Off**), bảo vệ toàn bộ mạng không bị tê liệt. Để phục hồi:
-  1. Nếu bật bit **`ABOM = 1` (Automatic Bus-Off Management)** trong `CAN_MCR`: Sau khi phát hiện bus yên lặng (đếm đủ 128 lần chuỗi 11-bit recessive), phần cứng bxCAN tự động kéo $TEC = 0, REC = 0$ và tái hòa nhập mạng về trạng thái **Error Active**.
+* **Trả lời:** Khi một node gặp sự cố phần cứng hoặc nhiễu đường truyền làm bộ đếm lỗi truyền TEC > 255, phần cứng CAN tự động ngắt kết nối ngõ ra TX để cách ly node lỗi (Trạng thái **Bus-Off**), bảo vệ toàn bộ mạng không bị tê liệt. Để phục hồi:
+  1. Nếu bật bit **`ABOM = 1` (Automatic Bus-Off Management)** trong `CAN_MCR`: Sau khi phát hiện bus yên lặng (đếm đủ 128 lần chuỗi 11-bit recessive), phần cứng bxCAN tự động kéo TEC = 0, REC = 0 và tái hòa nhập mạng về trạng thái **Error Active**.
   2. Nếu `ABOM = 0`: Phần mềm phải bắt ngắt lỗi `CAN1_SCE_IRQHandler`, yêu cầu vào lại chế độ Init rồi thoát ra để reset bộ đếm lỗi.
 
 ---
@@ -1481,11 +1494,11 @@ int main(void)
 ### ❓ Câu 7: Phân biệt sự khác nhau giữa Data Frame và Remote Frame? Khi cả hai cùng phát đồng thời với cùng một Identifier (ID), khung nào sẽ chiến thắng phân định bus (Arbitration) và tại sao?
 * **Trả lời:**
   * **Sự khác nhau cơ bản:**
-    * **Data Frame (`RTR = 0` Dominant):** Mang dữ liệu thực tế ($0 \sim 8\text{ Bytes}$) truyền từ bên phát tới toàn mạng.
+    * **Data Frame (`RTR = 0` Dominant):** Mang dữ liệu thực tế (0 sim 8 Bytes) truyền từ bên phát tới toàn mạng.
     * **Remote Frame (`RTR = 1` Recessive):** Đóng vai trò như một gói tin "bắt tay xin dữ liệu" (Polling Request). Nó có cùng ID với dữ liệu cần xin nhưng **HOÀN TOÀN KHÔNG CÓ Data Field** (dù trường DLC vẫn ghi số byte mong muốn nhận).
   * **Cơ chế phân định khi đụng độ ID (Arbitration):**
     * Nếu Node A phát Remote Frame (`ID = X, RTR = 1`) và Node B phát Data Frame (`ID = X, RTR = 0`) cùng lúc:
-    * Cả 2 node cùng phát chuỗi 11-bit ID giống hệt nhau $\to$ Không có node nào thua cuộc trong trường ID.
+    * Cả 2 node cùng phát chuỗi 11-bit ID giống hệt nhau to Không có node nào thua cuộc trong trường ID.
     * Khi bước sang bit thứ 12 (bit `RTR`): Node B phát mức Dominant (`0`), trong khi Node A phát mức Recessive (`1`).
     * Vì mức `0` đè bẹp mức `1`, **Data Frame của Node B CHIẾN THẮNG PHÂN ĐỊNH tuyệt đối** và tiếp tục truyền dữ liệu bình thường.
     * Node A phát hiện bus bị đè xuống 0, nhận biết mình đã thua phân định nên lập tức rút lui chuyển sang chế độ nhận, và ngay lập tức đọc được chính xác gói tin Data Frame mà nó đang muốn xin!
@@ -1494,4 +1507,4 @@ int main(void)
 
 ## 4.2. Kịch bản Trả lời Phỏng vấn 60 Giây (Elevator Pitch)
 
-> *"Trong thiết kế giao tiếp mạng ô tô trên STM32F746, em trực tiếp phát triển driver Bare-metal cho khối **bxCAN** với tốc độ **500 kbps** chuẩn CiA 301. Em tính toán chính xác $f_{PCLK1}=54\text{MHz}$ với $BRP=6, TS1=15, TS2=2$ để đạt điểm lấy mẫu **Sample Point 88.9%**, đảm bảo khả năng chống nhiễu tối đa trên bus vi sai. Em làm chủ cơ chế chia sẻ **28 Filter Banks** do CAN1 Master quản lý, cấu hình chế độ **Identifier Mask Mode 32-bit** để lọc phần cứng các gói tin mong muốn với 0% CPU Load. Em xây dựng trình phục vụ ngắt nhận **`CAN1_RX0_IRQHandler`** đọc dữ liệu từ FIFO 3 tầng và giải phóng mailbox bằng lệnh gán trực tiếp trên thanh ghi W1C `CAN_RF0R`. Đồng thời, em tích hợp cơ chế tự phục hồi **Automotive Bus-Off Recovery (ABOM)** để bảo vệ hệ thống không bị cô lập vĩnh viễn khi mạng CAN xảy ra sự cố."*
+> *"Trong thiết kế giao tiếp mạng ô tô trên STM32F746, em trực tiếp phát triển driver Bare-metal cho khối **bxCAN** với tốc độ **500 kbps** chuẩn CiA 301. Em tính toán chính xác f_{PCLK1=54MHz với BRP=6, TS1=15, TS2=2 để đạt điểm lấy mẫu **Sample Point 88.9%**, đảm bảo khả năng chống nhiễu tối đa trên bus vi sai. Em làm chủ cơ chế chia sẻ **28 Filter Banks** do CAN1 Master quản lý, cấu hình chế độ **Identifier Mask Mode 32-bit** để lọc phần cứng các gói tin mong muốn với 0% CPU Load. Em xây dựng trình phục vụ ngắt nhận **`CAN1_RX0_IRQHandler`** đọc dữ liệu từ FIFO 3 tầng và giải phóng mailbox bằng lệnh gán trực tiếp trên thanh ghi W1C `CAN_RF0R`. Đồng thời, em tích hợp cơ chế tự phục hồi **Automotive Bus-Off Recovery (ABOM)** để bảo vệ hệ thống không bị cô lập vĩnh viễn khi mạng CAN xảy ra sự cố."*

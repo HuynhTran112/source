@@ -246,94 +246,81 @@ my_zephyr_app/
 
 ---
 
-# 🧠 BƯỚC 1: KIẾN TRÚC HỆ THỐNG & CƠ CHẾ HOẠT ĐỘNG (SYSTEM ARCHITECTURE)
+# 🧠 BƯỚC 1: KIẾN TRÚC HỆ THỐNG (SO SÁNH TRỰC DIỆN VỚI FREERTOS)
 
-## 1.1. Triết Lý Thiết Kế của Zephyr RTOS: Devicetree + Kconfig
+Để không bị bỡ ngỡ khi chuyển từ lập trình truyền thống sang Zephyr RTOS, hãy đối chiếu trực diện 4 thành phần cốt lõi của Zephyr với Bare-Metal và FreeRTOS:
 
-Trong Bare-metal (từ Ngày 0 đến Ngày 6), toàn bộ địa chỉ thanh ghi (`0x4002 0000`), số chân GPIO (`PA9/PB7`) và cấu hình bộ nhớ được định nghĩa cứng trong file code C. Khi chuyển chip hoặc đổi chân cắm, kỹ sư phải sửa trực tiếp trong source code driver.
+### 1.1. Bảng Đối Chiếu 3 Mô Hình Lập Trình
 
-**Zephyr RTOS giải quyết bài toán này bằng mô hình tách lớp 3 thành phần độc lập:**
-
-```text
-                                  ┌──────────────────────────────┐
-                                  │      MÃ NGUỒN C ỨNG DỤNG     │ (src/main.c)
-                                  │  (Thuần logic, gọi Driver API)│
-                                  └──────────────┬───────────────┘
-                                                 │
-                        ┌────────────────────────┴────────────────────────┐
-                        ▼                                                 ▼
-     ┌────────────────────────────────────┐             ┌───────────────────────────────────┐
-     │      DEVICETREE (.dts / .overlay)  │             │          KCONFIG (prj.conf)       │
-     ├────────────────────────────────────┤             ├───────────────────────────────────┤
-     │ • Định nghĩa PHẦN CỨNG:            │             │ • Định nghĩa TÍNH NĂNG PHẦN MỀM:  │
-     │   - Chân cắm ngoại vi (Pin Muxing) │             │   - Bật/tắt Driver (CONFIG_GPIO=y)│
-     │   - Địa chỉ Base Address & Offset  │             │   - Bật MPU Guard, Heap, Log      │
-     │   - Tần số xung nhịp Clock         │             │   - Số lượng luồng, Kích thước RAM│
-     │   - Kênh DMA, Ngắt IRQ vector      │             │                                   │
-     └────────────────────────────────────┘             └───────────────────────────────────┘
-```
-
-### Devicetree trong Zephyr khác gì Linux?
-* **Trên Linux nhúng:** File Devicetree được biên dịch thành file nhị phân `.dtb`. Khi Linux khởi động, nhân Kernel nạp file `.dtb` vào RAM và duyệt cây (Parsing) lúc Run-time $\implies$ Tốn nhiều RAM và thời gian boot.
-* **Trên Zephyr RTOS:** Bộ tiền xử lý Python đọc file Devicetree và tạo ra file header **`devicetree_generated.h`** chứa các macro `#define` tĩnh. Khi biên dịch code C, Trình biên dịch GCC thay thế trực tiếp các macro này $\implies$ **Tốn đúng 0 byte RAM, thời gian nạp bằng 0 chu kỳ lệnh!**
-
-> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Tài Liệu Chuẩn Zephyr Project:**
-> 1. **Tra cứu Tài liệu Devicetree:** Truy cập `https://docs.zephyrproject.org/latest/build/dts/index.html` (Mục *Devicetree user guide*).
->    * Tìm hiểu cấu trúc cây, quan hệ cha-con (Parent-Child nodes), thuộc tính `status = "okay"`, và cơ chế tiền xử lý sinh file `#define` trong `build/zephyr/include/generated/devicetree_generated.h`.
-> 2. **Tra cứu Tài liệu Kconfig:** Truy cập `https://docs.zephyrproject.org/latest/build/kconfig/index.html` (Mục *Configuration System (Kconfig)*).
->    * Xem nguyên lý nạp cấu hình theo thứ tự ưu tiên: `Kconfig` gốc -> `defconfig` của bo mạch -> `prj.conf` của ứng dụng.
+| Khía cạnh | 1. Bare-Metal (Ngày 0-6) | 2. FreeRTOS | 3. Zephyr RTOS (Ngày 7-14) |
+| :--- | :--- | :--- | :--- |
+| **Cấu hình chân phần cứng** | Gõ trực tiếp thanh ghi: `GPIOI->MODER`, `AFRH` | Dùng giao diện STM32CubeMX click chuột sinh code C (`gpio.c`) | Dùng file văn bản **Devicetree (`app.overlay`)** để mô tả chân |
+| **Bật/tắt tính năng OS** | Không có hệ điều hành | Sửa macro `#define` trong file **`FreeRTOSConfig.h`** | Gõ các cờ `CONFIG_XXX=y` trong file **`prj.conf` (Kconfig)** |
+| **Tạo luồng đa nhiệm** | Vòng lặp đơn `while(1)` trong hàm `main()` | Gọi hàm **`xTaskCreate()`** | Dùng macro **`K_THREAD_DEFINE()`** hoặc `k_thread_create()` |
+| **Mức ưu tiên (Priority)** | Mức ưu tiên ngắt NVIC (Số bé ưu tiên cao) | Số càng LỚN -> Ưu tiên càng CAO (Priority 5 > 1) | Số càng NHỎ -> Ưu tiên càng CAO (Priority 0 > 5, giống NVIC) |
+| **Giao tiếp liên luồng (IPC)**| Dùng biến toàn cục `volatile` và cờ ngắt | `xQueueSend()` / `xQueueReceive()` | `k_msgq_put()` / `k_msgq_get()` |
 
 ---
 
-## 1.2. Cơ Chế Đa Luồng (Multi-Threading) & Phân Bổ Mức Ưu Tiên
+### 1.2. Devicetree (`app.overlay`) Là Gì? (Bản Đồ Phần Cứng)
 
-Nhân Zephyr quản lý các tác vụ thực thi bằng bộ lập lịch ưu tiên dựa trên thời gian (Preemptive Priority-based Scheduler):
-
-```text
-Độ ưu tiên CAO  ▲
-                │  Cooperative Threads (Mức ưu tiên âm: -16 đến -1)
-                │  • Không bao giờ bị luồng khác chen ngang (Preempt).
-                │  • Chỉ nhường CPU khi tự nguyện gọi k_yield() hoặc k_sleep().
-                │  • Ứng dụng: Tác vụ truyền thông khẩn cấp CAN Bus, giải mã túi khí.
-  ──────────────┼────────────────────────────────────────────────────────────────────────
-                │  Preemptive Threads (Mức ưu tiên không âm: 0 đến 14)
-                │  • Luồng có mức ưu tiên cao hơn (số bé hơn) ĐƯỢC CHEN NGANG luồng thấp.
-                │  • Các luồng cùng mức ưu tiên được chia sẻ thời gian (Time-slicing).
-                │  • Ứng dụng: GUI Render, Tác vụ nền (Background Worker), CLI Shell.
-                │
-Độ ưu tiên THẤP ▼  Idle Thread (Mức ưu tiên thấp nhất: CONFIG_NUM_PREEMPT_PRIO)
-```
-
-> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Tài Liệu Chuẩn Zephyr Project:**
-> 1. **Tra cứu Bộ lập lịch (Scheduler):** Mở mục *Kernel Services -> Scheduling* (`https://docs.zephyrproject.org/latest/kernel/services/threads/index.html`).
->    * Đọc quy định về dải ưu tiên: Macro `CONFIG_NUM_COOP_PRIORITIES` (các số âm) và `CONFIG_NUM_PREEMPT_PRIORITIES` (các số dương).
->    * Tra cứu thuật toán chọn luồng chạy tiếp theo: Luồng Cooperative luôn nắm quyền CPU cho đến khi tự nhường (Yield/Sleep); Luồng Preemptive bị ngắt ngay khi có luồng ưu tiên cao hơn thức dậy.
+* **Bản chất:** Thay vì vào CubeMX click chuột cấu hình chân `PI1` rồi sinh ra hàng trăm dòng code C của hãng, bạn chỉ cần mô tả chân đó trong file text **`app.overlay`**:
+  ```dts
+  / {
+      aliases {
+          led0 = &green_led; /* Gán nhãn ngắn gọn cho đèn LED */
+      };
+      leds {
+          compatible = "gpio-leds";
+          green_led: led_0 {
+              gpios = <&gpioi 1 GPIO_ACTIVE_HIGH>; /* Chân PI1, tích cực mức cao */
+              label = "User Green LED";
+          };
+      };
+  };
+  ```
+* **Tại sao lại tối ưu?**
+  * **Tách rời code và phần cứng:** Khi chuyển sang một bo mạch khác (ví dụ LED dời sang chân `PB7`), bạn **giữ nguyên 100% code C logic**, chỉ cần sửa đúng số chân trong file `.overlay`!
 
 ---
 
-## 1.3. Cơ Chế Bảo Vệ Ngăn Xếp Bằng Phần Cứng (`CONFIG_MPU_STACK_GUARD`)
+### 1.3. Kconfig (`prj.conf`) Là Gì? (Công Tắc Bật/Tắt Tính Năng)
 
-Trong hệ điều hành thời gian thực, lỗi nguy hiểm nhất là **Tràn ngăn xếp luồng (Thread Stack Overflow)**. Khi một luồng dùng hết ngăn xếp được cấp, dữ liệu sẽ ghi đè lên ngăn xếp của luồng kế bên trong RAM, gây sập hệ thống ngẫu nhiên rất khó gỡ lỗi.
+* **Bản chất:** Tương tự như file `FreeRTOSConfig.h`, nhưng Kconfig của Zephyr được chuẩn hóa theo phong cách nhân Linux. Cần dùng ngoại vi nào, bạn chỉ cần gõ `CONFIG_<TÊN>=y` vào file **`prj.conf`**:
+  ```properties
+  CONFIG_GPIO=y               # Bật driver điều khiển GPIO
+  CONFIG_SERIAL=y             # Bật giao tiếp nối tiếp UART
+  CONFIG_CONSOLE=y            # Bật màn hình Console ST-Link
+  CONFIG_LOG=y                # Bật hệ thống ghi log
+  CONFIG_MPU_STACK_GUARD=y    # Bật phần cứng MPU tự động bắt lỗi tràn ngăn xếp
+  ```
+* **Tại sao lại tiện?**
+  * Không cần nhớ tên hàm khởi tạo driver phức tạp, chỉ cần bật cờ `CONFIG`, Zephyr sẽ tự động nạp driver tương ứng vào lúc biên dịch.
 
-Zephyr sử dụng khối **MPU (Memory Protection Unit)** của ARM Cortex-M7 để tạo ra cơ chế phòng thủ vật lý:
+---
 
-```text
-Địa chỉ CAO   ▲ ┌───────────────────────────────────────────────┐
-              │ │   Vùng Ngăn Xếp Cho Phép (Thread Stack Area)  │ (Đọc/Ghi bình thường)
-              │ │   Tụt dần xuống địa chỉ thấp (Con trỏ SP)     │ ▼
-              │ ├───────────────────────────────────────────────┤
-              │ │   MPU GUARD REGION (Cấm tuyệt đối truy cập!)  │ ◄── 32 Bytes do MPU khóa chặt!
-Địa chỉ THẤP  ▼ └───────────────────────────────────────────────┘
-```
+### 1.4. Cơ Chế Đa Luồng (Multi-Threading) So Với FreeRTOS
 
-* Khi con trỏ `SP` của luồng tụt quá giới hạn và ghi vào vùng **MPU Guard Region**:
-* Phần cứng Cortex-M7 lập tức kích hoạt ngoại lệ **`MemManage Fault`**.
-* Nhân Zephyr bắt ngay lập tức luồng phạm quy, in chính xác tên luồng và địa chỉ gây lỗi ra Terminal qua hàm `k_panic()`, ngăn chặn hoàn toàn việc phá hỏng dữ liệu của các luồng khác!
+Trong Zephyr, mỗi tác vụ độc lập được gọi là một **Thread** (tương đương với **Task** trong FreeRTOS):
 
-> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Zephyr & ARM Architecture:**
-> 1. **Tra cứu Kconfig MPU Guard:** Trong tài liệu Kconfig của Zephyr, tìm kiếm `CONFIG_MPU_STACK_GUARD` hoặc mở file `zephyr/arch/arm/core/cortex_m/mpu/arm_mpu.c`.
->    * Đọc cơ chế triển khai phần cứng: Zephyr lập trình khối MPU của Cortex-M7 để đặt một trang nhớ bảo vệ (Guard Region, 32 bytes) nằm sát dưới chân của từng thread stack khi context switch.
-> 2. **Tra cứu Xử lý Lỗi MemManage Fault:** Mở PM0253 Section 2.5: Bất kỳ lệnh `STR` nào của CPU cố tình ghi vào vùng MPU Guard đều gây ngoại lệ MemManage, kích hoạt `z_arm_fatal_error()`.
+#### So sánh cách tạo luồng:
+* **Bên FreeRTOS:**
+  ```c
+  xTaskCreate(vWorkerTask, "Worker", 512, NULL, 2, &xTaskHandle);
+  ```
+* **Bên Zephyr RTOS (Cách 1: Khai báo tĩnh bằng macro cực kỳ tiện lợi):**
+  ```c
+  // Tên luồng, Kích thước Stack, Hàm thực thi, Tham số 1, 2, 3, Mức ưu tiên, Tùy chọn, Thời gian delay khởi động
+  K_THREAD_DEFINE(worker_tid, 1024, worker_entry, NULL, NULL, NULL, 5, 0, 0);
+  ```
+
+#### Quy tắc mức ưu tiên (Priority Rules):
+1. **Dải ưu tiên Preemptive (Số dương: 0, 1, 2...):**
+   * Số càng bé -> Ưu tiên càng cao (Luồng Priority 0 có quyền ngắt ngang luồng Priority 5).
+   * Điểm này **ngược lại với FreeRTOS** nhưng **giống hệt quy tắc ngắt NVIC của vi điều khiển ARM Cortex-M** (IRQ Priority 0 là khẩn cấp nhất).
+2. **Bảo vệ ngăn xếp bằng phần cứng (`CONFIG_MPU_STACK_GUARD=y`):**
+   * Trong FreeRTOS, nếu 1 Task bị tràn Stack, nó sẽ ghi đè làm hỏng bộ nhớ của Task bên cạnh mà bạn không hề hay biết.
+   * Trong Zephyr, phần cứng MPU tự động đặt một "vùng cấm" dưới đáy ngăn xếp. Nếu Task dùng quá dung lượng stack, **chip sẽ chặn đứng ngay lập tức và in tên Task gây lỗi ra màn hình**, giúp gỡ lỗi cực nhanh.
 
 ---
 

@@ -27,8 +27,8 @@
 | STT | Quy tắc Đo lường & Test | Thể hiện cụ thể trong Ngày 13 (Benchmarking & Unit Test) |
 | :---: | :--- | :--- |
 | **1** | **DWT Core Unlock** | Trước khi bật bộ đếm `DWT->CYCCNT`, bắt buộc phải ghi `1` vào bit `TRCENA` trong thanh ghi kiểm soát gỡ lỗi lõi ARM **`CoreDebug->DEMCR`**. Nếu quên bước này, thanh ghi DWT sẽ bị đóng băng tại `0`! |
-| **2** | **DWT Overflow Handling** | Tại xung nhịp $216\text{ MHz}$, biến đếm 32-bit `DWT->CYCCNT` sẽ tràn số sau mỗi: $2^{32} / 216,000,000 \approx \mathbf{19.88\text{ giây}}$. Mọi phép đo vi sai khoảng cách thời gian bắt buộc dùng phép trừ số nguyên không dấu: `(uint32_t)(end_cycles - start_cycles)`. |
-| **3** | **No Printf in Benchmarks** | Tuyệt đối không chèn lệnh in Console `printf()` hoặc `LOG_INF()` vào giữa đoạn code cần đo đạc thời gian thực. Một lệnh in UART tốn từ $1\text{ms}$ đến $10\text{ms}$, làm sai lệch kết quả đo hàng nghìn lần! |
+| **2** | **DWT Overflow Handling** | Tại xung nhịp 216 MHz, biến đếm 32-bit `DWT->CYCCNT` sẽ tràn số sau mỗi: khoảng 19.88 giây. Mọi phép đo vi sai khoảng cách thời gian bắt buộc dùng phép trừ số nguyên không dấu: `(uint32_t)(end_cycles - start_cycles)`. |
+| **3** | **No Printf in Benchmarks** | Tuyệt đối không chèn lệnh in Console `printf()` hoặc `LOG_INF()` vào giữa đoạn code cần đo đạc thời gian thực. Một lệnh in UART tốn từ 1ms đến 10ms, làm sai lệch kết quả đo hàng nghìn lần! |
 | **4** | **Host Decoupled Logic** | Toàn bộ các hàm thuật toán thuần C (như giải mã DBC `DBC_UnpackRaw`, tính toán E2E CRC-8, quản lý mảng Ring Buffer) phải được viết độc lập không chứa thanh ghi phần cứng để có thể biên dịch và chạy Unit Test trên máy tính PC (x86/x64). |
 | **5** | **Strict MISRA-C Exceptions** | Mọi điểm vi phạm tiêu chuẩn MISRA-C (như ép kiểu con trỏ địa chỉ thanh ghi `(uint32_t *)0x40020000` - vi phạm MISRA Rule 11.4) phải được gom tập trung và có tài liệu giải trình ngoại lệ (Deviation Justification). |
 | **6** | **Deterministic Memory Footprint** | Bóc tách chính xác dung lượng bộ nhớ thông qua công cụ `arm-none-eabi-size -B`: Phân biệt rõ ràng giữa Flash (`.text` + `.rodata`) và RAM (`.data` + `.bss` + Stack + Heap). |
@@ -36,14 +36,29 @@
 
 ---
 
-# 🧠 BƯỚC 1: PHƯƠNG PHÁP ĐO LƯỜNG PHẦN CỨNG & TRIẾT LÝ TEST (BENCHMARK ARCHITECTURE)
+# 🧠 BƯỚC 1: PHƯƠNG PHÁP ĐO LƯỜNG HIỆU NĂNG & TEST (SO SÁNH FREERTOS)
 
-## 1.1. Bản Chất Khối Đo Chu Kỳ Phần Cứng DWT (Data Watchpoint and Trace)
+### 1.1. So Sánh Định Lượng: Bare-Metal vs FreeRTOS vs Zephyr RTOS
+
+Khi thiết kế sản phẩm hoặc đi phỏng vấn, câu hỏi quan trọng nhất là: *"Khi nào nên dùng Bare-Metal, khi nào dùng FreeRTOS, và khi nào nên dùng Zephyr RTOS?"*
+
+| Chỉ số kỹ thuật | 1. Bare-Metal Driver | 2. FreeRTOS | 3. Zephyr RTOS Subsystem |
+| :--- | :--- | :--- | :--- |
+| **Thời gian Boot** | **Cực nhanh (18.4 ms)** | **Nhanh (~50 ms)** | **Tiêu chuẩn (142.6 ms)** |
+| **Dung lượng Flash**| **Siêu nhỏ (26.8 KB)** | **Nhỏ (~60 KB)** | **Đầy đủ (194.2 KB)** |
+| **Dung lượng RAM**  | **6.2 KB** | **~15 KB** | **44.8 KB** (Mỗi thread có Stack riêng) |
+| **Độ phức tạp code**| Rất khó (Tự tính toán từng thanh ghi, tự viết driver) | Trung bình (Quản lý task tốt, nhưng driver ngoại vi vẫn phải tự viết hoặc dùng HAL) | Dễ mở rộng nhất (Có sẵn Subsystem CAN, Display, LVGL, Shell, POSIX) |
+| **Độ trễ ngắt (ISR)**| **55 ns (12 chu kỳ)** | **~150 ns** | **222 ns (48 chu kỳ)** |
+| **Ứng dụng thực tế**| Cảm biến an toàn cấp thấp (ASIL-D), đòi hỏi boot tức thì và chip siêu rẻ tiền. | Thiết bị IoT cơ bản, chỉ cần chạy 2-3 tác vụ đa luồng đơn giản. | Gateway trung tâm xe hơi, táp-lô đồ họa hiển thị, thiết bị công nghiệp quy mô lớn. |
+
+---
+
+### 1.2. Bản Chất Khối Đo Chu Kỳ Phần Cứng DWT (Data Watchpoint and Trace)
 
 Để đo lường thời gian thực thi của một hàm với độ chính xác đến từng nano-giây, kỹ sư chuyên nghiệp không dùng Timer thông thường (vì Timer APB bị chia tần số và tốn tài nguyên ngoại vi). Thay vào đó, lõi ARM Cortex-M7 tích hợp sẵn khối **DWT (Data Watchpoint and Trace)**:
-* Thanh ghi **`DWT->CYCCNT` (Cycle Count Register)**: Là một bộ đếm 32-bit tăng $1$ đơn vị sau **đúng mỗi 1 chu kỳ xung nhịp CPU ($SYSCLK$)**.
-* Tại tần số $216\text{ MHz}$, độ phân giải của DWT đạt:
-  $$t_{res} = \frac{1}{216,000,000\text{ Hz}} \approx \mathbf{4.629\text{ nano-giây (ns)}}$$
+* Thanh ghi **`DWT->CYCCNT` (Cycle Count Register)**: Là một bộ đếm 32-bit tăng 1 đơn vị sau **đúng mỗi 1 chu kỳ xung nhịp CPU (SYSCLK)**.
+* Tại tần số 216 MHz, độ phân giải của DWT đạt:
+  `t_res = 1 / 216,000,000 Hz xấp xỉ 4.63 nano-giây (ns)`
 
 ```text
                ┌─────────────────────────────────────────────────────────────┐
@@ -61,6 +76,14 @@
                └─────────────────────────────────────────────────────────────┘
 ```
 
+**Cách đo trong 3 dòng lệnh cực kỳ đơn giản:**
+```c
+uint32_t t_start = DWT_GetCycles(); // Đọc số nhịp trước khi chạy
+DBC_DecodeSignal(payload, dlc, &meta); // Chạy hàm cần đo
+uint32_t t_elapsed = DWT_GetCycles() - t_start; // Số nhịp đã tiêu tốn
+uint32_t us = t_elapsed / 216U; // Quy đổi ra micro-giây (us)
+```
+
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Programming Manual (PM0253) & ARMv7-M:**
 > 1. **Mở file `PM0253.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`Data watchpoint and trace (DWT)`**
 >    * Nhảy đến **Chapter 4: Core peripherals -> Section 4.8: DWT unit**:
@@ -69,14 +92,14 @@
 
 ---
 
-## 1.2. Bốn Chỉ Số Đánh Giá (KPIs) Giữa Hai Kiến Trúc
+### 1.3. Bốn Chỉ Số Đánh Giá (KPIs) Giữa Hai Kiến Trúc
 
 1. **Boot-to-Display Time (Thời gian từ lúc bật nguồn đến khi màn hình vẽ xong):**
-   * Trong ngành ô tô, tiêu chuẩn yêu cầu màn hình táp-lô phải sáng đèn và hiển thị giao diện trong vòng **$< 2.0\text{ giây}$** sau khi bật khóa điện (Ignition ON).
+   * Trong ngành ô tô, tiêu chuẩn yêu cầu màn hình táp-lô phải sáng đèn và hiển thị giao diện trong vòng **< 2.0 giây** sau khi bật khóa điện (Ignition ON).
 2. **Interrupt Latency (Độ trễ phản hồi ngắt phần cứng):**
    * Khoảng thời gian từ khi chân vật lý CAN nhận xong bit cuối cùng đến khi lệnh đầu tiên trong ISR được thực thi.
 3. **CPU Overhead (Tỷ lệ chiếm dụng CPU khi bus đầy tải):**
-   * Tải CPU khi mạng CAN Bus bị bắn phá liên tục với tốc độ $500\text{ kbps}$ (xấp xỉ $4000\text{ frames/giây}$).
+   * Tải CPU khi mạng CAN Bus bị bắn phá liên tục với tốc độ 500 kbps (xấp xỉ 4000 frames/giây).
 4. **Memory Footprint (Dung lượng tiêu hao Flash và RAM):**
    * Đánh giá chi phí phần cứng (BOM Cost) xem có thể chạy trên chip giá rẻ hơn hay không.
 
@@ -86,13 +109,13 @@
 
 ---
 
-## 1.3. Triết Lý Host-Based Unit Testing (Kiểm Thử Đơn Vị Trên Máy Tính PC)
+### 1.4. Triết Lý Host-Based Unit Testing (Kiểm Thử Đơn Vị Trên Máy Tính PC)
 
 * **Vấn nạn truyền thống:** Để test xem hàm giải mã DBC hay thuật toán CRC-8 có đúng không, kỹ sư nạp code vào STM32, nối CANalyzer bắn gói tin rồi nhìn màn hình LCD xem có lên số không. Cách này tốn hàng giờ đồng hồ, không thể tự động hóa và không kiểm tra được các trường hợp biên nguy hiểm (Corner Cases).
 * **Giải pháp Host Unit Testing với Unity Framework:**
   * Tách rời các file thuật toán C (`dbc_decoder.c`, `signal_supervision.c`) khỏi phần cứng.
   * Dùng trình biên dịch **GCC trên máy tính (Host x86/x64)** biên dịch cùng thư viện kiểm thử mã nguồn mở **Unity**.
-  * Chạy $100$ ca kiểm thử tự động (Test Cases) chỉ trong vòng **$0.05\text{ giây}$** ngay trên Terminal của lập trình viên hoặc tích hợp vào hệ thống CI/CD (GitHub Actions).
+  * Chạy 100 ca kiểm thử tự động (Test Cases) chỉ trong vòng **0.05 giây** ngay trên Terminal của lập trình viên hoặc tích hợp vào hệ thống CI/CD (GitHub Actions).
 
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Unity Test Framework:**
 > 1. **Mở tài liệu Unity Testing Framework:** Truy cập `https://github.com/ThrowTheSwitch/Unity`.
@@ -120,7 +143,7 @@
 1. **Bấm `Ctrl + F`** ➔ Gõ từ khóa: **`Data watchpoint and trace (DWT)`**
    * Nhảy đến **Chapter 4: Core peripherals -> Section 4.8: DWT unit**:
      * **`DWT_CTRL` (Address: `0xE000 1000`)**: Bit 0 (`CYCCNTENA`): Ghi `1` để khởi động bộ đếm chu kỳ lệnh CPU.
-     * **`DWT_CYCCNT` (Address: `0xE000 1004`)**: Thanh ghi 32-bit đếm chu kỳ xung nhịp CPU thực thi mã lệnh (Độ phân giải cực cao: Ở tần số $216\text{ MHz}$, mỗi tick tương ứng $1 / 216\text{ MHz} \approx 4.63\text{ ns}$).
+     * **`DWT_CYCCNT` (Address: `0xE000 1004`)**: Thanh ghi 32-bit đếm chu kỳ xung nhịp CPU thực thi mã lệnh (Độ phân giải cực cao: Ở tần số 216 MHz, mỗi tick tương ứng 1 / 216 MHz xấp xỉ 4.63 ns).
 
 ### 📖 Kênh 3: Cách Tra Cứu API Bảo Trì D-Cache Trong `core_cm7.h`
 1. **Mở file thư viện CMSIS:**
@@ -366,7 +389,7 @@ TARGET = run_tests
 all: test
 
 test: $(SRCS)
-	@$(CC) $(CFLAGS) $(SRCS) -o $(TARGET)
+	@(CC) (CFLAGS) (SRCS) -o (TARGET)
 	@./$(TARGET)
 
 clean:
@@ -407,15 +430,15 @@ clean:
 ### ❓ Câu 1: Tại sao em lại làm cả hai kiến trúc Bare-Metal và Zephyr RTOS cho cùng một dự án? Trade-off cốt lõi là gì?
 * **Trả lời chuẩn Kỹ sư Firmware Cấp cao:** 
   * Đây là quyết định kiến trúc có chủ đích để em làm chủ từ gốc rễ đến ngọn:
-    * **Bare-metal:** Giúp em hiểu sâu sắc về kiến trúc phần cứng bán dẫn, bắt tay tuần tự thanh ghi, căn lề D-Cache 32-byte và đạt hiệu năng tuyệt đối: **Boot siêu tốc $18.4\text{ ms}$**, **tiêu hao Flash chỉ $26\text{ KB}$** và **độ trễ ngắt tối thiểu 55 ns**. Rất phù hợp cho các vi điều khiển an toàn cấp thấp (ASIL-D Microcontroller) đòi hỏi khởi động tức thì và chi phí chip rẻ nhất.
+    * **Bare-metal:** Giúp em hiểu sâu sắc về kiến trúc phần cứng bán dẫn, bắt tay tuần tự thanh ghi, căn lề D-Cache 32-byte và đạt hiệu năng tuyệt đối: **Boot siêu tốc 18.4 ms**, **tiêu hao Flash chỉ 26 KB** và **độ trễ ngắt tối thiểu 55 ns**. Rất phù hợp cho các vi điều khiển an toàn cấp thấp (ASIL-D Microcontroller) đòi hỏi khởi động tức thì và chi phí chip rẻ nhất.
     * **Zephyr RTOS:** Cung cấp hạ tầng trừu tượng hóa phần cứng hiện đại với Devicetree, cơ chế bảo vệ ngăn xếp **MPU Stack Guard**, quản trị đa luồng an toàn bằng **`k_msgq`** và khả năng tích hợp thư viện đồ họa **LVGL** dễ dàng. Phù hợp cho các hệ thống Gateway trung tâm và táp-lô phức tạp.
   * Việc làm chủ cả 2 kiến trúc chứng minh em có thể viết driver thanh ghi khi công ty cần tối ưu hóa phần cứng, đồng thời thành thạo RTOS chuẩn công nghiệp khi phát triển sản phẩm quy mô lớn.
 
 ### ❓ Câu 2: Bộ đếm chu kỳ DWT (Data Watchpoint and Trace) đo lường chính xác hơn SysTick hay Timer thông thường ra sao?
 * **Trả lời chuẩn Kỹ sư Firmware Cấp cao:** 
-  * SysTick thường được cấu hình ngắt mỗi $1\text{ms}$ ($1000\text{ Hz}$). Nếu một hàm thực thi trong $15\mu\text{s}$, SysTick hoàn toàn không thể đo được.
-  * Timer thông thường (TIM2/TIM5) nằm trên bus ngoại vi APB, bị giới hạn bởi bộ chia Prescaler và tần số bus ($108\text{ MHz}$).
-  * **Khối DWT nằm ngay bên trong nhân xử lý Cortex-M7**, chạy cùng tần số với nhân CPU ($216\text{ MHz}$). Nó đếm chính xác từng chu kỳ lệnh hợp ngữ mà không gây ra bất kỳ ngắt nào làm trễ hệ thống, cho độ phân giải tuyệt đối **$4.63\text{ ns}$**.
+  * SysTick thường được cấu hình ngắt mỗi 1ms (1000 Hz). Nếu một hàm thực thi trong 15 us, SysTick hoàn toàn không thể đo được.
+  * Timer thông thường (TIM2/TIM5) nằm trên bus ngoại vi APB, bị giới hạn bởi bộ chia Prescaler và tần số bus (108 MHz).
+  * **Khối DWT nằm ngay bên trong nhân xử lý Cortex-M7**, chạy cùng tần số với nhân CPU (216 MHz). Nó đếm chính xác từng chu kỳ lệnh hợp ngữ mà không gây ra bất kỳ ngắt nào làm trễ hệ thống, cho độ phân giải tuyệt đối **4.63 ns**.
 
 ### ❓ Câu 3: Lợi ích lớn nhất của việc thiết lập Unit Test chạy trên máy tính (Host-based Testing) là gì?
 * **Trả lời chuẩn Kỹ sư Firmware Cấp cao:**
@@ -427,5 +450,5 @@ clean:
 ### 🎙️ KỊCH BẢN TRẢ LỜI PHỎNG VẤN 60 GIÂY (ELEVATOR PITCH)
 
 > *"Tại Ngày 13, em hoàn thiện hồ sơ kỹ thuật cho dự án bằng việc thực hiện đánh giá định lượng chuyên sâu **Benchmarking giữa Bare-metal và Zephyr RTOS**.  
-> Bằng cách khai thác thanh ghi phần cứng **ARM Cortex-M7 DWT Cycle Counter** với độ phân giải siêu nhỏ **$4.63\text{ ns}$**, em đo đạc và chứng minh phiên bản Bare-metal đạt thời gian khởi động thần tốc **$18.4\text{ ms}$** và chiếm dụng bộ nhớ chỉ **$26\text{ KB}$ Flash**, trong khi bản Zephyr RTOS mang lại khả năng mở rộng đa luồng ưu việt với thời gian boot an toàn **$142.6\text{ ms}$**.  
-> Đồng thời, em áp dụng phương pháp phát triển phần mềm chuẩn công nghiệp: Tách biệt logic giải mã tín hiệu DBC khỏi thanh ghi và thiết lập bộ kiểm thử đơn vị tự động **Host Unit Testing với Unity Framework**, cho phép chạy kiểm thử tự động toàn bộ ma trận tín hiệu xe hơi ngay trên PC chỉ trong $50\text{ ms}$ trước khi nạp vào mạch thật."*
+> Bằng cách khai thác thanh ghi phần cứng **ARM Cortex-M7 DWT Cycle Counter** với độ phân giải siêu nhỏ **4.63 ns**, em đo đạc và chứng minh phiên bản Bare-metal đạt thời gian khởi động thần tốc **18.4 ms** và chiếm dụng bộ nhớ chỉ **26 KB Flash**, trong khi bản Zephyr RTOS mang lại khả năng mở rộng đa luồng ưu việt với thời gian boot an toàn **142.6 ms**.  
+> Đồng thời, em áp dụng phương pháp phát triển phần mềm chuẩn công nghiệp: Tách biệt logic giải mã tín hiệu DBC khỏi thanh ghi và thiết lập bộ kiểm thử đơn vị tự động **Host Unit Testing với Unity Framework**, cho phép chạy kiểm thử tự động toàn bộ ma trận tín hiệu xe hơi ngay trên PC chỉ trong 50 ms trước khi nạp vào mạch thật."*

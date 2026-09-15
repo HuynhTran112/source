@@ -32,7 +32,7 @@
 | **2** | **Access Type** | **CỰC KỲ QUAN TRỌNG:** Thanh ghi `DMA2D_IFCR` (Interrupt Flag Clear Register) là dạng `w` (Write-only to clear). Tuyệt đối không dùng `DMA2D->IFCR |= FLAG`, phải ghi gán trực tiếp `DMA2D->IFCR = DMA2D_IFCR_CTCIF` để không vô tình xóa nhầm cờ báo lỗi truyền cấu hình sai `TEIF` (Transfer Error Interrupt Flag)! |
 | **3** | **Multi-Bit Clear-Set** | Áp dụng quy tắc xóa trước - gán sau (`REG &= ~MASK; REG |= VALUE;`) cho các trường đa bit: `MODE[1:0]` (Bits 17:16 trong `DMA2D_CR`), `CM[3:0]` (Color Mode trong `DMA2D_OPFCCR`), và `PRIGROUP[2:0]` (Bits 10:8 trong `SCB->AIRCR`). |
 | **4** | **`volatile` Qualification** | Mọi struct ánh xạ thanh ghi DMA2D và cờ đồng bộ `volatile uint8_t dma2d_transfer_complete` giữa ISR và Main loop bắt buộc dùng `volatile`. |
-| **5** | **Interrupt Workflow** | Quy trình 5 bước ngắt DMA2D: Cờ phần cứng `TCIF` dựng $\rightarrow$ Bật `DMA2D_CR_TCIE` $\rightarrow$ Bật `NVIC_EnableIRQ(DMA2D_IRQn)` $\rightarrow$ Chạy `DMA2D_IRQHandler` $\rightarrow$ Xóa cờ ngắt bằng `DMA2D->IFCR = DMA2D_IFCR_CTCIF`. |
+| **5** | **Interrupt Workflow** | Quy trình 5 bước ngắt DMA2D: Cờ phần cứng `TCIF` dựng -> Bật `DMA2D_CR_TCIE` -> Bật `NVIC_EnableIRQ(DMA2D_IRQn)` -> Chạy `DMA2D_IRQHandler` -> Xóa cờ ngắt bằng `DMA2D->IFCR = DMA2D_IFCR_CTCIF`. |
 | **6** | **RM / DS Lookup** | Cung cấp chính xác Chapter, Section, từ khóa `Ctrl + F`, công thức `Base Address + Offset` cho `DMA2D` (RM0385 Chapter 10) và `NVIC` (PM0253 Chapter 4). |
 | **7** | **Hardware Rationale & Specs** | Bố trí cơ sở kỹ thuật, giới hạn băng thông AXI Bus Matrix, bảng phân bổ 16 mức ưu tiên Preemption Priority phục vụ an toàn hệ thống (CAN > UART > DMA2D > LTDC > SysTick). |
 
@@ -40,14 +40,27 @@
 
 # 🧠 BƯỚC 1: NGUYÊN LÝ PHẦN CỨNG & CƠ CHẾ VẬT LÝ (HARDWARE ARCHITECTURE)
 
+## 1.0. So Sánh Bản Chất: Vẽ Đồ Họa Bằng CPU Thuần vs Khối Tăng Tốc DMA2D (Chrom-ART) & Phân Tầng NVIC
+
+Trước khi đi vào các thanh ghi `DMA2D_CR`, `DMA2D_OOR` và thanh ghi phân nhóm NVIC `AIRCR`, hãy so sánh sự khác biệt căn bản giữa hai phương pháp xử lý đồ họa và ngắt:
+
+| Hạng mục so sánh | Cách tiếp cận CPU Thuần túy (Software Rendering) | Khối Tăng Tốc Phần Cứng DMA2D & NVIC Chuẩn Công Nghiệp |
+| :--- | :--- | :--- |
+| **Đổ màu vùng nhớ (Color Fill)** | Dùng 2 vòng lặp `for` lồng nhau để gán giá trị từng pixel: Chiếm 100% CPU, mất hàng chục mili-giây. | **Chế độ R2M (Register-to-Memory)**: DMA2D tự động đổ màu toàn bộ vùng 480x272 chỉ trong chưa đầy 1 mili-giây, CPU hoàn toàn rảnh rỗi! |
+| **Sao chép hình ảnh (Bitmap Copy)** | Dùng hàm `memcpy()` trong thư viện C: Chậm chạp, chiếm dụng toàn bộ Bus Matrix. | **Chế độ M2M (Memory-to-Memory)**: DMA2D đọc từ Flash/RAM này bắn thẳng sang SDRAM với bus 64-bit nội bộ độc lập. |
+| **Hòa trộn độ trong suốt (Alpha Blending)** | Phải tính toán công thức số học phức tạp từng kênh màu R, G, B: `Pixel = (Src * A + Dst * (255 - A)) / 255`. Rất nặng cho CPU. | **Chế độ M2M_BLEND phần cứng**: Động cơ Chrom-ART tự tính toán hòa trộn điểm ảnh theo thời gian thực ở tốc độ xung nhịp 216 MHz. |
+| **Phân bổ Ưu tiên Ngắt (NVIC)** | Cài đặt độ ưu tiên ngắt lộn xộn, dẫn đến việc ngắt màn hình/vẽ đồ họa chặn đứng ngắt an toàn mạng CAN. | **Cấu hình Priority Grouping 4 (4 bit Preemption, 0 bit Subpriority)**: Phân tầng rõ ràng: Ngắt an toàn CAN (mức 0) > Ngắt UART (mức 1) > Ngắt đồ họa LTDC/DMA2D (mức 5). |
+| **Đối chiếu với Môi trường RTOS** | CPU vẽ đồ họa làm chậm trễ lịch trình của bộ định thời RTOS Scheduler. | Task đồ họa kích hoạt DMA2D rồi đi ngủ (`k_sem_take` hoặc `xSemaphoreTake`); ngắt DMA2D hoàn thành sẽ đánh thức Task dậy tiếp tục. |
+
+
 ## 1.1. Bản chất Phần cứng Khối Tăng Tốc Đồ Họa DMA2D (Chrom-ART Accelerator)
 
-Trong hệ thống nhúng hiển thị (GUI), việc CPU phải chạy vòng lặp `for` để tô màu hoặc sao chép từng pixel trên màn hình $480 \times 272$ (tổng cộng $130,560\text{ pixels} \times 2\text{ bytes} = 261.12\text{ KB}$ mỗi khung hình) sẽ chiếm dụng tới **$85\% - 95\%$ thời gian xử lý của CPU**, làm gián đoạn việc nhận gói tin CAN Bus và xử lý giao tiếp thời gian thực.
+Trong hệ thống nhúng hiển thị (GUI), việc CPU phải chạy vòng lặp `for` để tô màu hoặc sao chép từng pixel trên màn hình 480x272 (tổng cộng `130,560 pixels * 2 bytes = 261.12 KB` mỗi khung hình) sẽ chiếm dụng tới **85% - 95% thời gian xử lý của CPU**, làm gián đoạn việc nhận gói tin CAN Bus và xử lý giao tiếp thời gian thực.
 
 Khối **DMA2D (Chrom-ART Accelerator)** là một mạch phần cứng chuyên dụng độc lập nằm trên Bus Master AXI:
 * **Giao tiếp Bus:** Nối trực tiếp vào AXI Bus Matrix 64-bit, có khả năng phát các chuỗi đọc/ghi Burst liên tục với bộ nhớ SDRAM ngoài và SRAM nội.
-* **Tải CPU:** Hoàn toàn bằng **$0\%$** trong suốt quá trình copy, fill màu hoặc hòa trộn Alpha (CPU chỉ cần nạp địa chỉ, kích hoạt bit `START`, và quay sang làm việc khác hoặc đi ngủ chờ ngắt).
-* **Hiệu năng:** Tốc độ đổ màu và copy đạt tối đa băng thông bộ nhớ FMC SDRAM ($108\text{ MHz} \times 16\text{ bits} = 216\text{ MB/s}$ lý thuyết), nhanh gấp **8 đến 12 lần** so với lệnh `memcpy()` hoặc vòng lặp C thuần của CPU.
+* **Tải CPU:** Hoàn toàn bằng **0%** trong suốt quá trình copy, fill màu hoặc hòa trộn Alpha (CPU chỉ cần nạp địa chỉ, kích hoạt bit `START`, và quay sang làm việc khác hoặc đi ngủ chờ ngắt).
+* **Hiệu năng:** Tốc độ đổ màu và copy đạt tối đa băng thông bộ nhớ FMC SDRAM (`108 MHz * 16 bits = 216 MB/s` lý thuyết), nhanh gấp **8 đến 12 lần** so với lệnh `memcpy()` hoặc vòng lặp C thuần của CPU.
 
 ```text
                                   ┌──────────────────────────────────────────────────┐
@@ -85,7 +98,7 @@ Khối **DMA2D (Chrom-ART Accelerator)** là một mạch phần cứng chuyên 
 | :---: | :--- | :--- | :--- |
 | **`00`b** | **Memory-to-Memory (M2M)** | Copy trực tiếp khối pixel từ bộ nhớ nguồn sang bộ nhớ đích mà **không thay đổi định dạng màu**. | Sao chép nhanh bộ đệm phụ (Back Buffer) sang bộ đệm chính (Front Buffer). |
 | **`01`b** | **M2M with Pixel Format Conversion (PFC)** | Đọc pixel từ bộ nhớ nguồn, tự động giải mã và chuyển đổi hệ màu (ví dụ từ RGB565 sang ARGB8888 hoặc ARGB4444) trước khi ghi vào đích. | Nạp các icon định dạng nén từ Flash vào Framebuffer SDRAM. |
-| **`10`b** | **M2M with Blending** | Đọc đồng thời 2 lớp ảnh: Lớp tiền cảnh (Foreground) và Lớp hậu cảnh (Background), hòa trộn pixel theo trọng số kênh Alpha ($\alpha$), rồi ghi ra đích. | Vẽ kim đồng hồ trong suốt đè lên mặt đồng hồ tốc độ xe hơi. |
+| **`10`b** | **M2M with Blending** | Đọc đồng thời 2 lớp ảnh: Lớp tiền cảnh (Foreground) và Lớp hậu cảnh (Background), hòa trộn pixel theo trọng số kênh Alpha (alpha), rồi ghi ra đích. | Vẽ kim đồng hồ trong suốt đè lên mặt đồng hồ tốc độ xe hơi. |
 | **`11`b** | **Register-to-Memory (R2M)** | Ghi trực tiếp giá trị màu định sẵn trong thanh ghi `DMA2D_OCOLR` vào toàn bộ khối pixel đích mà **không cần đọc bất kỳ vùng nhớ nguồn nào**. | Xóa trắng màn hình (Clear Screen) hoặc vẽ các thanh đo tốc độ, hộp thoại chữ nhật siêu tốc. |
 
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385):**
@@ -98,7 +111,7 @@ Khối **DMA2D (Chrom-ART Accelerator)** là một mạch phần cứng chuyên 
 
 ## 1.3. Công Thức Toán Học Tính Line Offset Tránh Lỗi Xéo Hình (Skewed Image Bug)
 
-Khi vẽ một hình chữ nhật nhỏ có kích thước $W_{box} \times H_{box}$ vào bên trong một Framebuffer lớn có kích thước $W_{screen} \times H_{screen}$:
+Khi vẽ một hình chữ nhật nhỏ có kích thước W_{box * H_{box vào bên trong một Framebuffer lớn có kích thước W_{screen * H_{screen:
 
 ```text
    Vùng nhớ Framebuffer Đích trên SDRAM (Chiều rộng W_screen = 480)
@@ -117,13 +130,13 @@ Khi vẽ một hình chữ nhật nhỏ có kích thước $W_{box} \times H_{bo
 ```
 
 1. **Địa chỉ Pixel khởi đầu (Output Memory Address - `OMAR`):**
-   $$\text{Start Address} = \text{Base Address} + (Y_{pos} \times W_{screen} + X_{pos}) \times \text{BytesPerPixel}$$
-   * Với định dạng **RGB565** ($\text{BytesPerPixel} = 2$):
-     $$\text{OMAR} = \texttt{0xC0000000} + 2 \times (Y_{pos} \times 480 + X_{pos})$$
+   `Start Address = Base Address + (Y_pos * W_screen + X_pos) * BytesPerPixel`
+   * Với định dạng **RGB565** (BytesPerPixel = 2):
+     `OMAR = 0xC0000000 + 2 * (Y_pos * 480 + X_pos)`
 
 2. **Độ lệch dòng đích (Output Line Offset - `OOR`):**
-   Sau khi DMA2D vẽ xong $W_{box}$ pixels của một dòng, con trỏ phần cứng phải **nhảy cóc qua phần còn lại của màn hình** để xuống đúng đầu dòng tiếp theo:
-   $$\mathbf{\text{Line Offset (OOR)}} = W_{screen} - W_{box} = 480 - W_{box}$$
+   Sau khi DMA2D vẽ xong W_{box pixels của một dòng, con trỏ phần cứng phải **nhảy cóc qua phần còn lại của màn hình** để xuống đúng đầu dòng tiếp theo:
+   `Line Offset (OOR) = W_screen - W_box = 480 - W_box`
    * ⚠️ **Lưu ý sống còn:** Giá trị ghi vào `DMA2D_OOR` tính bằng **đơn vị số pixel**, KHÔNG PHẢI số byte! Nếu ghi sai thành byte, hình ảnh sẽ bị xé xéo thành các dải sọc chéo trên màn hình.
 
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385):**
@@ -141,7 +154,7 @@ Lõi ARM Cortex-M7 hỗ trợ 16 mức ưu tiên ngắt phần cứng (từ 0 đ
 ### Bảng Phân Bổ Nhóm Ưu Tiên (Priority Grouping):
 Trong dự án này, ta sử dụng chuẩn công nghiệp ô tô: **`NVIC_PriorityGroup_4` (`PRIGROUP = 011`b)**:
 * Toàn bộ 4 bits phần cứng được dùng cho **Preemption Priority** (Mức ưu tiên ngắt chen ngang: 16 mức từ 0 đến 15).
-* $0$ bit dành cho Subpriority.
+* 0 bit dành cho Subpriority.
 * **Nguyên lý Chen ngang (Preemption):** Một ngắt có Preemption Priority cao hơn (số bé hơn) ĐƯỢC PHÉP ngắt ngang thân ISR của một ngắt có Preemption Priority thấp hơn đang thực thi.
 
 ```text
@@ -231,7 +244,7 @@ sequenceDiagram
 
 ### 📋 Sơ Đồ 2: Quy Trình Sao Chép Ảnh Có Chuyển Đổi Hệ Màu M2M PFC (DMA2D PFC Pipeline)
 
-Mô hình hóa chu trình bộ tăng tốc Chrom-ART đọc ảnh icon nén 32-bit ARGB8888 từ Flash, tự động giải mã và chuyển đổi phần cứng sang 16-bit RGB565 ghi vào Framebuffer SDRAM với tải CPU hoàn toàn bằng $0\%$:
+Mô hình hóa chu trình bộ tăng tốc Chrom-ART đọc ảnh icon nén 32-bit ARGB8888 từ Flash, tự động giải mã và chuyển đổi phần cứng sang 16-bit RGB565 ghi vào Framebuffer SDRAM với tải CPU hoàn toàn bằng 0%:
 
 ```mermaid
 sequenceDiagram
@@ -352,7 +365,7 @@ Tra cứu RM0385 *Chapter 2: Memory map* và PM0253 *Chapter 4: Core peripherals
 | **`NVIC->ISER`** | System Bus | `0xE000 E100` | `0x0000` | `0xE000 E100` | Bật ngắt phần cứng (Mỗi thanh ghi 32-bit quản lý 32 IRQ). |
 | **`NVIC->IPR`** | System Bus | `0xE000 E400` | `0x0000` | `0xE000 E400` | Gán mức ưu tiên Preemption (8-bit mỗi ngắt, dùng 4-bit cao [7:4]). |
 
-Tra cứu RM0385 *Chapter 10: DMA2D controller $\rightarrow$ Section 10.4: DMA2D registers*:
+Tra cứu RM0385 *Chapter 10: DMA2D controller -> Section 10.4: DMA2D registers*:
 
 | Thanh ghi | Offset | Reset Value | Bit / Trường | Access | Mô tả & Cấu hình Kỹ thuật |
 | :--- | :---: | :---: | :---: | :---: | :--- |
@@ -365,9 +378,9 @@ Tra cứu RM0385 *Chapter 10: DMA2D controller $\rightarrow$ Section 10.4: DMA2D
 | **`DMA2D_IFCR`**| `0x08` | `0x0000 0000` | `CTCIF` (Bit 1)| `w` | **W1C:** Ghi `1` để xóa cờ `TCIF`. CẤM DÙNG `\|=`. |
 | | | | `CTEIF` (Bit 0)| `w` | **W1C:** Ghi `1` để xóa cờ `TEIF`. CẤM DÙNG `\|=`. |
 | **`DMA2D_OMAR`**| `0x3C` | `0x0000 0000` | `MA[31:0]` | `RW` | Địa chỉ vùng nhớ đích (Output Memory Address trong SDRAM). |
-| **`DMA2D_OOR`** | `0x40` | `0x0000 0000` | `LO[13:0]` | `RW` | Độ lệch dòng đích (Line Offset tính bằng số pixel: $W_{screen} - W_{box}$). |
-| **`DMA2D_NLR`** | `0x44` | `0x0000 0000` | `NL[15:0]` (31:16)| `RW` | Số dòng cần truyền (Number of Lines = $H_{box}$). |
-| | | | `PL[13:0]` (13:0) | `RW` | Số pixel trên mỗi dòng (Pixels per Line = $W_{box}$). |
+| **`DMA2D_OOR`** | `0x40` | `0x0000 0000` | `LO[13:0]` | `RW` | Độ lệch dòng đích (Line Offset tính bằng số pixel: W_{screen - W_{box). |
+| **`DMA2D_NLR`** | `0x44` | `0x0000 0000` | `NL[15:0]` (31:16)| `RW` | Số dòng cần truyền (Number of Lines = H_{box). |
+| | | | `PL[13:0]` (13:0) | `RW` | Số pixel trên mỗi dòng (Pixels per Line = W_{box). |
 | **`DMA2D_OCOLR`**| `0x48`| `0x0000 0000` | `COLOR[31:0]`| `RW` | Mã màu xuất (trong chế độ R2M: định dạng RGB565 hoặc ARGB8888). |
 | **`DMA2D_OPFCCR`**|`0x34`| `0x0000 0000` | `CM[2:0]` (Bit 2:0)| `RW` | Định dạng màu đích: `000` ARGB8888, `001` RGB888, `010` RGB565. |
 
@@ -742,12 +755,12 @@ int main(void)
   * Vi điều khiển ARM Cortex-M7 dùng trường `PRIGROUP` trong thanh ghi `SCB->AIRCR` để chia 4 bits priority thành 2 phần: Preemption Priority (Ưu tiên chen ngang) và Subpriority (Ưu tiên cùng mức).
   * Trong các hệ thống an toàn như Ô tô, ta chọn `NVIC_PriorityGroup_4` để dành **toàn bộ 4 bits cho Preemption Priority (16 mức)**. Điều này đảm bảo tính tiền định tuyệt đối (Strict Determinism): Bất kỳ khi nào ngắt an toàn mạng CAN Bus kích hoạt, nó ĐƯỢC PHÉP lập tức ngắt ngang các tác vụ render đồ họa hoặc SysTick mà không bao giờ bị xếp hàng chờ đợi.
 
-### ❓ Câu 3: Làm thế nào để vẽ một hình chữ nhật $100 \times 100$ vào chính giữa màn hình $480 \times 272$ bằng DMA2D?
+### ❓ Câu 3: Làm thế nào để vẽ một hình chữ nhật 100 * 100 vào chính giữa màn hình 480x272 bằng DMA2D?
 * **Trả lời chuẩn Bare-metal:**
-  * Tọa độ góc trên bên trái: $X = (480 - 100) / 2 = 190$, $Y = (272 - 100) / 2 = 86$.
-  * Địa chỉ bắt đầu `OMAR` $= \text{Base} + 2 \times (86 \times 480 + 190)$ (cho RGB565).
-  * Độ lệch dòng `DMA2D->OOR` $= 480 - 100 = \mathbf{380}$ (đơn vị pixel).
-  * Kích thước `DMA2D->NLR` $= (100 \ll 16) \mid 100$.
+  * Tọa độ góc trên bên trái: X = (480 - 100) / 2 = 190, Y = (272 - 100) / 2 = 86.
+  * Địa chỉ bắt đầu `OMAR` = Base + 2 * (86 * 480 + 190) (cho RGB565).
+  * Độ lệch dòng `DMA2D->OOR` = 480 - 100 = 380 (đơn vị pixel).
+  * Kích thước `DMA2D->NLR` = (100 ll 16) mid 100.
   * Chọn `MODE = 11`b (R2M), nạp mã màu vào `OCOLR`, bật `START` và chờ cờ `TCIF`.
 
 ---

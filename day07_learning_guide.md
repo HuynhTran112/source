@@ -65,15 +65,23 @@
 ### 0.1. Cài Đặt Các Công Cụ Nền Tảng (Host Tools)
 
 #### Cách 1: Trên Hệ Điều Hành Windows (PowerShell)
-Mở PowerShell dưới quyền Administrator và sử dụng trình quản lý gói **Chocolatey**:
+Mở **PowerShell dưới quyền Administrator** (Chuột phải vào PowerShell/Terminal chọn **Run as Administrator**) và sử dụng trình quản lý gói **Chocolatey**:
 ```powershell
-# Cài đặt trình quản lý gói Chocolatey (nếu máy tính chưa có)
+# 1. Dọn dẹp thư mục Chocolatey hỏng nếu lần cài trước bị gián đoạn/thiếu quyền Admin
+Remove-Item -Recurse -Force "C:\ProgramData\chocolatey" -ErrorAction SilentlyContinue
+
+# 2. Cài đặt trình quản lý gói Chocolatey (nếu máy tính chưa có)
 Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
 
-# Cài đặt toàn bộ bộ công cụ nền tảng cho Zephyr
+# 3. Nạp lại biến môi trường PATH vào phiên làm việc hiện tại
+$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+
+# 4. Cài đặt toàn bộ bộ công cụ nền tảng cho Zephyr
 choco install -y cmake --installargs 'ADD_CMAKE_TO_PATH=System'
 choco install -y ninja gperf python git dtc-msys2
 ```
+
+> 💡 **Mẹo:** Nếu máy không có quyền Administrator, bạn có thể dùng lệnh `winget install Kitware.CMake Ninja-build.Ninja Python.Python.3.11 Git.Git` tích hợp sẵn trên Windows.
 
 #### Cách 2: Trên Hệ Điều Hành Linux / Ubuntu (hoặc Windows WSL2)
 ```bash
@@ -92,6 +100,8 @@ sudo apt install -y --no-install-recommends \
 
 > 💡 **Khuyến nghị lưu trữ:** Toàn bộ mã nguồn Zephyr, module mở rộng (HAL ST, LVGL, CMSIS) và Zephyr SDK chiếm khoảng **5 GB đến 8 GB**. Do đó, hướng dẫn chuẩn dưới đây sẽ thiết lập **trực tiếp 100% lên ổ `D:\`** để bảo vệ dung lượng ổ hệ điều hành `C:\`. *(Nếu máy bạn chỉ có ổ `C:\` hoặc chạy Linux, chỉ cần thay `D:\` thành `C:\` hoặc `~/`)*.
 
+> ⚠️ **Lưu ý phiên bản Python:** Zephyr v3.7.0 bắt buộc tối thiểu **Python 3.10 trở lên** (khuyên dùng Python 3.11 hoặc 3.12). Hãy kiểm tra bằng lệnh `python --version` trước khi tạo môi trường ảo.
+
 Mở **PowerShell** và thực hiện:
 ```powershell
 # 1. Chuyển dấu nhắc lệnh sang ổ đĩa D và tạo thư mục làm việc
@@ -105,10 +115,15 @@ python -m venv D:\zephyrproject\.venv
 # 3. Kích hoạt môi trường ảo (Dấu nhắc sẽ hiện (.venv) ở đầu dòng)
 D:\zephyrproject\.venv\Scripts\Activate.ps1
 
-# 4. Cài đặt công cụ quản trị đa kho mã nguồn west vào môi trường ảo
-pip install --upgrade pip
+# 4. Nâng cấp pip và cài đặt công cụ quản trị đa kho mã nguồn west
+# LƯU Ý TRÊN WINDOWS: Bắt buộc dùng `python -m pip` thay vì `pip install --upgrade pip`
+# để tránh lỗi [WinError 5] Access is denied do Windows khóa file pip.exe đang chạy!
+python -m pip install --upgrade pip
 pip install west
 ```
+
+> 🛠️ **Xử lý sự cố nếu pip bị lỗi `ModuleNotFoundError: No module named 'pip'`:**
+> Chạy lệnh `python -m ensurepip` để khôi phục lại pip, sau đó chạy tiếp `python -m pip install --upgrade pip`. Nếu môi trường ảo hoàn toàn mới, bạn có thể xóa thư mục `.venv` bằng `Remove-Item -Recurse -Force .venv` rồi chạy lại từ bước 2.
 
 ---
 
@@ -133,51 +148,101 @@ pip install -r D:\zephyrproject\zephyr\scripts\requirements.txt
 
 ### 0.4. Cài Đặt Bộ Trình Biên Dịch Chéo Zephyr SDK Vào `D:\zephyr-sdk-0.16.8`
 
-Zephyr cung cấp bộ công cụ **Zephyr SDK** độc lập chứa trình biên dịch tối ưu hóa `arm-zephyr-eabi-gcc`:
+Zephyr cung cấp bộ công cụ **Zephyr SDK** độc lập chứa trình biên dịch tối ưu hóa `arm-zephyr-eabi-gcc`. Để tiết kiệm thời gian và dung lượng (thay vì tải bản full 1.4 GB), ta chỉ tải bản **Minimal (~48 MB)** kèm riêng **ARM Toolchain (~85 MB)**:
 
 ```powershell
-# 1. Cài đặt toolchain ARM Cortex-M trực tiếp vào thư mục chỉ định trên ổ D
-west sdk install -t arm-zephyr-eabi -d D:\zephyr-sdk-0.16.8
+# 1. Tải công cụ giải nén siêu nhẹ 7zr.exe (500 KB) vào ổ D
+curl.exe -L -o D:\7zr.exe https://www.7-zip.org/a/7zr.exe
 
-# 2. Thiết lập 2 Biến Môi Trường Windows trỏ cố định vĩnh viễn sang ổ D:\
+# 2. Tải bản SDK Minimal và toolchain ARM Cortex-M bằng dịch vụ Windows BITS (nhanh và không bị nghẽn mạng như curl)
+Start-BitsTransfer -Source https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.16.8/zephyr-sdk-0.16.8_windows-x86_64_minimal.7z -Destination D:\zephyr-sdk-minimal.7z
+Start-BitsTransfer -Source https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.16.8/toolchain_windows-x86_64_arm-zephyr-eabi.7z -Destination D:\toolchain-arm.7z
+# (Hoặc tải trực tiếp bằng trình duyệt Chrome/Edge nếu muốn tải thủ công rồi copy vào D:\)
+
+# 3. Giải nén vào D:\zephyr-sdk-0.16.8
+D:\7zr.exe x D:\zephyr-sdk-minimal.7z -oD:\ -y
+D:\7zr.exe x D:\toolchain-arm.7z -oD:\zephyr-sdk-0.16.8 -y
+
+# 4. Đăng ký SDK với CMake (chạy trực tiếp bằng CMake, không chạy setup.cmd vì script này đòi cài wget)
+cd D:\zephyr-sdk-0.16.8
+cmake -P cmake\zephyr_sdk_export.cmake
+
+# 5. Dọn dẹp các file nén tạm để giải phóng dung lượng
+Remove-Item D:\zephyr-sdk-minimal.7z, D:\toolchain-arm.7z, D:\7zr.exe -Force
+
+# 6. Thiết lập 3 Biến Môi Trường Windows cố định vĩnh viễn
 setx ZEPHYR_BASE "D:\zephyrproject\zephyr"
 setx ZEPHYR_SDK_INSTALL_DIR "D:\zephyr-sdk-0.16.8"
+setx ZEPHYR_TOOLCHAIN_VARIANT "zephyr"
 ```
 
 > 💡 **Lưu ý quan trọng sau khi setx:** Đóng cửa sổ PowerShell hiện tại và mở lại một cửa sổ mới để Windows cập nhật biến môi trường vừa tạo.
 
 ---
 
-### 0.5. Kiểm Tra Hoạt Động (Sanity Check): Build & Flash Mẫu Blinky Đầu Tiên Từ Ổ D:\
+### 0.5. Cài Đặt Bộ Nạp Flash & Kiểm Tra Hoạt Động (Sanity Check Blinky)
 
-Để khẳng định môi trường trên ổ `D:\` đã hoạt động hoàn hảo 100%, hãy biên dịch ứng dụng mẫu chớp tắt LED (`blinky`) cho kit **STM32F746G-Discovery**:
+Zephyr mặc định sử dụng **OpenOCD** làm runner để nạp code xuống kit STM32 qua cổng ST-Link:
 
 ```powershell
-# 1. Kích hoạt môi trường ảo
+# 1. Cài đặt OpenOCD thông qua Chocolatey (chỉ cần chạy 1 lần duy nhất)
+choco install -y openocd
+
+# 2. Kích hoạt môi trường ảo Python
 D:\zephyrproject\.venv\Scripts\Activate.ps1
 
-# 2. Biên dịch ứng dụng mẫu blinky với board stm32f746g_disco
+# 3. Biên dịch ứng dụng mẫu blinky với board stm32f746g_disco
 cd D:\zephyrproject
 west build -b stm32f746g_disco zephyr/samples/basic/blinky -p auto
 
-# 3. Cắm kit STM32F746G-DISCO vào máy tính qua cổng USB ST-Link và nạp firmware
+# 4. Cắm kit STM32F746G-DISCO vào máy qua cổng USB ST-Link và nạp firmware
 west flash
 ```
 
-* **Kết quả kiểm tra thành công:** Đèn LED xanh (LD1 / Green LED) trên bo mạch STM32F746G-DISCO bắt đầu chớp tắt với chu kỳ 1 giây.  
-* Sau khi hoàn tất bước chuẩn bị môi trường này, bạn đã sẵn sàng bước vào **Bước 1** để khám phá kiến trúc Devicetree và Kconfig!
+> 💡 **Phương án nạp dự phòng qua STM32CubeProgrammer CLI:**
+> Nếu không dùng OpenOCD, bạn có thể nạp thẳng file nhị phân bằng STM32CubeProgrammer có sẵn:
+> ```powershell
+> & "D:\STM32CubeIDE_1.19.0\STM32CubeIDE\plugins\com.st.stm32cube.ide.mcu.externaltools.cubeprogrammer.win32_2.2.200.202503041107\tools\bin\STM32_Programmer_CLI.exe" -c port=SWD -w D:\zephyrproject\build\zephyr\zephyr.bin 0x08000000 -v -rst
+> ```
+
+#### 🔍 Giải thích trạng thái LED trên bo mạch sau khi nạp:
+* **`LD1` (LED xanh lá cạnh nút User):** Nhấp nháy chu kỳ 1 giây (1s sáng / 1s tắt) -> **Code Zephyr đang chạy thành công 100%!**
+* **`LD7` (LED cạnh cổng USB ST-Link):** 
+  - Khi đang nạp (`west flash`): Chớp liên tục Đỏ / Xanh.
+  - Khi nạp xong: Đứng yên màu **ĐỎ** (ST-Link giải phóng kết nối, ở chế độ Idle) hoặc màu **XANH LÁ** (nếu Windows đang giữ kết nối ổ đĩa ảo/cổng COM). Cả hai trạng thái đều hoàn toàn bình thường.
 
 ---
 
-### 0.6. Cách Sử Dụng Hằng Ngày Khi Mở Máy Làm Việc
+### 0.6. Quy Trình Viết Code & Thao Tác Hằng Ngày Trong Antigravity
 
-Mỗi khi bật máy tính lên để tiếp tục học hoặc code dự án:
-1. Mở Terminal trong Antigravity / VS Code.
-2. Gõ đúng 1 dòng lệnh kích hoạt môi trường:
+Trong Zephyr RTOS, bạn **KHÔNG CẦN mở STM32CubeIDE nữa**, toàn bộ quá trình viết code, cấu hình và nạp chip diễn ra trực tiếp ngay trong **Antigravity** (hoặc VS Code):
+
+#### 1. Cấu trúc một thư mục ứng dụng Zephyr chuẩn:
+```text
+my_zephyr_app/
+├── CMakeLists.txt     <-- Khai báo dự án CMake, liên kết hệ sinh thái Zephyr
+├── prj.conf           <-- Bật/tắt các module tính năng của hệ điều hành (Kconfig)
+├── app.overlay        <-- Cấu hình sơ đồ chân cắm phần cứng (Devicetree)
+└── src/
+    └── main.c         <-- Mã nguồn C ứng dụng logic của bạn
+```
+
+#### 2. Chu trình 4 bước làm việc mỗi khi mở máy:
+1. **Mở terminal Antigravity** ➔ Kích hoạt môi trường (chỉ gõ 1 lần khi mở terminal mới):
    ```powershell
    D:\zephyrproject\.venv\Scripts\Activate.ps1
    ```
-3. Sau đó bạn có thể đứng ở bất kỳ thư mục nào (kể cả trong project `D:\Project\STM32F7`) để gõ lệnh `west build` và `west flash` một cách bình thường!
+2. **Viết/Chỉnh sửa code:** Mở trực tiếp các file `src/main.c`, `prj.conf`, `app.overlay` trong trình soạn thảo Antigravity để code.
+3. **Biên dịch (Build):**
+   ```powershell
+   west build -b stm32f746g_disco <đường_dẫn_thư_mục_app>
+   # Ví dụ nếu đang đứng ngay trong thư mục app:
+   west build -b stm32f746g_disco
+   ```
+4. **Nạp code (Flash):**
+   ```powershell
+   west flash
+   ```
 
 ---
 

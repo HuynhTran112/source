@@ -318,22 +318,71 @@ sequenceDiagram
 
 ---
 
-# 📑 BƯỚC 2: THỰC CHIẾN & TRA CỨU RM0385 / DATASHEET (SETUP & LOOKUP)
+# 📑 BƯỚC 2: THỰC CHIẾN & TRA CỨU RM0385 / PM0253 / DATASHEET (SETUP & LOOKUP)
 
-## 2.1. Bản đồ Địa chỉ Base Address Ngoại vi Ngày 4
-
-Tra cứu RM0385 *Chapter 2: Memory map $\rightarrow$ Table 1*:
-
-| Ngoại vi | Bus | Base Address | Offset | Địa chỉ tuyệt đối | Chức năng chính |
-| :--- | :---: | :---: | :---: | :---: | :--- |
-| **`FMC`** | AHB3 | `0xA000 0000` | `0x0140` | `0xA000 0140` | FMC SDRAM Control Registers (`SDCR`, `SDTR`, `SDCMR`, `SDRTR`). |
-| **`SDRAM Bank 1`**| - | `0xC000 0000` | `0x0000` | `0xC000 0000` | Vùng nhớ dữ liệu SDRAM $8\text{ MB}$ (Chứa 2 Framebuffers). |
-| **`LTDC`** | APB2 | `0x4001 6800` | `0x0000` | `0x4001 6800` | Bộ điều khiển quét màn hình LCD-TFT. |
-| **`LTDC Layer 1`**| APB2 | `0x4001 6800` | `0x0084` | `0x4001 6884` | Thanh ghi cấu hình Layer 1 (`CFBAR`, `PFCR`, `CACR`...). |
+> 🎯 **NGUYÊN TẮC TRA CỨU BARE-METAL CỐT LÕI (Kế thừa Day 00):**
+> * **Ngoại vi của ST (FMC, LTDC):** Mở song song file **`RM0385.pdf`** (Reference Manual) và **`DS10610.pdf`** (Datasheet).
+> * **Khối lõi vi xử lý ARM (MPU, L1 D-Cache):** BẮT BUỘC mở file **`PM0253.pdf`** (Cortex-M7 Programming Manual). ST không định nghĩa thanh ghi MPU trong RM0385!
 
 ---
 
-## 2.2. Ghép kênh Chân GPIO Ngoại vi (FMC AF12 & LTDC AF14)
+## 2.1. Lộ trình Tra cứu Trực tiếp Từng Bước (Step-by-Step RM / PM / DS Lookup)
+
+### 📖 Bước 1: Tra cứu Bản đồ Địa chỉ Base Address (RM0385)
+1. **Mở file `RM0385.pdf`** ➔ Bấm **`Ctrl + F`** ➔ Gõ từ khóa: **`Register boundary addresses`**
+2. Nhảy đến **Chapter 2: Memory map -> Table 1**:
+   * **`FMC Control Registers`**: Base Address `0xA000 0000`, Offset `0x0140` ➔ Địa chỉ bắt đầu: **`0xA000 0140`** (Bus AHB3).
+   * **`SDRAM Bank 1`**: Địa chỉ vùng nhớ: **`0xC000 0000`** (Không gian 8 MB bộ nhớ ngoài chứa Framebuffer).
+   * **`LTDC`**: Base Address **`0x4001 6800`** (Bus APB2).
+   * **`LTDC Layer 1`**: Offset `0x0084` ➔ Địa chỉ cấu hình Layer 1: **`0x4001 6884`**.
+
+### 📖 Bước 2: Tra cứu Ghép kênh Chân GPIO FMC & LTDC (DS10610)
+1. **Mở file `DS10610.pdf`** ➔ Bấm **`Ctrl + F`** ➔ Gõ từ khóa: **`Table 11. Alternate function mapping`**
+2. Tra cứu cột chức năng thay thế:
+   * **FMC SDRAM dùng chức năng `AF12`**: PE0-PE1 (NBL0-1), PD0-PD1, PD8-PD10 (D2, D3, D13-D15), PF0-PF5 (A0-A5), PF11 (SDNRAS), PF12-PF15 (A6-A9), PG0-PG1 (A10-A11), PG4-PG5 (BA0-BA1), PG8 (SDCLK), PG15 (SDNCAS), PH2-PH3 (SDCKE0, SDNE0), PH5 (SDNWE).
+   * **LTDC dùng chức năng `AF14`**: PI14 (CLK), PI12 (HSYNC), PI13 (VSYNC), PK7 (DE), Kênh Đỏ R0-R7 (PI15, PJ0-PJ6), Kênh Lục G0-G7 (PJ7-PJ11, PK0-PK2), Kênh Lam B0-B7 (PE4, PJ13-PJ15, PK3-PK6).
+
+### 📖 Bước 3: Tra cứu Thanh ghi Bộ điều khiển FMC SDRAM (RM0385)
+1. **Mở file `RM0385.pdf`** ➔ Bấm **`Ctrl + F`** ➔ Gõ từ khóa: **`FMC register map`**
+2. Nhảy đến **Chapter 13: Flexible memory controller (FMC) -> Section 13.7: FMC registers**:
+   * **Section 13.7.2 (`FMC_SDCR1`)**: Cấu hình Bus width `MWID[1:0]`, số hàng `NR[1:0]`, số cột `NC[1:0]`, số bank `NB`, `CAS[1:0]`, tần số `SDCLK[1:0]`.
+   * **Section 13.7.4 (`FMC_SDTR1`)**: Nạp thông số định thời TRCD, TRP, TWR, TRC, TRAS.
+   * **Section 13.7.5 (`FMC_SDCMR`)**: Thanh ghi phát 5 lệnh chuẩn JEDEC (Clock config, PALL, Auto-Refresh, MRS).
+   * **Section 13.7.7 (`FMC_SDRTR`)**: Nạp giá trị bộ đếm làm tươi `COUNT[12:0] = 1667`.
+
+### 📖 Bước 4: Tra cứu Thanh ghi Quét Màn hình LTDC (RM0385)
+1. **Mở file `RM0385.pdf`** ➔ Bấm **`Ctrl + F`** ➔ Gõ từ khóa: **`LTDC register map`**
+2. Nhảy đến **Chapter 18: LCD-TFT display controller (LTDC) -> Section 18.7: LTDC registers**:
+   * **Section 18.7.1 - 18.7.4 (`SSCR`, `BPCR`, `AWCR`, `TWCR`)**: Định thời quét khung hình 480x272.
+   * **Section 18.7.7 (`LTDC_SRCR`)**: Kích hoạt cờ tráo đệm đồng bộ quét dọc `VBR (Vertical Blanking Reload)`.
+   * **Section 18.7.15 (`LTDC_LxCFBAR`)**: Nạp địa chỉ Framebuffer bắt đầu quét trong SDRAM (`0xC0000000`).
+
+### 📖 Bước 5: Tra cứu Khối MPU Chống Lỗi Mất Đồng Bộ L1 D-Cache (PM0253)
+1. **Mở file `PM0253.pdf`** ➔ Bấm **`Ctrl + F`** ➔ Gõ từ khóa: **`Memory protection unit (MPU)`**
+2. Nhảy đến **Chapter 4: Core peripherals -> Section 4.5: Memory protection unit (MPU)**:
+   * Địa chỉ cơ sở khối MPU: **`0xE000 ED90`** (System Control Space).
+   * **Section 4.5.2 (`MPU_CTRL`)**: Bật MPU (`ENABLE = 1`) kết hợp cờ sinh tử `PRIVDEFENA = 1`.
+   * **Section 4.5.3 (`MPU_RNR`)**: Chọn Region 0 (`REGION = 0`).
+   * **Section 4.5.4 (`MPU_RBAR`)**: Gán địa chỉ gốc SDRAM (`0xC000 0000`).
+   * **Section 4.5.5 (`MPU_RASR`)**: Nạp thuộc tính nhớ Non-cacheable (`TEX=001b, C=0, B=0`) và kích thước 8 MB (`SIZE=22`).
+
+---
+
+## 2.2. Bản đồ Địa chỉ Base Address Ngoại vi Ngày 4
+
+Tra cứu RM0385 *Chapter 2: Memory map -> Table 1* và PM0253 *Chapter 4: Core peripherals*:
+
+| Ngoại vi / Khối | Bus | Base Address | Offset | Địa chỉ tuyệt đối | Chức năng chính |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| **`FMC`** | AHB3 | `0xA000 0000` | `0x0140` | `0xA000 0140` | FMC SDRAM Control Registers (`SDCR`, `SDTR`, `SDCMR`, `SDRTR`). |
+| **`SDRAM Bank 1`**| Bus Ngoài | `0xC000 0000` | `0x0000` | `0xC000 0000` | Vùng nhớ dữ liệu SDRAM 8 MB (Chứa 2 Framebuffers). |
+| **`LTDC`** | APB2 | `0x4001 6800` | `0x0000` | `0x4001 6800` | Bộ điều khiển quét màn hình LCD-TFT. |
+| **`LTDC Layer 1`**| APB2 | `0x4001 6800` | `0x0084` | `0x4001 6884` | Thanh ghi cấu hình Layer 1 (`CFBAR`, `PFCR`, `CACR`...). |
+| **`MPU`** | Private Bus | `0xE000 ED90` | `0x0000` | `0xE000 ED90` | Khối bảo vệ vùng nhớ Cortex-M7 (Cấu hình Non-cacheable SDRAM). |
+
+---
+
+## 2.3. Ghép kênh Chân GPIO Ngoại vi (FMC AF12 & LTDC AF14)
 
 Tra cứu Datasheet DS10610 *Table 11: Alternate function mapping*:
 
@@ -353,7 +402,9 @@ CHÂN MÀN HÌNH LTDC (Alternate Function AF14):
 
 ---
 
-## 2.3. Bảng Tra cứu Thanh ghi Chi tiết FMC & LTDC
+## 2.4. Bảng Tra cứu Thanh ghi Chi tiết FMC & LTDC
+
+Tra cứu RM0385 *Chapter 13 (FMC)* và *Chapter 18 (LTDC)*:
 
 | Ngoại vi | Thanh ghi | Bit / Trường | Giá trị gán | Ý nghĩa kỹ thuật phần cứng |
 | :--- | :--- | :--- | :---: | :--- |
@@ -367,10 +418,31 @@ CHÂN MÀN HÌNH LTDC (Alternate Function AF14):
 | **`FMC`** | `FMC_SDRTR` | `COUNT[12:0]` | `1667`d (`0x0683`)| Giá trị bộ đếm nạp tự động làm tươi Refresh Timer. |
 | **`LTDC`**| `LTDC_SSCR` | `HSW[11:0]`, `VSH[10:0]`| `40`d, `9`d | Độ rộng xung đồng bộ ngang HSYNC và dọc VSYNC. |
 | | `LTDC_BPCR` | `AHBP[11:0]`, `AVBP[10:0]`| `53`d, `11`d | Tích lũy xung đồng bộ + Khoảng đệm sau Back Porch. |
-| | `LTDC_AWCR` | `AAW[11:0]`, `AAH[10:0]`| `533`d, `283`d | Tích lũy độ rộng hiển thị Active Width ($480 \times 272$). |
+| | `LTDC_AWCR` | `AAW[11:0]`, `AAH[10:0]`| `533`d, `283`d | Tích lũy độ rộng hiển thị Active Width (480 x 272). |
 | | `LTDC_TWCR` | `TOTALW[11:0]`, `TOTALH`| `565`d, `285`d | Tổng kích thước khung quét Total Period. |
 | | `LTDC_Layer1->CFBAR`| `CFBADD[31:0]` | `0xC0000000` | Địa chỉ Framebuffer bắt đầu quét trong SDRAM. |
 | | `LTDC_SRCR` | `VBR` (Bit 1) | `1`b | **Vertical Blanking Reload:** Kích hoạt tráo đệm đồng bộ VSYNC. |
+
+---
+
+## 2.5. Bảng Tra cứu Thanh ghi MPU & Chính Sách Cache (PM0253 Chapter 4 Section 4.5)
+
+Tra cứu PM0253 *Section 4.5.5 Table: Memory attribute encoding*:
+
+| Tên thanh ghi | Địa chỉ | Bit / Trường | Giá trị gán | Ý nghĩa kỹ thuật phần cứng |
+| :--- | :---: | :--- | :---: | :--- |
+| **`MPU_CTRL`** | `0xE000 ED94` | `ENABLE` (Bit 0) | `1`b | Kích hoạt khối MPU. |
+| | | `PRIVDEFENA` (Bit 2) | `1`b | **Bit sinh tử:** Cho phép vùng nhớ ngoài Region dùng map mặc định (Chống HardFault lập tức). |
+| **`MPU_RNR`** | `0xE000 ED98` | `REGION[7:0]` | `0` | Chọn cấu hình Region 0 cho dải SDRAM 8 MB. |
+| **`MPU_RBAR`** | `0xE000 ED9C` | `ADDR[31:5]` | `0xC000 0000` | Địa chỉ gốc SDRAM Bank 1 (Căn lề chuẩn 8 MB). |
+| **`MPU_RASR`** | `0xE000 EDA0` | `ENABLE` (Bit 0) | `1`b | Bật Region 0. |
+| | | `SIZE[5:1]` | `22`d (`10110`b)| Kích thước vùng nhớ = $2^{(22+1)} = 2^{23}\text{ bytes} = 8\text{ MB}$. |
+| | | `SRD[15:8]` | `0x00` | Cả 8 subregions đều kích hoạt. |
+| | | `B` (Bit 16) | `0`b | Non-bufferable. |
+| | | `C` (Bit 17) | `0`b | Non-cacheable (Bỏ qua L1 D-Cache, chống sọc rác LTDC!). |
+| | | `TEX[2:0]` (Bits 21:19)| `001`b | Normal memory type kết hợp $C=0, B=0$. |
+| | | `AP[2:0]` (Bits 26:24) | `011`b | Full access (Cả Privileged và User code đều được đọc/ghi). |
+| | | `XN` (Bit 28) | `1`b | Execute Never (Cấm nạp lệnh thực thi mã từ Framebuffer). |
 
 ---
 

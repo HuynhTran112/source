@@ -102,7 +102,37 @@ Phần mềm phải quản lý quá trình phục hồi theo máy trạng thái 
 
 # 📑 BƯỚC 2: THỰC CHIẾN ĐỊNH NGHĨA THAM SỐ GIÁM SÁT (SETUP & LOOKUP)
 
-## 2.1. Bảng Tham Số Giám Sát Tín Hiệu Táp-Lô Ô Tô
+> 🎯 **NGUYÊN TẮC TRA CỨU TIÊU CHUẨN AN TOÀN Ô TÔ (AUTOMOTIVE SAFETY):**
+> 1. **Tra cứu Tiêu chuẩn ISO 26262:** Phần 5 và Phần 6 quy định cơ chế giám sát thời gian thực FTTI (Fault Tolerant Time Interval) và kiến trúc dự phòng.
+> 2. **Tra cứu Quy chuẩn MISRA-C:2012:** Bộ quy tắc viết code C bắt buộc loại bỏ hành vi không xác định (Undefined Behavior) và rò rỉ bộ nhớ.
+> 3. **Tra cứu Driver Watchdog:** Header `zephyr/include/zephyr/drivers/watchdog.h` quy định chuẩn giao tiếp với mạch giám sát phần cứng.
+
+---
+
+## 2.1. Lộ trình Tra cứu Tiêu chuẩn ISO 26262 & MISRA-C (Safety Lookup Methodology)
+
+### 📖 Kênh 1: Cách Tra Cứu Chỉ Tiêu Thời Gian FTTI (ISO 26262-5/6)
+1. **Khái niệm khoảng thời gian dung sai lỗi (Fault Tolerant Time Interval - FTTI):**
+   * Là khoảng thời gian tối đa từ lúc sự cố phần cứng/truyền thông nổ ra cho đến khi hệ thống bắt buộc phải vào **Trạng thái an toàn (Safe State)** trước khi xảy ra tai nạn.
+2. **Quy tắc thiết lập chu kỳ Timeout:**
+   * $T_{\text{timeout}} \le \frac{1}{2} \times \text{FTTI}$ (ví dụ tín hiệu phanh có FTTI = 100ms ➔ Ngưỡng Timeout tối đa là 50ms).
+
+### 📖 Kênh 2: Cách Tra Cứu Quy Tắc MISRA-C:2012 Dành Cho Driver
+1. **Quy tắc bộ nhớ động (Rule 21.3 - Required):**
+   * *Nội dung:* "The memory allocation and deallocation functions of `<stdlib.h>` shall not be used". Cấm dùng `malloc/free`, toàn bộ bộ đệm bắt buộc phải cấp phát tĩnh tại thời điểm biên dịch.
+2. **Quy tắc ép kiểu an toàn (Rule 10.3 - Required):**
+   * *Nội dung:* Giá trị của biểu thức không được gán cho đối tượng có kiểu dữ liệu hẹp hơn hoặc khác dấu nếu không có ép kiểu tường minh.
+
+### 📖 Kênh 3: Cách Tra Cứu Watchdog API Của Hệ Điều Hành
+1. **Mở file header:**
+   * Đường dẫn: **`zephyr/include/zephyr/drivers/watchdog.h`**.
+2. **Các hàm cốt lõi:**
+   * `wdt_install_timeout(const struct device *dev, const struct wdt_timeout_cfg *cfg)`: Cài đặt cửa sổ thời gian và hàm callback cảnh báo.
+   * `wdt_feed(const struct device *dev, int channel_id)`: Nạp lại bộ đếm Watchdog (Feed Dog).
+
+---
+
+## 2.2. Bảng Tham Số Giám Sát Tín Hiệu Táp-Lô Ô Tô
 
 | Thông Điệp | CAN ID | Chu Kỳ Gửi (Nominal) | Ngưỡng Timeout | Số Lần Mất Tối Đa | Hành Vi Failsafe Khi Timeout |
 | :--- | :---: | :---: | :---: | :---: | :--- |

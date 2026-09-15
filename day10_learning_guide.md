@@ -116,7 +116,40 @@ KỊCH BẢN NGUY HIỂM (Priority Inversion khi dùng Khóa không có Kế th�
 
 # 📑 BƯỚC 2: THỰC CHIẾN CẤU HÌNH DEVICETREE & KCONFIG (SETUP & LOOKUP)
 
-## 2.1. Bảng Cấu Hình Tính Năng Kconfig (`prj.conf`)
+> 🎯 **NGUYÊN TẮC TRA CỨU SHELL & IPC ĐA LUỒNG TRÊN ZEPHYR RTOS:**
+> 1. **Tra cứu Kconfig Shell & Debug:** Mở `zephyr/subsys/shell/Kconfig` hoặc gõ `west build -t menuconfig` tìm kiếm `CONFIG_SHELL`, `CONFIG_THREAD_ANALYZER`.
+> 2. **Tra cứu Shell API:** Mở header `zephyr/include/zephyr/shell/shell.h` để xem macro đăng ký lệnh `SHELL_CMD_REGISTER`.
+> 3. **Tra cứu Kernel IPC API:** Mở header `zephyr/include/zephyr/kernel.h` để tra cứu cơ chế hàng đợi `k_msgq` và điều phối luồng `k_thread`.
+
+---
+
+## 2.1. Lộ trình Tra cứu Trực tiếp Giao diện Shell & Đa luồng (Shell & Multi-threading Lookup Methodology)
+
+### 📖 Kênh 1: Cách Tra Cứu Cấu Hình Shell CLI Kconfig (`prj.conf`)
+1. **Tìm kiếm các tùy chọn Backend của Shell:**
+   * Trong `menuconfig` hoặc web: gõ `CONFIG_SHELL_BACKEND_SERIAL` để chuyển hướng dòng lệnh qua cổng ST-Link VCP (Virtual COM Port).
+2. **Công cụ giám sát tràn ngăn xếp tự động (Thread Analyzer):**
+   * Tra cứu `CONFIG_THREAD_ANALYZER_AUTO`: Kích hoạt một daemon ngầm định kỳ quét vùng MPU Stack Guard và tính toán High Watermark của từng luồng.
+   * `CONFIG_THREAD_ANALYZER_AUTO_INTERVAL`: Chu kỳ quét tính bằng giây.
+
+### 📖 Kênh 2: Cách Tra Cứu Cú Pháp Đăng Ký Lệnh CLI (`shell.h`)
+1. **Mở file header:**
+   * Đường dẫn: **`zephyr/include/zephyr/shell/shell.h`**.
+2. **Đọc cú pháp Macro đăng ký lệnh:**
+   * `SHELL_CMD_REGISTER(syntax, subcmds, help, handler)`: Đăng ký lệnh gốc.
+   * `shell_print(const struct shell *sh, const char *fmt, ...)`: In văn bản có định dạng ra terminal.
+   * Hàm Handler có mẫu chuẩn: `static int cmd_handler(const struct shell *sh, size_t argc, char **argv)`.
+
+### 📖 Kênh 3: Cách Tra Cứu Kernel IPC Hàng Đợi (`kernel.h`)
+1. **Khai báo hàng đợi tĩnh:**
+   * Macro `K_MSGQ_DEFINE(q_name, q_msg_size, q_max_msgs, q_align)`: Cấp phát bộ nhớ tĩnh quay vòng (Ring Buffer) an toàn 100% không sợ phân mảnh RAM.
+2. **Thao tác gửi/nhận bất đồng bộ:**
+   * `k_msgq_put(struct k_msgq *msgq, const void *data, k_timeout_t timeout)`: Đẩy bản tin vào hàng đợi (trả về `-EAGAIN` nếu hàng đợi đầy).
+   * `k_msgq_get(struct k_msgq *msgq, void *data, k_timeout_t timeout)`: Lấy bản tin ra (luồng nhận tự động Block tiết kiệm CPU nếu hàng đợi rỗng).
+
+---
+
+## 2.2. Bảng Cấu Hình Tính Năng Kconfig (`prj.conf`)
 
 | Kconfig Symbol | Giá trị | Ý nghĩa Kỹ thuật trong Zephyr RTOS |
 | :--- | :---: | :--- |

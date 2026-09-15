@@ -272,17 +272,60 @@ sequenceDiagram
 
 ---
 
-# 📑 BƯỚC 2: THỰC CHIẾN & TRA CỨU RM0385 (SETUP & LOOKUP)
+# 📑 BƯỚC 2: THỰC CHIẾN & TRA CỨU RM0385 / PM0253 (SETUP & LOOKUP)
 
-## 2.1. Bản đồ Địa chỉ Base Address Ngoại vi Ngày 6
+> 🎯 **NGUYÊN TẮC TRA CỨU BARE-METAL CỐT LÕI (Kế thừa Day 00):**
+> * **Ngoại vi giám sát (IWDG, WWDG, DBGMCU):** Mở file **`RM0385.pdf`** (Reference Manual).
+> * **Bộ bẫy lỗi phần cứng (HardFault, CFSR, HFSR):** Mở file **`PM0253.pdf`** (Cortex-M7 Programming Manual). Mọi thanh ghi phân tích sự cố vi xử lý đều nằm ở PM0253!
 
-Tra cứu RM0385 *Chapter 2: Memory map $\rightarrow$ Table 1*:
+---
+
+## 2.1. Lộ trình Tra cứu Trực tiếp Từng Bước (Step-by-Step RM / PM Lookup)
+
+### 📖 Bước 1: Tra cứu Bản đồ Địa chỉ Base Address (RM0385)
+1. **Mở file `RM0385.pdf`** ➔ Bấm **`Ctrl + F`** ➔ Gõ từ khóa: **`Register boundary addresses`**
+   * Nhảy đến **Chapter 2: Memory map -> Table 1**:
+     * **`IWDG`**: Base Address **`0x4000 3000`** (Bus APB1, cấp xung từ nguồn LSI 32kHz độc lập).
+     * **`WWDG`**: Base Address **`0x4000 2C00`** (Bus APB1, cấp xung từ PCLK1).
+     * **`DBGMCU`**: Base Address **`0xE004 2000`** (Khối điều khiển gỡ lỗi lõi Core).
+
+### 📖 Bước 2: Tra cứu Thanh ghi Independent Watchdog (RM0385)
+1. **Mở file `RM0385.pdf`** ➔ Bấm **`Ctrl + F`** ➔ Gõ từ khóa: **`IWDG register map`**
+   * Nhảy đến **Chapter 25: Independent watchdog (IWDG) -> Section 25.4: IWDG registers**:
+     * **Section 25.4.1 (`IWDG_KR`)**: Nạp các mã khóa an toàn `0x5555` (mở khóa sửa PR/RLR), `0xAAAA` (Feed Dog), `0xCCCC` (kích hoạt chạy).
+     * **Section 25.4.2 (`IWDG_PR`)**: Bộ chia tần số nguồn LSI từ /4 đến /256.
+     * **Section 25.4.3 (`IWDG_RLR`)**: Giá trị nạp đếm lùi 12-bit (tối đa 4095).
+     * **Section 25.4.4 (`IWDG_SR`)**: Polling cờ `PVU`, `RVU` về 0 trước khi cập nhật giá trị mới.
+
+### 📖 Bước 3: Tra cứu Thanh ghi Window Watchdog (RM0385)
+1. **Mở file `RM0385.pdf`** ➔ Bấm **`Ctrl + F`** ➔ Gõ từ khóa: **`WWDG register map`**
+   * Nhảy đến **Chapter 26: Window watchdog (WWDG) -> Section 26.5: WWDG registers**:
+     * **Section 26.5.1 (`WWDG_CR`)**: Bật cờ `WDGA` và nạp giá trị đếm 7-bit `T[6:0]`.
+     * **Section 26.5.2 (`WWDG_CFR`)**: Giới hạn cửa sổ an toàn `W[6:0]` và bật ngắt cảnh báo sớm `EWI`.
+
+### 📖 Bước 4: Tra cứu Đóng Băng Watchdog Khi Debug (RM0385)
+1. **Mở file `RM0385.pdf`** ➔ Bấm **`Ctrl + F`** ➔ Gõ từ khóa: **`DBGMCU_APB1_FZ`**
+   * Nhảy đến **Chapter 38: Debug support (DBGMCU) -> Section 38.16.2**:
+     * Bit 12 (`DBG_IWDG_STOP`): Đóng băng IWDG khi dừng tại Breakpoint.
+     * Bit 11 (`DBG_WWDG_STOP`): Đóng băng WWDG khi dừng tại Breakpoint.
+
+### 📖 Bước 5: Tra cứu Thanh ghi Phân Tích Lỗi HardFault (PM0253)
+1. **Mở file `PM0253.pdf`** ➔ Bấm **`Ctrl + F`** ➔ Gõ từ khóa: **`Configurable fault status register`**
+   * Nhảy đến **Chapter 4: Core peripherals -> Section 4.3.9 (`SCB->CFSR`, Address: `0xE000 ED28`)**:
+     * Tra cứu các bit cờ nguyên nhân: `DIVBYZERO` (Bit 25), `UNALIGNED` (Bit 24), `NOCP` (Bit 19), `UNDEFINSTR` (Bit 16), `BFARVALID` (Bit 15), `MMARVALID` (Bit 7).
+
+---
+
+## 2.2. Bản đồ Địa chỉ Base Address Ngoại vi Ngày 6
+
+Tra cứu RM0385 *Chapter 2: Memory map -> Table 1*:
 
 | Tên ngoại vi | Bus | Base Address | Offset | Địa chỉ tuyệt đối | Chức năng chính |
 | :--- | :---: | :---: | :---: | :---: | :--- |
-| **`IWDG`** | APB1 | `0x4000 3000` | `0x0000` | `0x4000 3000` | Independent Watchdog (Độc lập LSI). |
-| **`WWDG`** | APB1 | `0x4000 2C00` | `0x0000` | `0x4000 2C00` | Window Watchdog (Cửa sổ APB1). |
-| **`DBGMCU`** | System | `0xE004 2000` | `0x0000` | `0xE004 2000` | Đóng băng Watchdog khi Debug Breakpoint. |
+| **`IWDG`** | APB1 (LSI) | `0x4000 3000` | `0x0000` | `0x4000 3000` | Independent Watchdog (Độc lập nguồn LSI). |
+| **`WWDG`** | APB1 (PCLK1) | `0x4000 2C00` | `0x0000` | `0x4000 2C00` | Window Watchdog (Giám sát cửa sổ APB1). |
+| **`DBGMCU`** | System | `0xE004 2000` | `0x0008` | `0xE004 2008` | Đóng băng Watchdog khi Debug Breakpoint (`DBGMCU_APB1_FZ`). |
+| **`SCB (CFSR)`** | System Bus | `0xE000 ED00` | `0x0028` | `0xE000 ED28` | Bẫy lỗi phần cứng (Configurable Fault Status Register). |
 
 ---
 

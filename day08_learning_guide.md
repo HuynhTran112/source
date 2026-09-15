@@ -93,7 +93,45 @@ Bo mạch STM32F746G-Discovery không có chip CAN Transceiver onboard. Khi gắ
 
 # 📑 BƯỚC 2: THỰC CHIẾN CẤU HÌNH DEVICETREE & KCONFIG (SETUP & LOOKUP)
 
-## 2.1. Bảng Cấu Hình Tính Năng Kconfig (`prj.conf`)
+> 🎯 **NGUYÊN TẮC TRA CỨU CAN TRÊN ZEPHYR RTOS:**
+> 1. **Tra cứu Kconfig:** Mở `zephyr/drivers/can/Kconfig` hoặc gõ `west build -t menuconfig` tìm kiếm `CONFIG_CAN`.
+> 2. **Tra cứu Devicetree Bindings:** Mở `zephyr/dts/bindings/can/st,stm32-can.yaml` để xem cấu trúc khai báo node `&can1`.
+> 3. **Tra cứu Pinctrl:** Mở `zephyr/dts/arm/st/f7/stm32f746nghx-pinctrl.dtsi` để lấy tên chuẩn của chân `PB8` và `PB9`.
+> 4. **Tra cứu API:** Mở header `zephyr/include/zephyr/drivers/can.h` để xem nguyên mẫu hàm `can_send()` và `can_add_rx_filter()`.
+
+---
+
+## 2.1. Lộ trình Tra cứu Trực tiếp Driver CAN Zephyr (CAN Lookup Methodology)
+
+### 📖 Kênh 1: Cách Tra Cứu Thuộc Tính Node `&can1` (Devicetree Bindings)
+1. **Mở file Binding của bộ điều khiển bxCAN:**
+   * Đường dẫn: **`zephyr/dts/bindings/can/st,stm32-can.yaml`**.
+2. **Đọc mục `properties:` trong file:**
+   * `bus-speed`: Đơn vị bps (ví dụ `500000`). Bắt buộc khai báo.
+   * `sample-point`: Điểm lấy mẫu tính bằng phần nghìn (ví dụ `875` tương đương `87.5%` chuẩn CiA 301).
+   * `pinctrl-0`: Trỏ đến danh sách các pinmux node của chân `CAN_RX` và `CAN_TX`.
+
+### 📖 Kênh 2: Cách Tra Cứu Tên Nhãn Pinmux Chân CAN (`pinctrl.dtsi`)
+Để biết Zephyr đặt tên cho chân PB8 (AF9) và PB9 (AF9) là gì:
+1. **Mở file pinctrl của dòng STM32F746:**
+   * Đường dẫn: **`zephyr/dts/arm/st/f7/stm32f746nghx-pinctrl.dtsi`**
+2. **Nhấn `Ctrl + F` ➔ Gõ: `can1_`**:
+   * Bạn sẽ thấy ST định nghĩa sẵn:
+     * `can1_rx_pb8: can1_rx_pb8 { pinmux = <STM32_PINMUX('B', 8, AF9)>; };`
+     * `can1_tx_pb9: can1_tx_pb9 { pinmux = <STM32_PINMUX('B', 9, AF9)>; };`
+   * Do đó trong `app.overlay`, bạn chỉ cần điền: `pinctrl-0 = <&can1_rx_pb8 &can1_tx_pb9>;`.
+
+### 📖 Kênh 3: Cách Tra Cứu API Gửi / Nhận CAN Của Zephyr
+1. **Mở file header giao tiếp chuẩn:**
+   * Đường dẫn: **`zephyr/include/zephyr/drivers/can.h`**.
+2. **Đọc định nghĩa hàm và struct:**
+   * `struct can_frame`: Chứa `id`, `dlc`, `data[8]`, `flags`.
+   * `can_send(const struct device *dev, const struct can_frame *frame, k_timeout_t timeout, can_tx_callback_t cb, void *user_data)`: Hàm truyền frame.
+   * `can_add_rx_filter(const struct device *dev, can_rx_callback_t cb, void *user_data, const struct can_filter *filter)`: Hàm cài đặt bộ lọc và đăng ký callback.
+
+---
+
+## 2.2. Bảng Cấu Hình Tính Năng Kconfig (`prj.conf`)
 
 | Kconfig Symbol | Giá trị | Ý nghĩa Kỹ thuật trong Zephyr RTOS |
 | :--- | :---: | :--- |
@@ -105,7 +143,7 @@ Bo mạch STM32F746G-Discovery không có chip CAN Transceiver onboard. Khi gắ
 
 ---
 
-## 2.2. Khai Báo Node CAN1 & Pinctrl trong File Overlay (`app.overlay`)
+## 2.3. Khai Báo Node CAN1 & Pinctrl trong File Overlay (`app.overlay`)
 
 Tra cứu sơ đồ chân của bo STM32F746G-Discovery:
 * Chân `PB8`: `CAN1_RX` (AF9)

@@ -113,7 +113,42 @@ Zephyr sử dụng khối **MPU (Memory Protection Unit)** của ARM Cortex-M7 �
 
 # 📑 BƯỚC 2: THỰC CHIẾN CẤU HÌNH DEVICETREE & KCONFIG (SETUP & LOOKUP)
 
-## 2.1. Bảng Cấu Hình Tính Năng Kconfig (`prj.conf`)
+> 🎯 **NGUYÊN TẮC TRA CỨU TRONG HỆ ĐIỀU HÀNH ZEPHYR RTOS:**
+> Trong RTOS, ta không tra cứu Base Address hay Bitmask của thanh ghi trong RM0385 nữa. Mọi thông tin phần cứng được chuẩn hóa qua **3 trụ cột tra cứu**:
+> 1. **Tra cứu Kconfig:** Định hình tính năng nhân, kích thước stack, hệ thống log (`menuconfig` hoặc Kconfig Search).
+> 2. **Tra cứu Devicetree Bindings (`.yaml`):** Định dạng cú pháp và các thuộc tính hợp lệ của từng node thiết bị.
+> 3. **Tra cứu Board DTS Gốc (`.dts`):** Xem sơ đồ phần cứng có sẵn của bo mạch STM32F746G-Discovery.
+
+---
+
+## 2.1. Lộ trình Tra cứu Trực tiếp trong Zephyr RTOS (Zephyr Lookup Methodology)
+
+### 📖 Kênh 1: Cách Tra Cứu Tùy Chọn Kconfig
+1. **Tra cứu trực quan qua GUI / TUI:**
+   * Trong thư mục dự án, chạy lệnh: **`west build -t menuconfig`** (hoặc `guiconfig`).
+   * Nhấn phím **`/`** ➔ Gõ từ khóa cần tìm: ví dụ gõ **`MPU_STACK_GUARD`** hoặc **`LOG_MODE_DEFERRED`**.
+   * Hệ thống sẽ hiển thị chính xác: Macro Kconfig đầy đủ, kiểu dữ liệu (`bool`/`int`), giá trị mặc định (`default`), các điều kiện phụ thuộc (`depends on`), và file khai báo.
+2. **Tra cứu online:** Truy cập `https://docs.zephyrproject.org/latest/kconfig.html` ➔ Gõ tên symbol vào ô tìm kiếm.
+
+### 📖 Kênh 2: Cách Tra Cứu Thuộc Tính Node Devicetree (Bindings `.yaml`)
+Khi cần thêm một node thiết bị vào file `app.overlay`, để biết node đó hỗ trợ những thuộc tính gì:
+1. **Tìm file Schema `.yaml` tương ứng trong Zephyr SDK:**
+   * Node `compatible = "gpio-leds";` ➔ Mở file: **`zephyr/dts/bindings/gpio/gpio-leds.yaml`**.
+   * Node cổng GPIO STM32 ➔ Mở file: **`zephyr/dts/bindings/gpio/st,stm32-gpio.yaml`**.
+2. **Đọc mục `properties:` trong file `.yaml`:**
+   * Bạn sẽ thấy rõ các thuộc tính bắt buộc (`required: true`) và tùy chọn (như `gpios`, `label`).
+
+### 📖 Kênh 3: Cách Tra Cứu Bản Đồ Phần Cứng Của Bo Mạch (`stm32f746g_disco.dts`)
+Để biết bo mạch STM32F746-Discovery đã khai báo những ngoại vi nào:
+1. **Mở file DTS gốc của bo:**
+   * Đường dẫn: **`zephyr/boards/arm/stm32f746g_disco/stm32f746g_disco.dts`**.
+2. **Kiểm tra phần `aliases` và các chân nối ngoài:**
+   * Nhìn vào mục `leds`: Bạn sẽ thấy nhãn `green_led: led_0` gắn vào `gpios = <&gpioi 1 GPIO_ACTIVE_HIGH>;` (Chân **`PI1`**).
+   * Nhìn vào mục `buttons`: Bạn sẽ thấy nhãn `user_button` gắn vào `gpios = <&gpioi 11 GPIO_ACTIVE_LOW>;` (Chân **`PI11`**).
+
+---
+
+## 2.2. Bảng Cấu Hình Tính Năng Kconfig (`prj.conf`)
 
 Tập tin `prj.conf` kích hoạt các subsystem cần thiết cho dự án:
 
@@ -130,7 +165,7 @@ Tập tin `prj.conf` kích hoạt các subsystem cần thiết cho dự án:
 
 ---
 
-## 2.2. Ánh Xạ Chân Phần Cứng trong File Overlay (`app.overlay`)
+## 2.3. Ánh Xạ Chân Phần Cứng trong File Overlay (`app.overlay`)
 
 Bo mạch STM32F746G-Discovery có đèn LED màu xanh lá tại chân **`PI1`** và nút bấm User B1 tại chân **`PI11`**. Ta khai báo cấu trúc phần cứng chuẩn trong Devicetree:
 

@@ -280,19 +280,52 @@ sequenceDiagram
 
 # 📑 BƯỚC 2: THỰC CHIẾN & TRA CỨU RM0385 / PM0253 (SETUP & LOOKUP)
 
-## 2.1. Bản đồ Địa chỉ Base Address & Vector Ngắt Ngày 5
-
-Tra cứu RM0385 *Chapter 2: Memory map* và PM0253 *Chapter 4: Core peripherals*:
-
-| Tên ngoại vi | Bus | Base Address | Offset | Địa chỉ tuyệt đối | Vector IRQn |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **`DMA2D`** | AHB1 | `0x4002 0000` | `0xB000` | `0x4002 B000` | `DMA2D_IRQn = 90` |
-| **`SCB (AIRCR)`**| System Bus | `0xE000 ED00` | `0x000C` | `0xE000 ED0C` | Quản lý phân nhóm ngắt lõi Core |
-| **`NVIC`** | System Bus | `0xE000 E100` | `0x0000` | `0xE000 E100` | Kích hoạt và gán priority IRQ |
+> 🎯 **NGUYÊN TẮC TRA CỨU BARE-METAL CỐT LÕI (Kế thừa Day 00):**
+> * **Khối đồ họa DMA2D:** Mở file **`RM0385.pdf`** (Reference Manual).
+> * **Khối phân cấp ngắt NVIC & AIRCR:** Mở file **`PM0253.pdf`** (Cortex-M7 Programming Manual). Mọi thanh ghi ngắt lõi Core đều nằm trong PM0253!
 
 ---
 
-## 2.2. Bảng Tra cứu Thanh ghi `DMA2D` Chi tiết
+## 2.1. Lộ trình Tra cứu Trực tiếp Từng Bước (Step-by-Step RM / PM Lookup)
+
+### 📖 Bước 1: Tra cứu Base Address & Vector Ngắt (RM0385)
+1. **Mở file `RM0385.pdf`** ➔ Bấm **`Ctrl + F`** ➔ Gõ từ khóa: **`Register boundary addresses`**
+   * Nhảy đến **Chapter 2: Memory map -> Table 1**:
+     * Ngoại vi **`DMA2D`**: Base Address **`0x4002 B000`** (Bus AHB1).
+2. **Bấm `Ctrl + F`** ➔ Gõ từ khóa: **`Vector table for STM32F7`**
+   * Nhảy đến **Chapter 10: Interrupts and events -> Table 43**:
+     * Vector ngắt phần cứng: **`DMA2D global interrupt`** có số định danh vị trí **`Position = 90`** (`DMA2D_IRQn = 90`).
+
+### 📖 Bước 2: Tra cứu Thanh ghi Tăng Tốc Đồ Họa DMA2D (RM0385)
+1. **Mở file `RM0385.pdf`** ➔ Bấm **`Ctrl + F`** ➔ Gõ từ khóa: **`DMA2D register map`**
+2. Nhảy đến **Chapter 10: DMA2D controller -> Section 10.4: DMA2D registers**:
+   * **Section 10.4.1 (`DMA2D_CR`)**: Chọn chế độ Mode (R2M/M2M), bật ngắt hoàn tất `TCIE`, kích hoạt cờ lệnh `START`.
+   * **Section 10.4.2 & 10.4.3 (`DMA2D_ISR` & `DMA2D_IFCR`)**: Đọc cờ `TCIF`, `TEIF` và cơ chế xóa cờ an toàn **Write 1 to Clear (W1C)** qua `CTCIF`, `CTEIF`.
+   * **Section 10.4.11 (`DMA2D_OMAR`)**: Nạp địa chỉ SDRAM Framebuffer đích.
+   * **Section 10.4.12 (`DMA2D_OOR`)**: Nạp độ lệch dòng `LO[13:0] = Screen_Width - Box_Width`.
+   * **Section 10.4.13 (`DMA2D_NLR`)**: Nạp số dòng `NL[15:0]` và số pixel trên mỗi dòng `PL[13:0]`.
+
+### 📖 Bước 3: Tra cứu Thanh ghi Phân nhóm & Gán Ưu tiên NVIC (PM0253)
+1. **Mở file `PM0253.pdf`** ➔ Bấm **`Ctrl + F`** ➔ Gõ từ khóa: **`Application interrupt and reset control register`**
+   * Nhảy đến **Chapter 4: Core peripherals -> Section 4.3.5 (`SCB->AIRCR`, Address: `0xE000 ED0C`)**:
+     * Ghi mã khóa bảo vệ `VECTKEY = 0x05FA` kết hợp trường `PRIGROUP[10:8] = 011b` (Nhóm Priority Group 4: 16 mức Preemption, 0 mức Subpriority).
+2. **Bấm `Ctrl + F`** ➔ Gõ từ khóa: **`Interrupt set-enable registers`**
+   * Nhảy đến **Section 4.3.1 (`NVIC->ISER`, Address: `0xE000 E100`)** & **Section 4.3.7 (`NVIC->IPR`, Address: `0xE000 E400`)**:
+     * Bật ngắt bằng `NVIC->ISER[90 / 32] |= (1 << (90 % 32))`.
+     * Gán mức ưu tiên qua `NVIC->IPR[90] = (priority << 4)`.
+
+---
+
+## 2.2. Bản đồ Địa chỉ Base Address & Vector Ngắt Ngày 5
+
+Tra cứu RM0385 *Chapter 2: Memory map* và PM0253 *Chapter 4: Core peripherals*:
+
+| Tên ngoại vi / Thanh ghi | Bus | Base Address | Offset | Địa chỉ tuyệt đối | Chức năng chính |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| **`DMA2D`** | AHB1 | `0x4002 B000` | `0x0000` | `0x4002 B000` | Điều khiển tăng tốc đồ họa Chrom-ART (`DMA2D_IRQn = 90`). |
+| **`SCB (AIRCR)`** | System Bus | `0xE000 ED00` | `0x000C` | `0xE000 ED0C` | Phân nhóm ngắt lõi (Priority Grouping: `VECTKEY=0x05FA`). |
+| **`NVIC->ISER`** | System Bus | `0xE000 E100` | `0x0000` | `0xE000 E100` | Bật ngắt phần cứng (Mỗi thanh ghi 32-bit quản lý 32 IRQ). |
+| **`NVIC->IPR`** | System Bus | `0xE000 E400` | `0x0000` | `0xE000 E400` | Gán mức ưu tiên Preemption (8-bit mỗi ngắt, dùng 4-bit cao [7:4]). |
 
 Tra cứu RM0385 *Chapter 10: DMA2D controller $\rightarrow$ Section 10.4: DMA2D registers*:
 

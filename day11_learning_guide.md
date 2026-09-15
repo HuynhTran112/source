@@ -110,7 +110,37 @@ $$\text{Physical Value} = (\text{Raw Value} \times \text{Factor}) + \text{Offset
 
 # 📑 BƯỚC 2: THỰC CHIẾN ĐỊNH NGHĨA MA TRẬN TÍN HIỆU (SETUP & LOOKUP)
 
-## 2.1. Bảng Ma Trận Tín Hiệu Mạng Ô Tô Mẫu (Vehicle Telematics DBC)
+> 🎯 **NGUYÊN TẮC TRA CỨU MẠNG TRUYỀN THÔNG Ô TÔ:**
+> 1. **Tra cứu Cú pháp Vector DBC:** Tài liệu *Vector CANdb++ File Format Specification* quy định cấu trúc dòng `BO_` (Message) và `SG_` (Signal).
+> 2. **Tra cứu Quy chuẩn Endianness:** Ký hiệu `@1` là Intel Standard (Little-Endian), `@0` là Motorola Sequential (Big-Endian).
+> 3. **Tra cứu Tiêu chuẩn An toàn Dữ liệu:** Tài liệu *AUTOSAR Specification of End-to-End Communication Protection (E2E Protocol)* cho thuật toán CRC-8 và Alive Counter.
+
+---
+
+## 2.1. Lộ trình Tra cứu Cú Pháp File DBC & Chuẩn AUTOSAR (DBC & E2E Lookup Methodology)
+
+### 📖 Kênh 1: Cách Đọc & Tra Cứu File Mô Tả Mạng CAN (`.dbc`)
+Khi mở file `.dbc` bằng bất kỳ trình soạn thảo nào hoặc phần mềm Vector CANdb++:
+1. **Dòng khai báo Frame (Message):**
+   * Cú pháp: `BO_ <Message_ID> <Message_Name>: <DLC> <Transmitter_Node>`
+   * Ví dụ: `BO_ 288 Vehicle_Data: 8 Engine_ECU` (ID thập phân 288 = `0x120`, độ dài 8 bytes).
+2. **Dòng khai báo Tín hiệu (Signal):**
+   * Cú pháp: `SG_ <Signal_Name> : <Start_Bit>|<Length>@<Byte_Order><Sign> (<Factor>,<Offset>) [<Min>|<Max>] "<Unit>" <Receiver>`
+   * Ví dụ: `SG_ Vehicle_Speed : 0|12@1+ (0.0625,0) [0|255] "km/h" Instrument_Cluster`
+     * `@1+`: `@1` là Intel (Little-Endian), dấu `+` là Unsigned.
+     * `(0.0625, 0)`: Hệ số nhân (Factor) là `1/16`, độ lệch (Offset) là `0`.
+
+### 📖 Kênh 2: Cách Tra Cứu Đa Thức Kiểm Tra Toàn Vẹn E2E CRC-8 (AUTOSAR)
+Trong mạng ô tô (chống lỗi rớt bit phần cứng hoặc can thiệp dữ liệu):
+1. **Tra cứu tài liệu chuẩn AUTOSAR E2E Profile 1/2:**
+   * Đa thức CRC-8 chuẩn công nghiệp ô tô: $P(x) = x^8 + x^4 + x^3 + x^2 + 1$ (Mã Hex: **`0x1D`** hoặc **`0x2F`**).
+   * Giá trị khởi tạo (Init Value): **`0xFF`**.
+   * Giá trị XOR ngõ ra (XOR Out): **`0xFF`**.
+2. **Alive Counter:** Bộ đếm 4-bit (`0x0` đến `0xF`) tăng liên tục sau mỗi chu kỳ gửi để phát hiện lỗi đứng gói (Frozen Message).
+
+---
+
+## 2.2. Bảng Ma Trận Tín Hiệu Mạng Ô Tô Mẫu (Vehicle Telematics DBC)
 
 | Tên Tín Hiệu | Message ID | Start Bit | Độ Dài | Byte Order | Signed? | Factor | Offset | Đơn Vị | Dải Đo |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |

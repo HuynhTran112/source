@@ -88,7 +88,36 @@
 
 # 📑 BƯỚC 2: THỰC CHIẾN BẢNG SỐ LIỆU ĐO LƯỜNG ĐỊNH LƯỢNG (BENCHMARK REPORT)
 
-## 2.1. Bảng So Sánh Thực Nghiệm Đo Đạc: Bare-Metal vs Zephyr RTOS
+> 🎯 **NGUYÊN TẮC TRA CỨU ĐO ĐẠC HIỆU NĂNG LÕI CORTEX-M7:**
+> 1. **Khối DWT (Data Watchpoint and Trace):** BẮT BUỘC mở file **`PM0253.pdf`** (Cortex-M7 Programming Manual). Mọi thanh ghi đo lường chu kỳ lệnh đều nằm trong PM0253 và chuẩn ARMv7-M!
+> 2. **Hàm bảo trì Cache (Cache Maintenance):** Mở thư viện chuẩn **`core_cm7.h`** để tra cứu các hàm CMSIS Assembly dọn D-Cache.
+
+---
+
+## 2.1. Lộ trình Tra cứu Thanh ghi Đo đạc Chu kỳ DWT & Lõi ARM (PM0253 Chapter 4)
+
+### 📖 Kênh 1: Cách Tra Cứu Thanh ghi Kích Hoạt Trace (`CoreDebug->DEMCR`)
+1. **Mở file `PM0253.pdf`** ➔ Bấm **`Ctrl + F`** ➔ Gõ từ khóa: **`Debug exception and monitor control register`**
+   * Nhảy đến **Chapter 4: Core peripherals -> Section 4.9.4 (`DEMCR`, Address: `0xE000 EDFC`)**:
+     * Bit 24 (`TRCENA`): Bắt buộc ghi `1` để cấp xung nhịp và kích hoạt toàn bộ hệ thống khối vết Trace (bao gồm DWT và ITM).
+
+### 📖 Kênh 2: Cách Tra Cứu Bộ Đếm Chu Kỳ Lệnh (`DWT->CYCCNT`)
+1. **Bấm `Ctrl + F`** ➔ Gõ từ khóa: **`Data watchpoint and trace (DWT)`**
+   * Nhảy đến **Chapter 4: Core peripherals -> Section 4.8: DWT unit**:
+     * **`DWT_CTRL` (Address: `0xE000 1000`)**: Bit 0 (`CYCCNTENA`): Ghi `1` để khởi động bộ đếm chu kỳ lệnh CPU.
+     * **`DWT_CYCCNT` (Address: `0xE000 1004`)**: Thanh ghi 32-bit đếm chu kỳ xung nhịp CPU thực thi mã lệnh (Độ phân giải cực cao: Ở tần số $216\text{ MHz}$, mỗi tick tương ứng $1 / 216\text{ MHz} \approx 4.63\text{ ns}$).
+
+### 📖 Kênh 3: Cách Tra Cứu API Bảo Trì D-Cache Trong `core_cm7.h`
+1. **Mở file thư viện CMSIS:**
+   * Đường dẫn: **`drivers/CMSIS/Include/core_cm7.h`**.
+2. **Các hàm hợp ngữ tối ưu hóa:**
+   * `SCB_CleanDCache()`: Đẩy toàn bộ dữ liệu dơ (Dirty Lines) từ L1 D-Cache xuống SDRAM vật lý.
+   * `SCB_InvalidateDCache()`: Xóa sạch bảng ánh xạ D-Cache để ép CPU đọc dữ liệu mới nhất từ SDRAM.
+   * `SCB_CleanInvalidateDCache()`: Vừa đẩy dữ liệu vừa xóa Cache Line.
+
+---
+
+## 2.2. Bảng So Sánh Thực Nghiệm Đo Đạc: Bare-Metal vs Zephyr RTOS
 
 Số liệu được đo thực tế trên phần cứng **STM32F746G-Discovery ($216\text{ MHz}$, $512\text{ KB}$ SRAM, $1\text{ MB}$ Flash)**:
 

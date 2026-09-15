@@ -99,7 +99,40 @@ Luồng GUI Render:    k_mutex_lock(&gui_mutex) ──► lv_timer_handler()  �
 
 # 📑 BƯỚC 2: THỰC CHIẾN CẤU HÌNH DEVICETREE & KCONFIG (SETUP & LOOKUP)
 
-## 2.1. Bảng Cấu Hình Tính Năng Kconfig (`prj.conf`)
+> 🎯 **NGUYÊN TẮC TRA CỨU ĐỒ HỌA & SDRAM TRÊN ZEPHYR RTOS:**
+> 1. **Tra cứu Kconfig LVGL & LTDC:** Mở `zephyr/modules/lvgl/Kconfig` hoặc gõ `west build -t menuconfig` tìm kiếm `CONFIG_LVGL`, `CONFIG_STM32_LTDC`.
+> 2. **Tra cứu Devicetree Bindings FMC & LTDC:** Mở `zephyr/dts/bindings/display/st,stm32-ltdc.yaml` và `zephyr/dts/bindings/memory-controllers/st,stm32-fmc-sdram.yaml`.
+> 3. **Tra cứu Display & LVGL API:** Mở header `zephyr/include/zephyr/drivers/display.h` và thư viện đồ họa `lvgl.h`.
+
+---
+
+## 2.1. Lộ trình Tra cứu Trực tiếp Màn hình LTDC & LVGL trên Zephyr (Display Lookup Methodology)
+
+### 📖 Kênh 1: Cách Tra Cứu Thuộc Tính Node `&fmc` và `&ltdc` (Devicetree Bindings)
+1. **Mở file Binding của mạch điều khiển FMC SDRAM:**
+   * Đường dẫn: **`zephyr/dts/bindings/memory-controllers/st,stm32-fmc-sdram.yaml`**.
+   * Tra cứu các tham số đã tính từ Bare-metal Ngày 4: `refresh-rate = <1667>`, `power-up-delay = <100>`, `num-auto-refresh = <8>`, `mode-register = <0x230>`.
+2. **Mở file Binding của bộ quét màn hình LTDC:**
+   * Đường dẫn: **`zephyr/dts/bindings/display/st,stm32-ltdc.yaml`**.
+   * Xem cấu hình timing màn hình 480x272: `width`, `height`, `hsync-len`, `vsync-len`, `hback-porch`, `vback-porch`.
+3. **Khai báo node `chosen`:**
+   * Gán `zephyr,display = &ltdc;` để báo cho hệ điều hành biết LTDC là ngõ xuất đồ họa mặc định.
+
+### 📖 Kênh 2: Cách Tra Cứu Tùy Chọn Bộ Nhớ Đồ Họa Kconfig (`prj.conf`)
+1. **Kích thước Buffer vẽ ảo (Virtual Display Buffer - VDB):**
+   * Tìm kiếm `CONFIG_LV_Z_VDB_SIZE`: Xác định phần trăm chiều cao màn hình được cấp phát làm RAM đệm vẽ (ví dụ `20` = 20% màn hình, tương đương 54 dòng quét).
+2. **Vùng nhớ động đối tượng giao diện (Memory Pool):**
+   * Tìm kiếm `CONFIG_LV_Z_MEM_POOL_SIZE`: Cấp phát kích thước heap riêng cho LVGL tạo widget (ví dụ `16384` bytes = 16KB).
+
+### 📖 Kênh 3: Cách Tra Cứu API Điều Khiển Hiển Thị
+1. **Zephyr Display Subsystem:**
+   * Mở file: **`zephyr/include/zephyr/drivers/display.h`** ➔ Xem hàm `display_get_capabilities()`, `display_write()`.
+2. **LVGL GUI Engine:**
+   * Mở file: **`lvgl.h`** ➔ Xem các hàm dựng giao diện xe hơi: `lv_meter_create()`, `lv_meter_set_scale_ticks()`, `lv_meter_add_needle_line()`, và hàm chạy bộ đếm thời gian `lv_timer_handler()`.
+
+---
+
+## 2.2. Bảng Cấu Hình Tính Năng Kconfig (`prj.conf`)
 
 | Kconfig Symbol | Giá trị | Ý nghĩa Kỹ thuật trong Zephyr RTOS |
 | :--- | :---: | :--- |
@@ -114,7 +147,7 @@ Luồng GUI Render:    k_mutex_lock(&gui_mutex) ──► lv_timer_handler()  �
 
 ---
 
-## 2.2. Khai Báo Ràng Buộc Phần Cứng Trong File Overlay (`app.overlay`)
+## 2.3. Khai Báo Ràng Buộc Phần Cứng Trong File Overlay (`app.overlay`)
 
 ```dts
 / {

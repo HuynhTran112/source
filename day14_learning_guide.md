@@ -79,6 +79,30 @@ Dưới đây là sơ đồ kiến trúc tổng thể toàn bộ dự án bạn 
 
 ---
 
+## 2.1. Ma Trận Tra Cứu Tài Liệu Kỹ Thuật Toàn Diện (Master Documentation & Lookup Matrix)
+
+Bảng tổng hợp vị trí tra cứu chuẩn xác xuyên suốt toàn bộ dự án để bạn tự tin giải trình trong bất kỳ buổi phỏng vấn kỹ thuật chuyên sâu nào:
+
+| Ngày | Khối Chức Năng / Ngoại Vi | Tài Liệu Bắt Buộc | Từ Khóa Tra Cứu (`Ctrl + F`) | Vị Trí Chương / Section / Binding Đích |
+| :---: | :--- | :--- | :--- | :--- |
+| **Day 00** | Nền tảng Thanh ghi & C Struct | `RM0385` | `Register boundary addresses` | Chapter 2 (Memory Map -> Table 1) & Chapter 6 (GPIO). |
+| **Day 01** | Clock Tree, PLL & Over-drive | `RM0385` & `DS10610` | `RCC register map`, `Over-drive` | Chapter 5 (RCC Section 5.3) & Chapter 4 (PWR Over-drive). |
+| **Day 02** | UART RX DMA & D-Cache Coherency | `RM0385` & `PM0253` | `DMA register map`, `Channel selection` | Chapter 13 (DMA Section 13.3) & PM0253 Chapter 4 (L1-Cache). |
+| **Day 03** | bxCAN, Bit Timing & 28 Filters | `RM0385` & `DS10610` | `CAN register map`, `CAN_BTR` | Chapter 31 (bxCAN Section 31.9) & DS10610 (Table 11 Pin AF9). |
+| **Day 04** | FMC SDRAM, LTDC & MPU | `RM0385` & `PM0253` | `FMC register map`, `Memory protection unit` | RM0385 Chapter 13, 18 & PM0253 Chapter 4 (Section 4.5 MPU). |
+| **Day 05** | DMA2D Chrom-ART & NVIC Matrix | `RM0385` & `PM0253` | `DMA2D register map`, `AIRCR` | RM0385 Chapter 10 & PM0253 Chapter 4 (Section 4.3 NVIC). |
+| **Day 06** | IWDG, WWDG, CSS & HardFault | `RM0385` & `PM0253` | `IWDG register map`, `Configurable fault` | RM0385 Chapter 25, 26, 38 & PM0253 Chapter 4 (Section 4.3.9 CFSR). |
+| **Day 07** | Zephyr Bring-Up & MPU Guard | `Zephyr SDK` & `DTS` | `CONFIG_MPU_STACK_GUARD`, `gpio-leds` | `zephyr/dts/bindings/gpio/gpio-leds.yaml` & `stm32f746g_disco.dts`. |
+| **Day 08** | Zephyr CAN Driver & Pinctrl | `Zephyr SDK` & `DTS` | `CONFIG_CAN`, `st,stm32-can` | `zephyr/dts/bindings/can/st,stm32-can.yaml` & `pinctrl.dtsi`. |
+| **Day 09** | Zephyr Display LTDC & LVGL | `Zephyr SDK` & `LVGL` | `CONFIG_LVGL`, `st,stm32-ltdc` | `zephyr/dts/bindings/display/st,stm32-ltdc.yaml` & `display.h`. |
+| **Day 10** | Zephyr Shell CLI & IPC MsgQ | `Zephyr SDK` & `Kconfig`| `CONFIG_SHELL`, `CONFIG_THREAD_ANALYZER` | `zephyr/include/zephyr/shell/shell.h` & `kernel.h`. |
+| **Day 11** | Vector DBC Unpacking & CRC-8 | `Vector DBC` & `AUTOSAR`| `BO_`, `SG_`, `E2E Profile` | Vector DBC Specification & AUTOSAR E2E Protocol Spec. |
+| **Day 12** | ISO 26262, MISRA-C & Bus-Off | `ISO 26262` & `MISRA` | `FTTI`, `MISRA-C:2012 Rule 21.3` | Tiêu chuẩn ISO 26262-5/6 & Zephyr `drivers/watchdog.h`. |
+| **Day 13** | DWT Cycle Counter & Unity Test | `PM0253` & `CMSIS` | `Data watchpoint and trace (DWT)` | PM0253 Chapter 4 (Section 4.8 DWT) & `core_cm7.h`. |
+| **Day 14** | Master Capstone & Automotive CV | `All Specs` | `Dual-Architecture Gateway` | Báo cáo kiến trúc 2 tầng (Bare-metal + Zephyr RTOS). |
+
+---
+
 # 📦 BƯỚC 3: CẤU TRÚC REPOSITORY GITHUB CHUẨN CÔNG NGHIỆP
 
 Để hồ sơ của bạn nổi bật hoàn toàn so với các ứng viên sinh viên thông thường, repository GitHub phải được sắp xếp khoa học và có mục **"Known Issues & Lessons Learned"**:

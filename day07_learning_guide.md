@@ -88,75 +88,79 @@ sudo apt install -y --no-install-recommends \
 
 ---
 
-### 0.2. Thiết Lập Môi Trường Ảo Python & Cài Đặt Meta-Tool `west`
+### 0.2. Thiết Lập Môi Trường Ảo Python & Cài Đặt Meta-Tool `west` Trên Ổ D:\
 
-Nên sử dụng môi trường ảo Python (`venv`) để tránh xung đột thư viện giữa các dự án:
+> 💡 **Khuyến nghị lưu trữ:** Toàn bộ mã nguồn Zephyr, module mở rộng (HAL ST, LVGL, CMSIS) và Zephyr SDK chiếm khoảng **5 GB đến 8 GB**. Do đó, hướng dẫn chuẩn dưới đây sẽ thiết lập **trực tiếp 100% lên ổ `D:\`** để bảo vệ dung lượng ổ hệ điều hành `C:\`. *(Nếu máy bạn chỉ có ổ `C:\` hoặc chạy Linux, chỉ cần thay `D:\` thành `C:\` hoặc `~/`)*.
 
-```bash
-# 1. Tạo thư mục làm việc Zephyr và khởi tạo Python Virtual Environment
-python -m venv ~/zephyrproject/.venv
+Mở **PowerShell** và thực hiện:
+```powershell
+# 1. Chuyển dấu nhắc lệnh sang ổ đĩa D và tạo thư mục làm việc
+D:
+mkdir D:\zephyrproject
+cd D:\zephyrproject
 
-# 2. Kích hoạt môi trường ảo:
-# Trên Windows PowerShell:
-~/zephyrproject/.venv/Scripts/Activate.ps1
-# Trên Linux / macOS / WSL2:
-source ~/zephyrproject/.venv/bin/activate
+# 2. Tạo môi trường ảo Python riêng biệt tại D:\zephyrproject\.venv
+python -m venv D:\zephyrproject\.venv
 
-# 3. Cài đặt công cụ quản trị west bên trong môi trường ảo
+# 3. Kích hoạt môi trường ảo (Dấu nhắc sẽ hiện (.venv) ở đầu dòng)
+D:\zephyrproject\.venv\Scripts\Activate.ps1
+
+# 4. Cài đặt công cụ quản trị đa kho mã nguồn west vào môi trường ảo
 pip install --upgrade pip
 pip install west
 ```
 
 ---
 
-### 0.3. Tải Mã Nguồn Zephyr RTOS & Cài Đặt Python Dependencies
+### 0.3. Tải Mã Nguồn Zephyr RTOS Vào `D:\zephyrproject` & Cài Đặt Dependencies
 
-```bash
-# 1. Khởi tạo workspace trỏ đến phiên bản Zephyr LTS ổn định (khuyến nghị v3.7.0 LTS)
-west init -m https://github.com/zephyrproject-rtos/zephyr --mr v3.7.0 ~/zephyrproject
+```powershell
+# 1. Khởi tạo workspace tải về D:\zephyrproject (chọn bản LTS ổn định v3.7.0)
+west init -m https://github.com/zephyrproject-rtos/zephyr --mr v3.7.0 D:\zephyrproject
 
-# 2. Chuyển vào thư mục workspace và đồng bộ toàn bộ các kho module con (HAL ST, LVGL, CMSIS, mbedTLS...)
-cd ~/zephyrproject
+# 2. Chuyển vào thư mục và đồng bộ toàn bộ các module con (HAL ST, LVGL, CMSIS, mbedTLS...)
+cd D:\zephyrproject
 west update
 
 # 3. Xuất gói CMake để hệ thống tự nhận diện đường dẫn Zephyr
 west zephyr-export
 
 # 4. Cài đặt toàn bộ danh mục thư viện Python bắt buộc của Zephyr (DTC parser, Kconfiglib...)
-pip install -r ~/zephyrproject/zephyr/scripts/requirements.txt
+pip install -r D:\zephyrproject\zephyr\scripts\requirements.txt
 ```
 
 ---
 
-### 0.4. Cài Đặt Bộ Trình Biên Dịch Chéo Zephyr SDK (ARM Toolchain)
+### 0.4. Cài Đặt Bộ Trình Biên Dịch Chéo Zephyr SDK Vào `D:\zephyr-sdk-0.16.8`
 
-Zephyr cung cấp bộ công cụ **Zephyr SDK** độc lập chứa trình biên dịch tối ưu hóa `arm-zephyr-eabi-gcc` riêng biệt:
+Zephyr cung cấp bộ công cụ **Zephyr SDK** độc lập chứa trình biên dịch tối ưu hóa `arm-zephyr-eabi-gcc`:
 
-```bash
-# 1. Tải và cài đặt tự động Zephyr SDK thông qua west (Phiên bản khuyến nghị: 0.16.8)
-cd ~/zephyrproject
-west sdk install -t arm-zephyr-eabi
+```powershell
+# 1. Cài đặt toolchain ARM Cortex-M trực tiếp vào thư mục chỉ định trên ổ D
+west sdk install -t arm-zephyr-eabi -d D:\zephyr-sdk-0.16.8
 
-# 2. Đối với người dùng Linux/WSL2: Cài đặt udev rules để nạp mạch qua ST-Link USB không cần quyền root
-sudo cp ~/zephyr-sdk-0.16.8/sysroots/x86_64-pokysdk-linux/usr/share/openocd/contrib/60-openocd.rules /etc/udev/rules.d/
-sudo udevadm control --reload
+# 2. Thiết lập 2 Biến Môi Trường Windows trỏ cố định vĩnh viễn sang ổ D:\
+setx ZEPHYR_BASE "D:\zephyrproject\zephyr"
+setx ZEPHYR_SDK_INSTALL_DIR "D:\zephyr-sdk-0.16.8"
 ```
 
-> 💡 **Mẹo cấu hình biến môi trường cố định (Environment Variables):**  
-> Đảm bảo biến môi trường `ZEPHYR_BASE` trỏ tới đường dẫn: `~/zephyrproject/zephyr`  
-> Và `ZEPHYR_SDK_INSTALL_DIR` trỏ tới thư mục cài đặt SDK (ví dụ: `C:\zephyr-sdk-0.16.8` hoặc `~/.local/opt/zephyr-sdk-0.16.8`).
+> 💡 **Lưu ý quan trọng sau khi setx:** Đóng cửa sổ PowerShell hiện tại và mở lại một cửa sổ mới để Windows cập nhật biến môi trường vừa tạo.
 
 ---
 
-### 0.5. Kiểm Tra Hoạt Động (Sanity Check): Build & Flash Mẫu Blinky Đầu Tiên
+### 0.5. Kiểm Tra Hoạt Động (Sanity Check): Build & Flash Mẫu Blinky Đầu Tiên Từ Ổ D:\
 
-Để khẳng định môi trường đã cài đặt hoàn hảo 100%, hãy thực hiện biên dịch ứng dụng mẫu chớp tắt LED (`blinky`) cho kit **STM32F746G-Discovery**:
+Để khẳng định môi trường trên ổ `D:\` đã hoạt động hoàn hảo 100%, hãy biên dịch ứng dụng mẫu chớp tắt LED (`blinky`) cho kit **STM32F746G-Discovery**:
 
-```bash
-# 1. Biên dịch ứng dụng mẫu blinky với board stm32f746g_disco
+```powershell
+# 1. Kích hoạt môi trường ảo
+D:\zephyrproject\.venv\Scripts\Activate.ps1
+
+# 2. Biên dịch ứng dụng mẫu blinky với board stm32f746g_disco
+cd D:\zephyrproject
 west build -b stm32f746g_disco zephyr/samples/basic/blinky -p auto
 
-# 2. Cắm kit STM32F746G-DISCO vào máy tính qua cổng USB ST-Link và nạp firmware
+# 3. Cắm kit STM32F746G-DISCO vào máy tính qua cổng USB ST-Link và nạp firmware
 west flash
 ```
 
@@ -165,52 +169,15 @@ west flash
 
 ---
 
-### 0.6. Hướng Dẫn Cài Đặt Toàn Bộ Sang Ổ Đĩa D:\ (Tránh Làm Đầy Ổ C:\)
+### 0.6. Cách Sử Dụng Hằng Ngày Khi Mở Máy Làm Việc
 
-> 💡 **Khuyến nghị thực tế:** Toàn bộ mã nguồn Zephyr, các thư viện mở rộng (HAL ST, LVGL, CMSIS) và bộ Zephyr SDK chiếm khoảng **5 GB đến 8 GB** dung lượng. Nếu ổ `C:\` của bạn hạn chế dung lượng, bạn **HOÀN TOÀN NÊN CÀI TOÀN BỘ SANG Ổ `D:\`** theo quy trình chuẩn sau:
-
-#### Bước 1: Khởi tạo thư mục và môi trường ảo Python trên ổ D:\
-Mở PowerShell và gõ các lệnh sau:
-```powershell
-# Chuyển sang ổ đĩa D
-D:
-mkdir D:\zephyrproject
-cd D:\zephyrproject
-
-# Tạo và kích hoạt môi trường ảo Python trên ổ D
-python -m venv D:\zephyrproject\.venv
-D:\zephyrproject\.venv\Scripts\Activate.ps1
-
-# Cài đặt công cụ west vào môi trường ảo
-pip install --upgrade pip
-pip install west
-```
-
-#### Bước 2: Tải mã nguồn Zephyr RTOS vào D:\zephyrproject
-```powershell
-# Khởi tạo workspace ngay tại D:\zephyrproject
-west init -m https://github.com/zephyrproject-rtos/zephyr --mr v3.7.0 D:\zephyrproject
-cd D:\zephyrproject
-west update
-west zephyr-export
-
-# Cài đặt toàn bộ dependencies
-pip install -r D:\zephyrproject\zephyr\scripts\requirements.txt
-```
-
-#### Bước 3: Cài đặt Zephyr SDK sang ổ D:\ (Ví dụ D:\zephyr-sdk-0.16.8)
-```powershell
-# Cài toolchain ARM Cortex-M trực tiếp vào thư mục chỉ định trên ổ D
-west sdk install -t arm-zephyr-eabi -d D:\zephyr-sdk-0.16.8
-```
-
-#### Bước 4: Thiết lập biến môi trường Windows trỏ cố định sang ổ D:\
-Chạy 2 lệnh sau trong PowerShell hoặc Command Prompt để hệ thống nhớ vĩnh viễn:
-```powershell
-setx ZEPHYR_BASE "D:\zephyrproject\zephyr"
-setx ZEPHYR_SDK_INSTALL_DIR "D:\zephyr-sdk-0.16.8"
-```
-*(Sau đó tắt PowerShell đi mở lại để hệ thống nhận diện biến môi trường mới. Khi mở lại, chỉ cần chạy lệnh `D:\zephyrproject\.venv\Scripts\Activate.ps1` là bạn đã có trọn vẹn môi trường Zephyr hoàn chỉnh chạy 100% trên ổ `D:\`!)*
+Mỗi khi bật máy tính lên để tiếp tục học hoặc code dự án:
+1. Mở Terminal trong Antigravity / VS Code.
+2. Gõ đúng 1 dòng lệnh kích hoạt môi trường:
+   ```powershell
+   D:\zephyrproject\.venv\Scripts\Activate.ps1
+   ```
+3. Sau đó bạn có thể đứng ở bất kỳ thư mục nào (kể cả trong project `D:\Project\STM32F7`) để gõ lệnh `west build` và `west flash` một cách bình thường!
 
 ---
 

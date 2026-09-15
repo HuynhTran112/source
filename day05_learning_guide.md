@@ -71,6 +71,12 @@ Khối **DMA2D (Chrom-ART Accelerator)** là một mạch phần cứng chuyên 
 └────────────────────────────────┴───────────────────────────────────────────────┴────────────────────────────────┘
 ```
 
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385):**
+> 1. **Mở file `RM0385.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`DMA2D functional description`**
+> 2. Nhảy đến **Chapter 10: DMA2D controller -> Section 10.3: DMA2D functional description**:
+>    * Quan sát **Figure 39. DMA2D block diagram**: Xem cấu tạo các khối bên trong DMA2D: Bus Master Interface (đọc nguồn / ghi đích), Pixel Pipeline (PFC cho Foreground và Background), Bảng tra màu CLUT và Khối hòa trộn Blending.
+>    * Đọc mục luồng dữ liệu pixel: DMA2D nạp các điểm ảnh từ nguồn vào FIFO nội bộ, chuyển đổi không gian màu độc lập mà không can thiệp vào bộ nhớ CPU.
+
 ---
 
 ## 1.2. Bốn Chế Độ Hoạt Động Cốt Lõi của DMA2D (`MODE[1:0]` trong `DMA2D_CR`)
@@ -81,6 +87,12 @@ Khối **DMA2D (Chrom-ART Accelerator)** là một mạch phần cứng chuyên 
 | **`01`b** | **M2M with Pixel Format Conversion (PFC)** | Đọc pixel từ bộ nhớ nguồn, tự động giải mã và chuyển đổi hệ màu (ví dụ từ RGB565 sang ARGB8888 hoặc ARGB4444) trước khi ghi vào đích. | Nạp các icon định dạng nén từ Flash vào Framebuffer SDRAM. |
 | **`10`b** | **M2M with Blending** | Đọc đồng thời 2 lớp ảnh: Lớp tiền cảnh (Foreground) và Lớp hậu cảnh (Background), hòa trộn pixel theo trọng số kênh Alpha ($\alpha$), rồi ghi ra đích. | Vẽ kim đồng hồ trong suốt đè lên mặt đồng hồ tốc độ xe hơi. |
 | **`11`b** | **Register-to-Memory (R2M)** | Ghi trực tiếp giá trị màu định sẵn trong thanh ghi `DMA2D_OCOLR` vào toàn bộ khối pixel đích mà **không cần đọc bất kỳ vùng nhớ nguồn nào**. | Xóa trắng màn hình (Clear Screen) hoặc vẽ các thanh đo tốc độ, hộp thoại chữ nhật siêu tốc. |
+
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385):**
+> 1. **Mở file `RM0385.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`DMA2D control register (DMA2D_CR)`**
+> 2. Nhảy đến **Section 10.4.1: DMA2D_CR**:
+>    * Tra cứu trường bit `MODE[1:0]` (Bits 17:16): Đọc mô tả kỹ thuật chi tiết của ST cho từng chế độ hoạt động phần cứng.
+>    * Chú ý cờ `START` (Bit 0): Mạch phần cứng tự động kéo cờ này về mức 0 khi toàn bộ pixel của hình chữ nhật đã được ghi xong xuống RAM.
 
 ---
 
@@ -113,6 +125,12 @@ Khi vẽ một hình chữ nhật nhỏ có kích thước $W_{box} \times H_{bo
    Sau khi DMA2D vẽ xong $W_{box}$ pixels của một dòng, con trỏ phần cứng phải **nhảy cóc qua phần còn lại của màn hình** để xuống đúng đầu dòng tiếp theo:
    $$\mathbf{\text{Line Offset (OOR)}} = W_{screen} - W_{box} = 480 - W_{box}$$
    * ⚠️ **Lưu ý sống còn:** Giá trị ghi vào `DMA2D_OOR` tính bằng **đơn vị số pixel**, KHÔNG PHẢI số byte! Nếu ghi sai thành byte, hình ảnh sẽ bị xé xéo thành các dải sọc chéo trên màn hình.
+
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385):**
+> 1. **Mở file `RM0385.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`DMA2D output line offset register`**
+> 2. Nhảy đến **Section 10.4.12: DMA2D output line offset register (DMA2D_OOR)**:
+>    * Đọc định nghĩa trường `LO[13:0]` (Line offset): ST định nghĩa rõ ràng "Line offset expressed in pixels". Giá trị này được cộng vào địa chỉ sau khi vẽ xong một dòng.
+>    * Xem tiếp **Section 10.4.13: DMA2D number of line register (DMA2D_NLR)**: Nạp chiều cao hình ảnh vào `NL[15:0]` và chiều rộng điểm ảnh vào `PL[13:0]`.
 
 ---
 
@@ -147,6 +165,13 @@ Trong dự án này, ta sử dụng chuẩn công nghiệp ô tô: **`NVIC_Prior
 │              │              │              │ để SysTick ngắt ngang các ISR truyền thông khẩn cấp│
 └──────────────┴──────────────┴──────────────┴────────────────────────────────────────────────────┘
 ```
+
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Programming Manual (PM0253) & RM0385:**
+> 1. **Mở file `PM0253.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`Application interrupt and reset control register`**
+>    * Nhảy đến **Chapter 4: Core peripherals -> Section 4.3.5: SCB->AIRCR (Address: 0xE000 ED0C)**.
+>    * Tra cứu **Table 49. Priority grouping**: Xem cách trường `PRIGROUP[10:8]` phân bổ 4 bit ngắt của Cortex-M7 thành Preemption Priority và Subpriority. Để chọn 16 mức Preemption và 0 mức Subpriority, bắt buộc nạp `PRIGROUP = 011b` (Nhóm 4) cùng mật mã bảo vệ `VECTKEY = 0x05FA`.
+> 2. **Mở file `RM0385.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`Vector table for STM32F7`**
+>    * Nhảy đến **Chapter 10: Interrupts and events -> Table 43**: Đối chiếu thứ tự và vị trí phần cứng: `CAN1_RX0_IRQn = 19`, `USART1_IRQn = 37`, `LTDC_IRQn = 88`, `DMA2D_IRQn = 90`.
 
 
 ---
@@ -368,6 +393,14 @@ src/
 
 ### 📂 KHỐI 1: FILE HEADER GIAO DIỆN DMA2D [ `drivers/inc/dma2d.h` ]
 
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 1:
+1. **Kiến trúc khối tăng tốc đồ họa Chrom-ART:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `DMA2D functional description` (Chapter 10 Section 10.3).
+   - Tham chiếu các tính năng phần cứng: Register-to-Memory (R2M), M2M copy, Blending.
+2. **Kích thước màn hình và bảng mã màu RGB565:**
+   - **Mở `RM0385.pdf`** ➔ `Section 10.4.10: DMA2D_OPFCCR`: Bảng mã màu định dạng `CM[2:0] = 010b` (RGB565 - 16 bits/pixel: 5 bits Red, 6 bits Green, 5 bits Blue).
+   - Màu Đen: `0x0000`, Trắng: `0xFFFF`, Đỏ: `0xF800` (Red max), Lục: `0x07E0` (Green max), Lam: `0x001F` (Blue max).
+
 #### TODO 1 [File: `drivers/inc/dma2d.h`]: Khai báo API Đồ Họa Tăng Tốc Phần Cứng
 ```c
 #ifndef DMA2D_H
@@ -417,6 +450,21 @@ uint8_t DMA2D_WaitTransferComplete(uint32_t timeout_cycles);
 
 ### 📂 KHỐI 2: FILE SOURCE DRIVER DMA2D [ `drivers/src/dma2d.c` ]
 
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 2:
+1. **Cấp xung ngoại vi DMA2D trên AHB1:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `RCC_AHB1ENR` (Section 5.3.12): Bit 23 `DMA2DEN` (DMA2D clock enable).
+2. **Cấu hình thanh ghi điều khiển DMA2D_CR & cờ ngắt:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `DMA2D control register (DMA2D_CR)` (Section 10.4.1):
+     - Bit 9 `TCIE` (Transfer complete interrupt enable).
+     - Bit 8 `TEIE` (Transfer error interrupt enable).
+3. **Cơ chế xóa cờ ngắt W1C (Write-Only to Clear):**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `DMA2D interrupt flag clear register (DMA2D_IFCR)` (Section 10.4.3):
+     - Bit 1 `CTCIF` (Clear transfer complete interrupt flag).
+     - Bit 0 `CTEIF` (Clear transfer error interrupt flag).
+     - **LƯU Ý:** IFCR là thanh ghi Write-only, đọc luôn ra 0. Bắt buộc ghi `=` trực tiếp, cấm dùng `|=`.
+4. **Kích hoạt ngắt phần cứng NVIC:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `Table 43. Vector table for STM32F7`: `DMA2D global interrupt` có vị trí Position = 90 (`DMA2D_IRQn = 90`).
+
 #### TODO 2 [File: `drivers/src/dma2d.c`]: Khởi Tạo Cấp Xung & Xử Lý Ngắt DMA2D
 ```c
 #include "dma2d.h"
@@ -460,6 +508,22 @@ void DMA2D_IRQHandler(void)
     }
 }
 ```
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 3:
+1. **Thanh ghi địa chỉ bộ nhớ đích OMAR:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `DMA2D output memory address register (DMA2D_OMAR)` (Section 10.4.11):
+     - `MA[31:0]`: Output memory address. Với RGB565 (2 bytes/pixel): `start_addr = dst_base + 2 * (y * 480 + x)`.
+2. **Thanh ghi độ lệch dòng OOR (Line Offset):**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `DMA2D output line offset register (DMA2D_OOR)` (Section 10.4.12):
+     - `LO[13:0]`: Line offset tính bằng số PIXEL (không phải số byte!): `LO = 480 - width`.
+3. **Thanh ghi kích thước vùng vẽ NLR:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `DMA2D number of line register (DMA2D_NLR)` (Section 10.4.13):
+     - `NL[15:0]` (Bits 31:16): Number of lines = Chiều cao (height).
+     - `PL[13:0]` (Bits 13:0): Pixel per line = Chiều rộng (width).
+4. **Cấu hình định dạng màu và chế độ R2M:**
+   - `DMA2D_OPFCCR` (Section 10.4.10): `CM[2:0] = 010b` (RGB565).
+   - `DMA2D_OCOLR` (Section 10.4.14): Nạp mã màu 16-bit RGB565.
+   - `DMA2D_CR` (Section 10.4.1): `MODE[1:0] = 11b` (Register-to-Memory), Bit 0 `START = 1`.
 
 #### TODO 3 [File: `drivers/src/dma2d.c`]: Hàm Vẽ Khối Chữ Nhật R2M Siêu Tốc
 ```c
@@ -514,6 +578,11 @@ uint8_t DMA2D_WaitTransferComplete(uint32_t timeout_cycles)
 
 ### 📂 KHỐI 3: THIẾT KẾ PHÂN TẦNG ƯU TIÊN NGẮT [ `drivers/src/nvic_config.c` ]
 
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 4:
+1. **Kiến trúc phân tầng ưu tiên ngắt:**
+   - **Mở `PM0253.pdf`** ➔ `Ctrl + F` ➔ `Nested vectored interrupt controller (NVIC)` (Chapter 4 Section 4.3).
+   - Khai báo prototype `System_NVIC_Priority_Init()` cho toàn bộ hệ thống nhúng.
+
 #### TODO 4 [File: `drivers/inc/nvic_config.h`]: Khai Báo API Cấu Hình NVIC
 ```c
 #ifndef NVIC_CONFIG_H
@@ -525,6 +594,21 @@ void System_NVIC_Priority_Init(void);
 
 #endif /* NVIC_CONFIG_H */
 ```
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 5:
+1. **Thanh ghi SCB->AIRCR và cấu hình Priority Grouping:**
+   - **Mở `PM0253.pdf`** ➔ `Ctrl + F` ➔ `Application interrupt and reset control register (AIRCR)` (Section 4.3.5):
+     - Mật mã truy cập: `VECTKEY = 0x05FA` (Bits 31:16).
+     - Phân nhóm Priority Group 4: `PRIGROUP[10:8] = 011b` (16 mức Preemption, 0 mức Subpriority).
+2. **Gán mức ưu tiên cho từng Vector ngắt qua NVIC->IPR:**
+   - **Mở `PM0253.pdf`** ➔ `Ctrl + F` ➔ `Interrupt priority registers (NVIC_IPR0-NVIC_IPR59)` (Section 4.3.7):
+     - 4-bit cao [7:4] của mỗi byte quản lý mức ưu tiên ngắt.
+   - **Mở `RM0385.pdf`** ➔ `Table 43. Vector table for STM32F7`:
+     - `CAN1_RX0_IRQn (19)` ➔ Gán Priority 1 (An toàn cao nhất).
+     - `USART1_IRQn (37)` ➔ Gán Priority 2.
+     - `DMA2D_IRQn (90)` ➔ Gán Priority 3.
+     - `LTDC_IRQn (88)` ➔ Gán Priority 4.
+     - `SysTick_IRQn (-1)` ➔ Gán Priority 15 (Thấp nhất).
 
 #### TODO 5 [File: `drivers/src/nvic_config.c`]: Cấu Hình Nhóm Phân Tầng Ưu Tiên Chuẩn Automotive
 ```c
@@ -564,6 +648,13 @@ void System_NVIC_Priority_Init(void)
 ---
 
 ### 📂 KHỐI 4: TÍCH HỢP HỆ THỐNG [ `src/main.c` ]
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 6:
+1. **Kiến trúc tích hợp tổng thể:**
+   - Khởi động Clock 216MHz (RM0385 Chapter 5 RCC).
+   - Phân cấp ngắt an toàn trước khi kích hoạt bất kỳ ngoại vi nào (PM0253 Chapter 4).
+   - Khởi tạo SDRAM (FMC Chapter 13), LTDC (Chapter 18), DMA2D (Chapter 10), CAN (Chapter 31), UART DMA (Chapter 8 & 30).
+   - Tận dụng lệnh `__WFI()` (Wait For Interrupt - PM0253 Section 2.5) đưa CPU vào chế độ Sleep tiết kiệm điện khi không có sự kiện.
 
 #### TODO 6 [File: `src/main.c`]: Vẽ Giao Diện Tốc Độ Bằng DMA2D Dưới Tải CAN Bus
 ```c

@@ -66,6 +66,12 @@ Khối **IWDG** là một mạch đếm lùi phần cứng 12-bit hoàn toàn đ
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385):**
+> 1. **Mở file `RM0385.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`IWDG functional description`**
+> 2. Nhảy đến **Chapter 25: Independent watchdog (IWDG) -> Section 25.3: IWDG functional description**:
+>    * Quan sát **Figure 234. Independent watchdog block diagram**: Xem cách bộ chia tần số Prescaler nhận nguồn xung LSI độc lập (không qua bus APB) và cấp xung cho bộ đếm 12-bit đếm lùi.
+>    * Đọc bảng **Table 123. Min/max IWDG timeout periods (at 32 kHz LSI)**: Xem các dải thời gian timeout tối thiểu và tối đa tùy theo hệ số chia Prescaler từ `/4` đến `/256`.
+
 ### Công thức Toán học Tính Thời Gian Timeout của IWDG:
 Thời gian đếm lùi tối đa trước khi Reset hệ thống được tính theo công thức:
 $$T_{timeout} = \frac{4 \times 2^{\text{PR[2:0]}} \times (\text{RLR} + 1)}{f_{LSI}}$$
@@ -100,6 +106,12 @@ Khác với IWDG chỉ quan tâm xem phần mềm có bị "chết đứng" hay 
 
 > 🎯 **Giá trị kỹ thuật ô tô:** Nếu code bị con trỏ hoang đâm loạn xạ hoặc vòng lặp bị nhảy cóc bước khiến lệnh refresh chó bị gọi liên tục không đúng chu kỳ $\implies$ WWDG sẽ phát hiện và khởi động lại vi điều khiển ngay.
 
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385):**
+> 1. **Mở file `RM0385.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`WWDG functional description`**
+> 2. Nhảy đến **Chapter 26: Window watchdog (WWDG) -> Section 26.3: WWDG functional description**:
+>    * Quan sát **Figure 236. Watchdog block diagram**: Xem mạch so sánh giữa thanh ghi ngưỡng cửa sổ `W[6:0]` và bộ đếm tự do `T[6:0]`.
+>    * Quan sát **Figure 237. Window watchdog timing diagram**: Phân biệt rõ vùng cấm nạp (Forbidden window / Too early) và vùng nạp hợp lệ (Valid window) để hiểu lý do tại sao nạp chó quá sớm lại gây Reset.
+
 ---
 
 ## 1.3. Cơ Chế Bảo Vệ Mất Xung Nhịp CSS (Clock Security System) & Ngắt NMI
@@ -113,6 +125,13 @@ Nếu xe đang chạy ở tốc độ 100 km/h mà thạch anh ngoài HSE 25MHz 
      * **Bước 1:** Phần cứng **tự động cắt kết nối HSE**, chuyển tức thì nguồn cấp SYSCLK sang dao động nội **HSI 16MHz**.
      * **Bước 2:** Phần cứng tự động tắt bit `PLLON` và phát tín hiệu ngắt **NMI (Non-Maskable Interrupt - Ngắt Bất Khả Kháng)**.
      * **Bước 3:** CPU nhảy ngay vào `NMI_Handler`, ghi nhận lỗi hỏng phần cứng vào Flash, chuyển trạng thái xe sang chế độ an toàn (Limp-Home Mode) và cảnh báo người lái!
+
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385) & Programming Manual (PM0253):**
+> 1. **Mở file `RM0385.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`Clock security system (CSS)`**
+>    * Nhảy đến **Chapter 5: Reset and clock control (RCC) -> Section 5.2.7: Clock security system (CSS)**:
+>    * Đọc quy trình phản ứng phần cứng: Khi HSE lỗi, CSS tự ngắt kết nối HSE, đổi nguồn cấp sang HSI, và kích hoạt ngắt NMI lõi Cortex-M7.
+> 2. **Mở file `PM0253.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`Configurable fault status register`**
+>    * Nhảy đến **Chapter 4: Core peripherals -> Section 4.3.9 (`SCB->CFSR`)**: Tra cứu cách phân tích lỗi vi xử lý qua 3 thanh ghi con: `MMFSR` (Memory Management Fault), `BFSR` (BusFault), và `UFSR` (UsageFault).
 
 
 ---
@@ -372,6 +391,11 @@ src/
 
 ### 📂 KHỐI 1: FILE HEADER AN TOÀN HỆ THỐNG [ `drivers/inc/watchdog.h` ]
 
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 1:
+1. **Kiến trúc khối an toàn và giám sát:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `Independent watchdog (IWDG)` (Chapter 25) & `Clock security system (CSS)` (Chapter 5 Section 5.2.7).
+   - Tra cứu và thiết kế các nguyên mẫu API chuẩn công nghiệp: Cấu hình IWDG theo mili-giây (`IWDG_Config`), làm tươi bộ đếm (`IWDG_Refresh`), và kích hoạt mạch bảo vệ thạch anh ngoài (`System_CSS_Enable`).
+
 #### TODO 1 [File: `drivers/inc/watchdog.h`]: Khai báo API Watchdog & Giám Sát Xung Nhịp
 ```c
 #ifndef WATCHDOG_H
@@ -401,6 +425,24 @@ void System_CSS_Enable(void);
 ---
 
 ### 📂 KHỐI 2: FILE SOURCE DRIVER AN TOÀN [ `drivers/src/watchdog.c` ]
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 2:
+1. **Đóng băng Watchdog khi Debugger Breakpoint:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `DBGMCU_APB1_FZ` (Section 38.16.2):
+     - Bit 12 `DBG_IWDG_STOP`: Đóng băng bộ đếm IWDG khi dừng tại Breakpoint.
+     - Bit 11 `DBG_WWDG_STOP`: Đóng băng bộ đếm WWDG khi dừng tại Breakpoint.
+2. **Khóa an toàn Key Register và mở quyền ghi:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `IWDG key register (IWDG_KR)` (Section 25.4.1):
+     - Ghi `0xCCCC`: Kích hoạt bộ đếm IWDG (Start).
+     - Ghi `0x5555`: Mở khóa ghi thanh ghi Prescaler `IWDG_PR` và Reload `IWDG_RLR`.
+     - Ghi `0xAAAA`: Nạp lại giá trị RLR vào bộ đếm lùi (Feed Dog).
+3. **Đồng bộ miền xung LSI qua Status Register:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `IWDG status register (IWDG_SR)` (Section 25.4.4):
+     - Bit 0 `PVU` (Prescaler Value Update) & Bit 1 `RVU` (Reload Value Update).
+     - Bắt buộc polling `while (IWDG->SR & (IWDG_SR_PVU | IWDG_SR_RVU));` trước khi nạp giá trị mới!
+4. **Cài đặt bộ chia Prescaler và giá trị Reload:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `IWDG_PR` (Section 25.4.2): `PR[2:0] = 100b` (Prescaler /64).
+   - `Ctrl + F` ➔ `IWDG_RLR` (Section 25.4.3): `RL[11:0]` (12-bit reload value, max 4095).
 
 #### TODO 2 [File: `drivers/src/watchdog.c`]: Khởi Tạo IWDG Chuẩn Xác Từng Bước
 ```c
@@ -449,6 +491,17 @@ void IWDG_Refresh(void)
 }
 ```
 
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 3:
+1. **Kích hoạt mạch giám sát thạch anh ngoài CSS:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `RCC clock control register (RCC_CR)` (Section 5.3.1): Bit 19 `CSSON` (Clock security system enable).
+2. **Cờ ngắt CSS và xóa cờ ngắt trong thanh ghi CIR:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `RCC clock interrupt register (RCC_CIR)` (Section 5.3.3):
+     - Bit 7 `CSSF` (Clock security system interrupt flag - Read Only).
+     - Bit 23 `CSSC` (Clock security system interrupt clear - W1C: Ghi 1 để xóa cờ).
+3. **Ngắt bất khả kháng NMI (Non-Maskable Interrupt):**
+   - **Mở `RM0385.pdf`** ➔ `Table 43. Vector table for STM32F7`: Exception số 2 (`NMI_Handler`).
+   - Đây là ngắt phần cứng không thể bị vô hiệu hóa bởi bất kỳ lệnh phần mềm nào (kể cả `__disable_irq()`).
+
 #### TODO 3 [File: `drivers/src/watchdog.c`]: Kích Hoạt CSS & Xử Lý Ngắt Bất Khả Kháng NMI
 ```c
 void System_CSS_Enable(void)
@@ -482,6 +535,15 @@ void NMI_Handler(void)
 ---
 
 ### 📂 KHỐI 3: TÍCH HỢP VÒNG LẶP HỆ THỐNG [ `src/main.c` ]
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 4:
+1. **Kiểm tra cờ nguyên nhân Reset trước đó:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `RCC clock control & status register (RCC_CSR)` (Section 5.3.23):
+     - Bit 29 `IWDGRSTF`: Independent watchdog reset flag.
+     - Bit 30 `WWDGRSTF`: Window watchdog reset flag.
+     - Bit 24 `RMVF`: Remove reset flag (W1C).
+2. **Quy tắc an toàn kích hoạt Watchdog:**
+   - Watchdog chỉ được kích hoạt SAU KHI toàn bộ các ngoại vi khởi động xong (`CAN_Init`, `UART_DMA_Init`...) để tránh bị Watchdog reset sớm trong lúc nạp firmware hoặc cấu hình phần cứng nặng.
 
 #### TODO 4 [File: `src/main.c`]: Vòng Lặp Chính Kick Dog Định Kỳ & Kiểm Tra Khởi Động
 ```c

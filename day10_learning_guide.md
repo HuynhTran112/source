@@ -80,6 +80,10 @@
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Tài Liệu Zephyr Kernel:**
+> 1. **Tra cứu Thiết Kế Đa Luồng:** Mở tài liệu Zephyr tại `https://docs.zephyrproject.org/latest/kernel/services/threads/index.html` (Mục *Threads & Workqueue Services*).
+> 2. Đọc mô hình Producer-Consumer: Sử dụng Message Queue làm vùng đệm đồng bộ giữa các luồng có mức ưu tiên khác nhau, đảm bảo ngắt ISR hoặc luồng thời gian thực không bị chặn khi đẩy dữ liệu vào bộ đệm.
+
 ---
 
 ## 1.2. Mổ Xẻ Bẫy Đảo Ngược Mức Ưu Tiên (Priority Inversion) & Giải Pháp Priority Inheritance
@@ -101,6 +105,11 @@ KỊCH BẢN NGUY HIỂM (Priority Inversion khi dùng Khóa không có Kế th�
 * Lúc này, Luồng Trung Bình không thể chen ngang Luồng Thấp được nữa.
 * Luồng Thấp nhanh chóng xử lý xong đoạn găng, nhả Mutex ra $\implies$ Mức ưu tiên của nó hạ về như cũ, và Luồng Cao ngay lập tức giành quyền thực thi.
 
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Zephyr Synchronization Primitives:**
+> 1. **Tra cứu Cơ chế Mutex:** Mở `https://docs.zephyrproject.org/latest/kernel/services/synchronization/mutexes.html`.
+>    * Đọc phần *Priority Inheritance*: Zephyr mô tả chi tiết cách nhân can thiệp nâng mức ưu tiên động cho luồng giữ khóa khi có một luồng ưu tiên cao hơn đang xếp hàng chờ tài nguyên.
+> 2. **So sánh với Semaphore:** Mở trang *Semaphores* và lưu ý: Zephyr Semaphore KHÔNG hỗ trợ Priority Inheritance, do đó không bao giờ được dùng Semaphore làm cơ chế bảo vệ đoạn găng thay cho Mutex.
+
 ---
 
 ## 1.3. So Sánh Cơ Chế IPC: `k_msgq` vs `k_fifo` vs `k_sem`
@@ -111,6 +120,11 @@ KỊCH BẢN NGUY HIỂM (Priority Inversion khi dùng Khóa không có Kế th�
 | **Cấp phát bộ nhớ** | Tĩnh hoàn toàn lúc khai báo (`CAN_MSGQ_DEFINE`). 0 rủi ro cấp phát. | Cần cấp phát bộ nhớ động (`k_heap` hoặc `k_mem_slab`) cho từng node. | 0 byte dữ liệu. |
 | **Rủi ro rò rỉ bộ nhớ** | **KHÔNG CÓ** (Bộ nhớ quay vòng tĩnh). | CÓ NGUY CƠ (Nếu bên nhận quên `free` con trỏ nhận được). | Không có. |
 | **Khuyến nghị sử dụng** | **Chuẩn mực cho gói tin vi điều khiển (CAN, UART, Sensor data).** | Truyền các khối dữ liệu khổng lồ (Ảnh camera, gói tin TCP/IP). | Đồng bộ hóa sự kiện đơn lẻ hoặc đếm tài nguyên. |
+
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Zephyr Data Passing:**
+> 1. **Tra cứu Message Queue:** Mở `https://docs.zephyrproject.org/latest/kernel/services/data_passing/message_queues.html`.
+>    * Xem cấu trúc hàng đợi Ring Buffer tĩnh: Các thao tác `k_msgq_put()` và `k_msgq_get()` thực hiện copy an toàn theo giá trị với độ phức tạp $O(1)$.
+> 2. **Tra cứu Shell Subsystem:** Mở `https://docs.zephyrproject.org/latest/services/shell/index.html` để hiểu kiến trúc dòng lệnh CLI không chặn (Non-blocking UART backend).
 
 ---
 
@@ -181,6 +195,11 @@ zephyr_gateway/
 
 ### 📂 KHỐI 1: ĐỊNH NGHĨA DỮ LIỆU LIÊN LUỒNG [ `src/gateway_model.h` ]
 
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 1:
+1. **Tra cứu Cấu trúc dữ liệu IPC và Atomic Types:**
+   - **Mở Zephyr Docs** ➔ `Kernel Services -> Atomic Services`: Header `<zephyr/sys/atomic.h>` cung cấp kiểu `atomic_t` đảm bảo phép tăng giảm bộ đếm gói tin không bị chia cắt giữa các luồng.
+   - Định nghĩa struct `VehicleTelemetry_t` chứa toàn bộ trường dữ liệu táp-lô xe hơi (Speed, RPM, Temp, Battery, Gear).
+
 #### TODO 1 [File: `src/gateway_model.h`]: Cấu Trúc Dữ Liệu Táp-Lô Xe Hơi
 ```c
 #ifndef GATEWAY_MODEL_H
@@ -216,6 +235,17 @@ extern atomic_t g_can_err_count;
 ---
 
 ### 📂 KHỐI 2: ĐIỀU PHỐI HÀNG ĐỢI IPC [ `src/gateway_ipc.c` ]
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 2:
+1. **Cấp phát hàng đợi tĩnh K_MSGQ_DEFINE:**
+   - **Mở Zephyr Docs** ➔ `Kernel Services -> Message Queues`:
+     - Cú pháp: `K_MSGQ_DEFINE(q_name, q_msg_size, q_max_msgs, q_align)`.
+     - Phân bổ 8 slots, mỗi slot `sizeof(VehicleTelemetry_t)` với căn lề 4-byte.
+2. **Khởi tạo biến Atomic:**
+   - Sử dụng macro `ATOMIC_INIT(0)` để khởi tạo các biến đếm thống kê an toàn đa luồng.
+3. **Luồng GUI Model Consumer:**
+   - Chờ gói tin qua `k_msgq_get(&g_telemetry_msgq, &telemetry, K_FOREVER)`.
+   - Cập nhật sang cụm đồng hồ táp-lô qua các API đã bảo vệ Mutex (`GUI_Cluster_UpdateSpeed`, `GUI_Cluster_UpdateRPM`).
 
 #### TODO 2 [File: `src/gateway_ipc.c`]: Cấp Phát MsgQ & Luồng GUI Model Consumer
 ```c
@@ -262,6 +292,17 @@ K_THREAD_DEFINE(gui_model_tid, MODEL_THREAD_STACK_SIZE,
 ---
 
 ### 📂 KHỐI 3: GIAO DIỆN DÒNG LỆNH CHẨN ĐOÁN [ `src/cli_shell.c` ]
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 3:
+1. **Hệ thống Shell trong Zephyr:**
+   - **Mở Zephyr Docs** ➔ `Subsystems -> Shell`:
+     - Header `<zephyr/shell/shell.h>`.
+     - Macro `SHELL_STATIC_SUBCMD_SET_CREATE` định nghĩa danh sách lệnh con.
+     - Macro `SHELL_CMD_REGISTER` đăng ký root command name (ví dụ `gateway`).
+     - Hàm `shell_print(sh, fmt, ...)` in chuỗi ra Console không chặn.
+2. **Trích xuất số liệu chẩn đoán:**
+   - Sử dụng `atomic_get()` đọc biến đếm RX/TX/Error.
+   - Sử dụng `k_msgq_num_free_get()` kiểm tra số lượng slot trống trong hàng đợi IPC.
 
 #### TODO 3 [File: `src/cli_shell.c`]: Đăng Ký Hệ Thống Lệnh Zephyr Shell
 ```c
@@ -327,6 +368,12 @@ SHELL_CMD_REGISTER(gateway, &sub_gateway, "Lệnh chẩn đoán hệ thống CAN
 ---
 
 ### 📂 KHỐI 4: ĐIỀU PHỐI TOÀN BỘ HỆ THỐNG [ `src/main.c` ]
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 4:
+1. **Kiến trúc Dispatcher Worker đa luồng:**
+   - Luồng `can_dispatcher_thread` đọc frame từ `g_can_rx_msgq`, tăng biến đếm nguyên tử `g_can_rx_count`.
+   - Phân giải ID 0x100 thành các trường `speed_kmh` và `engine_rpm`.
+   - Chuyển tiếp tức thì vào `g_telemetry_msgq` bằng hàm `k_msgq_put(..., K_NO_WAIT)` (thao tác O(1) không khóa).
 
 #### TODO 4 [File: `src/main.c`]: Cầu Nối Luồng CAN RX Vào Hàng Đợi Telemetry
 ```c

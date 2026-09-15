@@ -64,6 +64,14 @@ Lõi STM32F746 có bộ nhớ SRAM nội $512\text{ KB}$. Để chứa các lớ
  └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385) & Datasheet (DS10610):**
+> 1. **Mở file `RM0385.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`FMC functional description`**
+>    * Nhảy đến **Chapter 13: Flexible memory controller (FMC) -> Section 13.3**.
+>    * Quan sát **Figure 77. FMC block diagram**: Xem luồng liên kết giữa Bus AXI/AHB của Cortex-M7 và khối điều khiển SDRAM controller.
+>    * Nhảy tiếp đến **Section 13.4: SDRAM controller**: Quan sát **Figure 82. SDRAM controller block diagram** để thấy cách mạch dồn kênh địa chỉ (Row/Col Multiplexer) và khối sinh lệnh phát tín hiệu ra chip ngoài.
+> 2. **Mở file `DS10610.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`Table 11. Alternate function mapping`**
+>    * Tra cứu cột **`AF12`** để kiểm tra toàn bộ 38 chân GPIO của FMC (tín hiệu điều khiển `SDCLK`, `SDCKE0`, `SDNE0`, `SDNRAS`, `SDNCAS`, `SDNWE`, đường địa chỉ `A[11:0]`, `BA[1:0]` và dữ liệu `D[15:0]`).
+
 ### Thông số kỹ thuật vật lý của SDRAM trên board:
 * **Không gian định tuyến Base Address:** Thuộc **FMC SDRAM Bank 5 (SDRAM Bank 1)** bắt đầu tại địa chỉ **`0xC000 0000`**.
 * **Độ rộng Bus dữ liệu (`MWID`):** **16-bit** (`01b`).
@@ -113,6 +121,12 @@ Không giống như SRAM thông thường (cấp điện là đọc/ghi được
  └─────────────────────────────────────────────────────────────────────────┘
 ```
 
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385):**
+> 1. **Mở file `RM0385.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`SDRAM initialization sequence`**
+> 2. Đọc kỹ 8 bước khởi tạo tiêu chuẩn tại **Section 13.4.3: SDRAM initialization sequence**:
+>    * Hãng quy định chặt chẽ: Bắt buộc cấp clock và duy trì mức điện áp ổn định tối thiểu $100\,\mu\text{s}$ bằng lệnh NOP, tiếp theo là lệnh Precharge All (`PALL`), nạp ít nhất 2 chu kỳ Auto-Refresh (`NRFS`), và phát lệnh `MRS` nạp Mode Register trước khi chip có thể nhận lệnh đọc/ghi bình thường.
+>    * Quan sát **Figure 83. Command mode timing diagram** để thấy quan hệ thời gian giữa tín hiệu `SDCKE`, `SDCS` và các chu kỳ lệnh JEDEC.
+
 ### Công thức tính toán Bộ đếm Refresh Timer (`FMC_SDRTR`):
 Theo Datasheet của chip SDRAM: Toàn bộ $4096\text{ hàng}$ phải được làm tươi trong vòng tối đa $64\text{ ms}$:
 $$\text{Thời gian làm tươi cho 1 hàng} = \frac{64\text{ ms}}{4096\text{ Rows}} = 15.625\,\mu\text{s}$$
@@ -122,6 +136,12 @@ $$\text{Số chu kỳ Clock} = 15.625\,\mu\text{s} \times 108\text{ MHz} = 1687.
 
 Theo Reference Manual RM0385 (Section 13.7.7), giá trị nạp vào trường `COUNT[12:0]` có biên dự phòng $20\text{ chu kỳ}$:
 $$\mathbf{\text{COUNT}} = (\text{Refresh Rate} \times f_{SDCLK}) - 20 = 1687 - 20 = \mathbf{1667} \quad (\mathbf{\text{Mã Hex: } 0x0683})$$
+
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385):**
+> 1. **Mở file `RM0385.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`SDRAM Refresh Timer register`**
+> 2. Nhảy đến **Section 13.7.7: FMC_SDRTR**:
+>    * Đối chiếu công thức tính trường `COUNT[12:0]` do ST quy định: $\text{COUNT} = (\text{SDRAM refresh rate} \times f_{SDCLK}) - 20$.
+>    * Giải thích kỹ thuật: Trừ đi $20\text{ chu kỳ}$ clock là yêu cầu an toàn phần cứng để đảm bảo xung làm tươi không bị vi phạm thời gian trễ tối đa $t_{REF}$ khi bộ điều khiển FMC đang bận xử lý giao dịch dữ liệu dở dang trên bus.
 
 ---
 
@@ -144,6 +164,12 @@ Khối **LTDC (LCD-TFT Display Controller)** điều khiển màn hình màu $4.
  Total Height = 10 + 2  + 272 + 2  = 286 lines (VSYNC=10, VBP=2, Active=272, VFP=2)
  Pixel Clock (DOTCLK) mục tiêu: 566 x 286 x 60 Hz = 9.71 MHz (Cấp từ PLLSAI)
 ```
+
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385):**
+> 1. **Mở file `RM0385.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`LTDC functional description`**
+> 2. Nhảy đến **Chapter 18: LCD-TFT display controller -> Section 18.3**:
+>    * Quan sát **Figure 173. LTDC block diagram**: Xem cách bộ tạo xung Pixel Clock (từ PLLSAI), bộ sinh tín hiệu đồng bộ quét (HSYNC, VSYNC, DE), và 2 lớp đồ họa phần cứng (Layer 1, Layer 2) trộn màu Alpha Blending trước khi xuất ra cổng RGB.
+>    * Quan sát **Figure 174. LCD-TFT timing diagram**: Đối chiếu chính xác 4 vùng chu kỳ quét: Vùng xung đồng bộ (`HSYNC`/`VSYNC`), Khoảng đệm tích lũy sau (`HBP`/`VBP`), Vùng hiển thị tích cực (`Active Area`), và Khoảng đệm trước (`HFP`/`VFP`).
 
 ---
 
@@ -174,6 +200,12 @@ Tearing xảy ra khi tia quét phần cứng của LTDC đang quét dở nửa m
 
 * **Quy tắc vàng chống Tearing:** Tuyệt đối không tráo đổi con trỏ Framebuffer ngay lập tức (`IMR`). Phải ghi vào thanh ghi nạp bóng **`LTDC->SRCR = LTDC_SRCR_VBR` (Vertical Blanking Reload)**: Phần cứng sẽ kiên nhẫn chờ tia quét quét xong pixel cuối cùng của màn hình và bước vào khoảng lặng dọc **VBLANK** mới chính thức tráo đổi địa chỉ đọc sang Buffer mới!
 
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385):**
+> 1. **Mở file `RM0385.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`Shadow registers reload`**
+> 2. Nhảy đến **Section 18.4.1: LTDC shadow registers reload**:
+>    * Đọc phần nguyên lý hoạt động của bóng nạp: Địa chỉ lớp `LTDC_LxCFBAR` được bảo vệ bởi thanh ghi bóng (Shadow register).
+>    * Đối chiếu cơ chế bit `VBR` (Vertical Blanking Reload): Khi ghi `VBR = 1`, phần cứng chỉ cập nhật địa chỉ lớp khi tia quét đạt đến dòng quét cuối cùng (`TWCR`), ngăn chặn tuyệt đối tình trạng rách hình khi tráo đệm đồ họa.
+
 ---
 
 ## 1.5. Cấu hình Vùng nhớ MPU Chống Lỗi Mất Đồng Bộ D-Cache trên Framebuffer
@@ -184,6 +216,13 @@ Tearing xảy ra khi tia quét phần cứng của LTDC đang quét dở nửa m
 * **Giải pháp chuẩn Bare-metal:** Dùng khối **MPU (Memory Protection Unit)** của ARM Cortex-M7 cấu hình vùng nhớ SDRAM thành:
   * Thuộc tính **Normal, Non-cacheable** (Không dùng Cache), HOẶC
   * Thuộc tính **Write-Through** (CPU ghi pixel vào Cache là mạch tự động ghi đồng thời xuống SDRAM ngay lập tức).
+
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Programming Manual (PM0253):**
+> 1. **Mở file `PM0253.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`Memory protection unit (MPU)`**
+> 2. Nhảy đến **Chapter 4: Core peripherals -> Section 4.5: Memory protection unit (MPU)**:
+>    * Xem sơ đồ cấu trúc các thanh ghi MPU: `MPU_TYPE`, `MPU_CTRL`, `MPU_RNR`, `MPU_RBAR`, `MPU_RASR`.
+>    * Tra cứu bảng **`Table 41. Memory attribute encoding`**: Xem bảng giải mã các bit `TEX[2:0]`, `C`, `B`. Để cấu hình bộ nhớ thông thường không dùng cache (Normal memory, Non-cacheable), ta chọn: `TEX = 001b`, `C = 0`, `B = 0`.
+>    * Đọc nguyên tắc an toàn: Trước khi cấu hình bất kỳ Region nào, bắt buộc phải tắt MPU bằng `MPU->CTRL = 0`, chèn hàng rào bộ nhớ `__DMB()` / `__DSB()`, và sau khi cấu hình xong phải bật lại kèm cờ `PRIVDEFENA` để giữ nguyên bản đồ nhớ hệ thống mặc định của ARM.
 
 
 ---
@@ -467,6 +506,18 @@ src/
 
 ### 📂 KHỐI 1: FILE HEADER SDRAM DRIVER [ `drivers/inc/sdram.h` ]
 
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 1:
+1. **Địa chỉ cơ sở SDRAM `0xC000 0000`:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `Table 1. STM32F74xxx and STM32F75xxx register boundary addresses`.
+   - Tra cứu dòng `FMC - SDRAM Bank 1` ➔ Cột Address: `0xC000 0000 - 0xCFFFFFFF`.
+2. **Dung lượng SDRAM 8 MBytes:**
+   - **Mở Schematics STM32F746G-DISCO hoặc Datasheet IS42S32400F/MT48LC4M32B2**:
+   - Chip SDRAM: 4 Banks x 1M x 16-bit (tổng cộng 64 Mbits = 8 MBytes).
+3. **Kích thước màn hình Rocktech LCD (480 x 272):**
+   - **Mở `DS10610.pdf`** hoặc User Manual bo mạch **`UM1907`** ➔ Section 4.5 `LCD-TFT display`: Độ phân giải màn hình 4.3 inch là 480 x 272 pixels.
+   - Định dạng màu RGB565: Mỗi pixel chiếm 2 bytes ➔ `FRAMEBUFFER_SIZE_BYTES = 480 * 272 * 2 = 261,120 bytes` (0x3FC00 bytes).
+   - Địa chỉ Buffer 0: `0xC000 0000`, Buffer 1: `0xC000 0000 + 0x40000 = 0xC004 0000` (căn lề tròn 256 KB).
+
 #### TODO 1 [File: `drivers/inc/sdram.h`]: Khai báo Địa chỉ SDRAM & Prototypes
 ```c
 #ifndef SDRAM_H
@@ -493,6 +544,35 @@ void SDRAM_Init(void);
 ---
 
 ### 📂 KHỐI 2: FILE SOURCE SDRAM DRIVER [ `drivers/src/sdram.c` ]
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 2:
+1. **Cấp xung ngoại vi FMC & GPIO:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `RCC_AHB3ENR` (Section 5.3.14): Bit 0 `FMCEN` (Cấp xung cho khối FMC).
+   - `Ctrl + F` ➔ `RCC_AHB1ENR` (Section 5.3.12): Bit 3 `GPIODEN`, Bit 4 `GPIOEEN`, Bit 5 `GPIOFEN`, Bit 6 `GPIOGEN`, Bit 7 `GPIOHEN`.
+2. **Ghép kênh hơn 30 chân tín hiệu FMC:**
+   - **Mở `DS10610.pdf`** ➔ `Ctrl + F` ➔ `Table 11. Alternate function mapping` ➔ Cột `AF12` (FMC).
+   - Tra cứu và đặt `MODER = 10b` (Alternate Function), `OSPEEDR = 11b` (Very High Speed), `AFRH`/`AFRL = 12` (0x0C).
+3. **Cấu hình thanh ghi điều khiển SDCR1 và định thời SDTR1:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `SDRAM control register 1 (FMC_SDCR1)` (Section 13.7.2):
+     - `NC[1:0]` = 00b (8 column bits, A0-A7).
+     - `NR[1:0]` = 01b (12 row bits, A0-A11).
+     - `MWID[1:0]` = 01b (16-bit data bus).
+     - `NB` = 1b (4 internal banks).
+     - `CAS[1:0]` = 10b (2 clock cycles CAS latency).
+     - `SDCLK[1:0]` = 10b (2 x HCLK periods = 216MHz / 2 = 108MHz).
+     - `RBURST` = 1b (Burst read enabled).
+   - `Ctrl + F` ➔ `SDRAM timing register 1 (FMC_SDTR1)` (Section 13.7.4): Tra bảng Datasheet chip IS42S32400F nạp độ trễ: `TMRD`, `TXSR`, `TRAS`, `TRC`, `TWR`, `TRP`, `TRCD`.
+4. **Chuỗi 5 lệnh phát qua thanh ghi lệnh SDCMR:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `SDRAM Command Mode register (FMC_SDCMR)` (Section 13.7.5):
+     - `MODE[2:0]`: `001b` (Clock Config Enable / NOP), `010b` (PALL - Precharge All), `011b` (Auto-refresh), `100b` (Load Mode Register).
+     - `CTB1` (Bit 4): Chọn phát lệnh đến SDRAM Bank 1.
+     - `NRFS[3:0]` (Bits 8:5): Nạp số chu kỳ Auto-refresh (8 chu kỳ nạp giá trị 7).
+     - `MRD[13:0]` (Bits 22:9): Mã nạp Mode Register (0x0220 = Burst Length 1, CAS 2).
+   - `Ctrl + F` ➔ `FMC_SDSR` (Section 13.7.6): Bit 5 `BUSY`. Phải polling `while (FMC_Bank5_6->SDSR & FMC_SDSR_BUSY)` trước mỗi lệnh!
+5. **Cài đặt bộ đếm làm tươi tự động Refresh Counter:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `SDRAM Refresh Timer register (FMC_SDRTR)` (Section 13.7.7):
+     - Công thức ST: `COUNT = (Refresh_rate * f_SDCLK) - 20 = (64ms / 4096 * 108MHz) - 20 = 1687 - 20 = 1667`.
+     - Nạp `COUNT = 1667` vào trường `COUNT[12:0]` (Bits 13:1).
 
 #### TODO 2 [File: `drivers/src/sdram.c`]: Cấu hình 5 Bước Khởi Tạo SDRAM
 ```c
@@ -562,6 +642,13 @@ void SDRAM_Init(void)
 
 ### 📂 KHỐI 3: FILE HEADER LTDC DRIVER [ `drivers/inc/ltdc.h` ]
 
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 3:
+1. **Kiến trúc hàm điều khiển LTDC:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `LCD-TFT display controller (LTDC)` (Chapter 18).
+   - Xác định quy trình quản lý màn hình: Khởi tạo xung/định thời (`LTDC_Init`), tráo đệm đồng bộ (`LTDC_SwapBuffers`), xóa màn hình bằng ghi bộ nhớ Framebuffer (`LCD_Clear`).
+2. **Khai báo nguyên mẫu API và cơ chế Shadow Reload:**
+   - Đối chiếu cơ chế thanh ghi nạp lại bóng `LTDC_SRCR` (Section 18.7.7) để thiết kế hàm tráo đệm an toàn không gây xé hình.
+
 #### TODO 3 [File: `drivers/inc/ltdc.h`]: Khai báo LTDC API & Tearing-Free Swap
 ```c
 #ifndef LTDC_H
@@ -584,6 +671,34 @@ void LCD_Clear(uint32_t framebuffer_addr, uint16_t color);
 ---
 
 ### 📂 KHỐI 4: FILE SOURCE LTDC DRIVER [ `drivers/src/ltdc.c` ]
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 4:
+1. **Cấp clock LTDC trên Bus APB2:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `RCC_APB2ENR` (Section 5.3.17): Bit 26 `LTDCEN`.
+2. **Cài đặt các thông số định thời quét màn hình LCD 480x272:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `LTDC synchronization size configuration register (LTDC_SSCR)` (Section 18.7.1):
+     - `HSW[11:0]`: Horizontal Synchronization Width (41 - 1 = 40).
+     - `VSH[10:0]`: Vertical Synchronization Height (10 - 1 = 9).
+   - `Ctrl + F` ➔ `LTDC back porch configuration register (LTDC_BPCR)` (Section 18.7.2):
+     - `AHBP[11:0]`: Accumulated Horizontal Back Porch = HSW + HBP - 1 = 41 + 13 - 1 = 53.
+     - `AVBP[10:0]`: Accumulated Vertical Back Porch = VSH + VBP - 1 = 10 + 2 - 1 = 11.
+   - `Ctrl + F` ➔ `LTDC active width configuration register (LTDC_AWCR)` (Section 18.7.3):
+     - `AAW[11:0]`: Accumulated Active Width = HSW + HBP + ActiveWidth - 1 = 54 + 480 - 1 = 533.
+     - `AAH[10:0]`: Accumulated Active Height = VSH + VBP + ActiveHeight - 1 = 12 + 272 - 1 = 283.
+   - `Ctrl + F` ➔ `LTDC total width configuration register (LTDC_TWCR)` (Section 18.7.4):
+     - `TOTALW[11:0]`: Total Width = AAW + HFP = 534 + 32 - 1 = 565.
+     - `TOTALH[10:0]`: Total Height = AAH + VFP = 284 + 2 - 1 = 285.
+3. **Cấu hình lớp đồ họa Layer 1 (LTDC_Layer1):**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `LTDC_LxPFCR` (Section 18.7.13): Pixel Format `PF[2:0] = 010b` (RGB565).
+   - `Ctrl + F` ➔ `LTDC_LxCFBAR` (Section 18.7.15): Color Frame Buffer Start Address = nạp địa chỉ `0xC000 0000`.
+   - `Ctrl + F` ➔ `LTDC_LxCFBLR` (Section 18.7.16): Buffer Length = Pitch (Width * 2 bytes + 3) và Line Length (Width * 2 bytes).
+   - `Ctrl + F` ➔ `LTDC_LxCFBLNR` (Section 18.7.17): Number of lines = 272.
+   - `Ctrl + F` ➔ `LTDC_LxCR` (Section 18.7.12): Bit 0 `LEN` (Layer Enable).
+4. **Cơ chế nạp bóng Shadow Register chống xé hình:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `LTDC shadow reload configuration register (LTDC_SRCR)` (Section 18.7.7):
+     - Bit 0 `IMR` (Immediate Reload): Cập nhật ngay lập tức (dùng khi khởi động ban đầu).
+     - Bit 1 `VBR` (Vertical Blanking Reload): Cập nhật an toàn khi tia quét vào vùng VBLANK (dùng trong `LTDC_SwapBuffers`).
+     - Polling chờ cờ xóa: `while (LTDC->SRCR & LTDC_SRCR_VBR);`.
 
 #### TODO 4 [File: `drivers/src/ltdc.c`]: Cấu hình Định Thời LTDC & Layer 1
 ```c
@@ -646,6 +761,14 @@ void LTDC_SwapBuffers(uint32_t new_framebuffer_address)
 ---
 
 ### 📂 KHỐI 5: FILE MAIN CHÍNH [ `src/main.c` ]
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 5:
+1. **Khởi tạo hệ thống & bảo vệ vùng nhớ MPU:**
+   - **Mở `PM0253.pdf`** ➔ `Ctrl + F` ➔ `Table 41. Memory attribute encoding` (Section 4.5.5).
+   - Đảm bảo hàm cấu hình MPU đặt vùng SDRAM `0xC000 0000` (kích thước 8MB) ở thuộc tính Non-cacheable trước khi ghi vào Framebuffer.
+2. **Vòng lặp vẽ đồ họa và tráo đệm không xé hình:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `LTDC shadow registers reload` (Section 18.4.1).
+   - Cơ chế bắt tay: CPU luôn vẽ vào bộ đệm ẩn (`current_draw_buffer`), gọi `LTDC_SwapBuffers()`, phần cứng chờ tia quét vào VBLANK mới tráo, sau đó đảo 2 con trỏ đệm.
 
 #### TODO 5 [File: `src/main.c`]: Khởi chạy Đồ Họa & Vòng Lặp Vẽ Hoán Đổi Buffer
 ```c

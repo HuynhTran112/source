@@ -32,6 +32,14 @@ Cùng một cơ sở mã nguồn và phần cứng STM32F746 bạn đã viết t
 | **Từ khóa "Ghi điểm"** | `CAN Bus`, `Vector DBC`, `AUTOSAR E2E`, `ISO 11898-1 Bus-Off`, `ISO 26262`, `Rolling Counter`. | `ARM Cortex-M7`, `L1 D-Cache Coherency`, `FMC SDRAM`, `DMA2D Chrom-ART`, `Zephyr RTOS`, `IPC`. |
 | **Tài liệu chứng minh** | Ma trận giải mã DBC, thuật toán E2E CRC-8, máy trạng thái Bus-Off Recovery. | Bảng đo đạc hiệu năng DWT Cycle Counter, bản đồ căn lề 32-byte Alignment, MPU Stack Guard. |
 
+> 📖 **Hướng Dẫn Tra Cứu Tiêu Chuẩn & Thuật Ngữ Khi Viết CV (Standards Lookup):**
+> 1. **Tiêu chuẩn An toàn Chức năng Ô tô (ISO 26262)**:
+>    * Tra cứu Part 4 (System Level) và Part 5 (Hardware Level): Định vị các khái niệm FTTI (Fault Tolerant Time Interval), Single Point Fault Metric (SPFM), E2E Protection.
+> 2. **Tiêu chuẩn Giao tiếp Mạng Xe Hơi (ISO 11898-1)**:
+>    * Định vị mục: Error Counters (TEC/REC), Active Error, Passive Error, và quy trình thoát Bus-Off (128 lần xuất hiện 11 bit recessive liên tiếp).
+> 3. **Tiêu chuẩn Chất lượng Mã Nguồn (MISRA-C:2012)**:
+>    * MISRA Rule 11.4 (Chuyển đổi con trỏ tới địa chỉ thanh ghi phần cứng) ➔ Cách lập bảng giải trình ngoại lệ (Deviation Matrix) để chứng minh tư duy kỹ sư chuyên nghiệp.
+
 ---
 
 # 🗺️ BƯỚC 2: SƠ ĐỒ TOÀN CẢNH HỆ THỐNG ĐA KIẾN TRÚC (MASTER ARCHITECTURE)
@@ -83,23 +91,34 @@ Dưới đây là sơ đồ kiến trúc tổng thể toàn bộ dự án bạn 
 
 Bảng tổng hợp vị trí tra cứu chuẩn xác xuyên suốt toàn bộ dự án để bạn tự tin giải trình trong bất kỳ buổi phỏng vấn kỹ thuật chuyên sâu nào:
 
-| Ngày | Khối Chức Năng / Ngoại Vi | Tài Liệu Bắt Buộc | Từ Khóa Tra Cứu (`Ctrl + F`) | Vị Trí Chương / Section / Binding Đích |
-| :---: | :--- | :--- | :--- | :--- |
-| **Day 00** | Nền tảng Thanh ghi & C Struct | `RM0385` | `Register boundary addresses` | Chapter 2 (Memory Map -> Table 1) & Chapter 6 (GPIO). |
-| **Day 01** | Clock Tree, PLL & Over-drive | `RM0385` & `DS10610` | `RCC register map`, `Over-drive` | Chapter 5 (RCC Section 5.3) & Chapter 4 (PWR Over-drive). |
-| **Day 02** | UART RX DMA & D-Cache Coherency | `RM0385` & `PM0253` | `DMA register map`, `Channel selection` | Chapter 13 (DMA Section 13.3) & PM0253 Chapter 4 (L1-Cache). |
-| **Day 03** | bxCAN, Bit Timing & 28 Filters | `RM0385` & `DS10610` | `CAN register map`, `CAN_BTR` | Chapter 31 (bxCAN Section 31.9) & DS10610 (Table 11 Pin AF9). |
-| **Day 04** | FMC SDRAM, LTDC & MPU | `RM0385` & `PM0253` | `FMC register map`, `Memory protection unit` | RM0385 Chapter 13, 18 & PM0253 Chapter 4 (Section 4.5 MPU). |
-| **Day 05** | DMA2D Chrom-ART & NVIC Matrix | `RM0385` & `PM0253` | `DMA2D register map`, `AIRCR` | RM0385 Chapter 10 & PM0253 Chapter 4 (Section 4.3 NVIC). |
-| **Day 06** | IWDG, WWDG, CSS & HardFault | `RM0385` & `PM0253` | `IWDG register map`, `Configurable fault` | RM0385 Chapter 25, 26, 38 & PM0253 Chapter 4 (Section 4.3.9 CFSR). |
-| **Day 07** | Zephyr Bring-Up & MPU Guard | `Zephyr SDK` & `DTS` | `CONFIG_MPU_STACK_GUARD`, `gpio-leds` | `zephyr/dts/bindings/gpio/gpio-leds.yaml` & `stm32f746g_disco.dts`. |
-| **Day 08** | Zephyr CAN Driver & Pinctrl | `Zephyr SDK` & `DTS` | `CONFIG_CAN`, `st,stm32-can` | `zephyr/dts/bindings/can/st,stm32-can.yaml` & `pinctrl.dtsi`. |
-| **Day 09** | Zephyr Display LTDC & LVGL | `Zephyr SDK` & `LVGL` | `CONFIG_LVGL`, `st,stm32-ltdc` | `zephyr/dts/bindings/display/st,stm32-ltdc.yaml` & `display.h`. |
-| **Day 10** | Zephyr Shell CLI & IPC MsgQ | `Zephyr SDK` & `Kconfig`| `CONFIG_SHELL`, `CONFIG_THREAD_ANALYZER` | `zephyr/include/zephyr/shell/shell.h` & `kernel.h`. |
-| **Day 11** | Vector DBC Unpacking & CRC-8 | `Vector DBC` & `AUTOSAR`| `BO_`, `SG_`, `E2E Profile` | Vector DBC Specification & AUTOSAR E2E Protocol Spec. |
-| **Day 12** | ISO 26262, MISRA-C & Bus-Off | `ISO 26262` & `MISRA` | `FTTI`, `MISRA-C:2012 Rule 21.3` | Tiêu chuẩn ISO 26262-5/6 & Zephyr `drivers/watchdog.h`. |
-| **Day 13** | DWT Cycle Counter & Unity Test | `PM0253` & `CMSIS` | `Data watchpoint and trace (DWT)` | PM0253 Chapter 4 (Section 4.8 DWT) & `core_cm7.h`. |
-| **Day 14** | Master Capstone & Automotive CV | `All Specs` | `Dual-Architecture Gateway` | Báo cáo kiến trúc 2 tầng (Bare-metal + Zephyr RTOS). |
+| Ngày | Khối Chức Năng / Ngoại Vi | Tra Cứu Nguyên Lý & Sơ Đồ Khối (Bước 1) | Tra Cứu Thanh Ghi, Cấu Hình & API (Bước 2) |
+| :---: | :--- | :--- | :--- |
+| **Day 00** | Nền tảng Thanh ghi & C Struct | RM0385 Sec 6.3 Fig 23 (Cấu trúc mạch chân I/O) | RM0385 Chap 2 Table 1 (Memory Map Base Address) |
+| **Day 01** | Clock Tree, PLL & Over-drive | RM0385 Sec 5.1.4 (Giới hạn PLL) & Sec 4.1.4 (Chuỗi Over-drive) | RM0385 Sec 5.3 (RCC Map), Sec 3.4 (Flash Latency Table 5) |
+| **Day 02** | UART RX DMA & D-Cache Coherency | RM0385 Sec 30.5.2 (IDLE Line) & PM0253 Chap 4 (L1 Cache TRM) | RM0385 Sec 13.3.27 (DMA2 Map), Table 27 (Channel 4 Stream 2) |
+| **Day 03** | bxCAN, Bit Timing & 28 Filters | RM0385 Sec 31.4 (Chế độ Loopback), Sec 31.5.5 (Filter Banks) | RM0385 Sec 31.9 (bxCAN Map), DS10610 Table 11 (Pin PB8/PB9 AF9) |
+| **Day 04** | FMC SDRAM, LTDC & MPU | RM0385 Sec 13.3 Fig 77 (FMC), Sec 18.3 Fig 173/174 (LTDC Timings) | RM0385 Sec 13.7 (FMC Map), Sec 18.7 (LTDC Map), PM0253 Sec 4.5 |
+| **Day 05** | DMA2D Chrom-ART & NVIC Matrix | RM0385 Sec 10.3 Fig 39 (DMA2D Pipeline), PM0253 Sec 4.3 (NVIC) | RM0385 Sec 10.4 (DMA2D Map), PM0253 Sec 4.3.5 (AIRCR PRIGROUP) |
+| **Day 06** | IWDG, WWDG, CSS & HardFault | RM0385 Sec 25.3 Fig 234 (IWDG), Sec 26.3 Fig 237 (WWDG Window) | RM0385 Sec 25.4 (IWDG Map), Sec 26.5 (WWDG Map), PM0253 Sec 4.3.9 |
+| **Day 07** | Zephyr Bring-Up & MPU Guard | Zephyr Kernel Services (Scheduling), PM0253 Sec 2.5 (MemManage) | `gpio-leds.yaml`, `stm32f746g_disco.dts`, `CONFIG_MPU_STACK_GUARD` |
+| **Day 08** | Zephyr CAN Driver & Pinctrl | Zephyr Hardware CAN Controller Model, Transceiver Modes | `st,stm32-can.yaml`, `pinctrl.dtsi`, `zephyr/drivers/can.h` |
+| **Day 09** | Zephyr Display LTDC & LVGL | LVGL Draw Buffer Architecture (VDB), Flush callback `flush_cb` | `st,stm32-ltdc.yaml`, `st,stm32-fmc-sdram.yaml`, `display.h` |
+| **Day 10** | Zephyr Shell CLI & IPC MsgQ | Producer-Consumer Pattern, Priority Inversion & Inheritance | `zephyr/shell/shell.h` (`SHELL_CMD_REGISTER`), `kernel.h` (`k_msgq`) |
+| **Day 11** | Vector DBC Unpacking & CRC-8 | Vector CANdb++ Specification, Motorola Sawtooth Bit Ordering | Vector DBC `BO_`/`SG_` syntax, AUTOSAR E2E Profile 1 Spec |
+| **Day 12** | ISO 26262, MISRA-C & Bus-Off | ISO 26262 FTTI, RM0385 Sec 31.6 (bxCAN Error Management FSM) | MISRA-C:2012 Rules, Zephyr `drivers/watchdog.h` |
+| **Day 13** | DWT Cycle Counter & Unity Test | PM0253 Sec 4.8 (DWT Cycle Count), Cold Boot Timing Standards | `CoreDebug->DEMCR`, `DWT->CYCCNT`, Unity Test Framework |
+| **Day 14** | Master Capstone & Automotive CV | Dual-Architecture Gateway Architecture (Bare-Metal + RTOS) | Báo cáo kiến trúc tổng thể, hồ sơ kỹ thuật phỏng vấn chuyên sâu |
+
+> 📖 **Hướng Dẫn Phương Pháp Luận Tra Cứu 3 Tài Liệu Gốc Cốt Lõi (Master Documentation Strategy):**
+> 1. **Tài Liệu 1: STM32F746xx Reference Manual (`RM0385.pdf` - 1340 trang)**:
+>    * **Mục tiêu**: Tra cứu cấu trúc bên trong của vi điều khiển, nguyên lý hoạt động của từng khối ngoại vi, sơ đồ khối phần cứng (Block Diagrams) và bản đồ thanh ghi (Register Maps + Bitfields).
+>    * **Chiến thuật tìm kiếm nhanh**: Luôn mở mục lục (Bookmarks), nhảy thẳng vào chương ngoại vi tương ứng (ví dụ Chapter 31: bxCAN) ➔ đi tới phần Register Map ở cuối chương để lấy Offset và phân tích bitfield.
+> 2. **Tài Liệu 2: STM32F746xx Datasheet (`DS10610.pdf` - 215 trang)**:
+>    * **Mục tiêu**: Tra cứu giới hạn điện áp, dòng điện, tần số bus tối đa (Max Clock Frequencies: AHB 216MHz, APB1 54MHz, APB2 108MHz), thời gian đáp ứng phần cứng (AC/DC Timings) và **Bảng ghép kênh chân Alternate Function (Table 11: Alternate function mapping)**.
+>    * **Chiến thuật tìm kiếm nhanh**: Khi cần cấu hình bất kỳ chân GPIO nào ra ngoại vi (UART, CAN, FMC, LTDC), nhấn `Ctrl + F` ➔ gõ tên chân (ví dụ `PB8` hoặc `PI12`) trong Table 11 để lấy số hiệu `AFx` (AF0 đến AF15).
+> 3. **Tài Liệu 3: ARM Cortex-M7 Programming Manual (`PM0253.pdf` / DDI0489F TRM)**:
+>    * **Mục tiêu**: Tra cứu các ngoại vi lõi của ARM không thuộc sở hữu riêng của ST: Khối điều khiển hệ thống `SCB` (AIRCR, VTOR), bảng ngắt `NVIC` (ISER, IPR), khối bảo vệ bộ nhớ `MPU` (RBAR, RASR), hệ thống L1 Cache (ICIALLU, DCCMVAC), và bộ đếm chu kỳ `DWT` (DEMCR, DWT_CYCCNT).
+>    * **Chiến thuật tìm kiếm nhanh**: Bấm `Ctrl + F` với tên thanh ghi lõi (ví dụ: `AIRCR`, `DWT_CYCCNT`, `DEMCR`).
 
 ---
 
@@ -120,19 +139,81 @@ stm32f746-dual-can-gateway/
 ├── test/                      <-- Bộ Unit Test chạy trên PC host bằng Unity Framework
 │   ├── test_dbc_decoder.c
 │   └── Makefile
+├── .github/
+│   └── workflows/
+│       └── unit_test.yml      <-- CI/CD tự động chạy Unit Test mỗi khi commit/PR
 └── README.md                  <-- Trang chủ Portfolio cực kỳ chuyên nghiệp
 ```
 
-### 💡 Trích Đoạn Vàng Trong File `README.md`: "Known Issues & Lessons Learned"
-*(Đây là phần các nhà tuyển dụng cấp cao thích đọc nhất vì nó thể hiện tư duy xử lý sự cố thực tế!)*
+---
 
-> ### 🛠️ Known Issues & Engineering Lessons Learned:
-> 1. **D-Cache False Sharing Corruption (Solved):** Khi bật L1 D-Cache trên Cortex-M7, việc gọi hàm `SCB_InvalidateDCache_by_Addr()` cho UART RX Ring Buffer vô tình làm hỏng các biến toàn cục nằm cạnh.  
->    * *Khắc phục:* Buộc căn lề bộ đệm đúng **$32\text{ bytes}$** (`__attribute__((aligned(32)))`) bằng đúng độ dài một Cache Line vật lý.
-> 2. **Motorola Big-Endian Zig-Zag Bit Order (Solved):** Khi giải mã tín hiệu góc lái `Steering_Angle` từ mạng CAN, giá trị bị sai lệch hoàn toàn so với mô phỏng.  
->    * *Khắc phục:* Nhận diện sự khác biệt cốt lõi: Start Bit của Motorola là MSB (không phải LSB như Intel). Viết lại hàm `DBC_UnpackRaw` hỗ trợ bước nhảy lùi zíc-zắc qua các ranh giới byte.
-> 3. **IWDG Reset During Breakpoint Debugging (Solved):** Khi đặt breakpoint trong Keil/VS Code, chip bị reset liên tục sau mỗi 2 giây.  
->    * *Khắc phục:* Khai báo bit `DBG_IWDG_STOP` trong thanh ghi `DBGMCU->APB1FZ` để đóng băng bộ đếm Watchdog mỗi khi lõi CPU bị tạm dừng.
+### 📂 KHỐI TÀI LIỆU VÀ QUẢN LÝ DỰ ÁN CAPSTONE
+
+#### TODO 1 [File: `README.md`]: Thiết Lập Mục "Known Issues & Engineering Lessons Learned"
+
+> 📖 **Hướng Dẫn Tra Cứu Kỹ Thuật Từng Bước Cho TODO 1 (README.md):**
+> 1. **Tra cứu Quy chuẩn Báo cáo Sự cố Kỹ thuật (Post-Mortem / Lessons Learned)**:
+>    * Cấu trúc tiêu chuẩn cho mỗi sự cố: (1) Hiện tượng lỗi (Symptom), (2) Nguyên nhân gốc rễ phần cứng/silicon (Root Cause), (3) Giải pháp kỹ thuật triệt để (Solution & Verification).
+> 2. **Dẫn chứng 3 Bug kinh điển đã giải quyết trong 14 ngày**:
+>    * Bug 1: Lỗi D-Cache False Sharing do bộ đệm DMA không căn lề 32-byte (Ngày 02).
+>    * Bug 2: Thứ tự bit zíc-zắc của Motorola Big-Endian Start Bit là MSB (Ngày 11).
+>    * Bug 3: IWDG Watchdog reset CPU trong lúc dừng breakpoint debug (Ngày 06).
+
+```markdown
+### 🛠️ Known Issues & Engineering Lessons Learned:
+1. **D-Cache False Sharing Corruption (Solved):** Khi bật L1 D-Cache trên Cortex-M7, việc gọi hàm `SCB_InvalidateDCache_by_Addr()` cho UART RX Ring Buffer vô tình làm hỏng các biến toàn cục nằm cạnh.  
+   * *Khắc phục:* Buộc căn lề bộ đệm đúng **32 bytes** (`__attribute__((aligned(32)))`) bằng đúng độ dài một Cache Line vật lý.
+2. **Motorola Big-Endian Zig-Zag Bit Order (Solved):** Khi giải mã tín hiệu góc lái `Steering_Angle` từ mạng CAN, giá trị bị sai lệch hoàn toàn so với mô phỏng.  
+   * *Khắc phục:* Nhận diện sự khác biệt cốt lõi: Start Bit của Motorola là MSB (không phải LSB như Intel). Viết lại hàm `DBC_UnpackRaw` hỗ trợ bước nhảy lùi zíc-zắc qua các ranh giới byte.
+3. **IWDG Reset During Breakpoint Debugging (Solved):** Khi đặt breakpoint trong Keil/VS Code, chip bị reset liên tục sau mỗi 2 giây.  
+   * *Khắc phục:* Khai báo bit `DBG_IWDG_STOP` trong thanh ghi `DBGMCU->APB1FZ` để đóng băng bộ đếm Watchdog mỗi khi lõi CPU bị tạm dừng.
+```
+
+#### TODO 2 [File: `.github/workflows/unit_test.yml`]: Thiết Lập CI/CD Tự Động Hóa Kiểm Thử
+
+> 📖 **Hướng Dẫn Tra Cứu Kỹ Thuật Từng Bước Cho TODO 2 (.github/workflows/unit_test.yml):**
+> 1. **Tra cứu Cú pháp GitHub Actions Workflow**:
+>    * Khởi động trên nhánh `main` khi có sự kiện `push` hoặc `pull_request`.
+>    * Môi trường thực thi: `runs-on: ubuntu-latest`.
+>    * Cài đặt bộ công cụ: `sudo apt-get install -y gcc make`.
+>    * Thực thi lệnh: Chạy `make -C test test` để biên dịch và chạy bộ test Unity DBC Decoder. Nếu bất kỳ assert nào fail, luồng CI sẽ báo đỏ và chặn merge code lỗi.
+
+```yaml
+name: Host Unit Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Install Host Compiler
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc make
+
+    - name: Run Unit Tests with Unity Framework
+      run: |
+        make -C test test
+```
+
+#### TODO 3: Quy Chuẩn Thông Điệp Commit Chuẩn Công Nghiệp (Conventional Commits)
+
+> 📖 **Hướng Dẫn Tra Cứu Chuẩn Đặt Tên Commit (Conventional Commits 1.0.0):**
+> 1. **Cấu trúc Commit**: `<type>(<scope>): <mô tả ngắn ngọn>`
+>    * `feat(can)`: Thêm tính năng mới (ví dụ: `feat(can): implement 28 filter banks initialization in bare-metal`).
+>    * `fix(cache)`: Sửa lỗi (ví dụ: `fix(cache): align uart rx dma ring buffer to 32 bytes to prevent false sharing`).
+>    * `perf(dwt)`: Đo lường và cải thiện hiệu năng (ví dụ: `perf(dwt): benchmark boot-to-display time using dwt cycle counter`).
+>    * `test(dbc)`: Thêm hoặc cập nhật ca kiểm thử (ví dụ: `test(dbc): add unity test cases for motorola signed signals`).
+>    * `docs(readme)`: Cập nhật tài liệu (ví dụ: `docs(readme): add post-mortem analysis and system architecture diagram`).
 
 ---
 

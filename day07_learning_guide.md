@@ -67,6 +67,12 @@ Trong Bare-metal (từ Ngày 0 đến Ngày 6), toàn bộ địa chỉ thanh gh
 * **Trên Linux nhúng:** File Devicetree được biên dịch thành file nhị phân `.dtb`. Khi Linux khởi động, nhân Kernel nạp file `.dtb` vào RAM và duyệt cây (Parsing) lúc Run-time $\implies$ Tốn nhiều RAM và thời gian boot.
 * **Trên Zephyr RTOS:** Bộ tiền xử lý Python đọc file Devicetree và tạo ra file header **`devicetree_generated.h`** chứa các macro `#define` tĩnh. Khi biên dịch code C, Trình biên dịch GCC thay thế trực tiếp các macro này $\implies$ **Tốn đúng 0 byte RAM, thời gian nạp bằng 0 chu kỳ lệnh!**
 
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Tài Liệu Chuẩn Zephyr Project:**
+> 1. **Tra cứu Tài liệu Devicetree:** Truy cập `https://docs.zephyrproject.org/latest/build/dts/index.html` (Mục *Devicetree user guide*).
+>    * Tìm hiểu cấu trúc cây, quan hệ cha-con (Parent-Child nodes), thuộc tính `status = "okay"`, và cơ chế tiền xử lý sinh file `#define` trong `build/zephyr/include/generated/devicetree_generated.h`.
+> 2. **Tra cứu Tài liệu Kconfig:** Truy cập `https://docs.zephyrproject.org/latest/build/kconfig/index.html` (Mục *Configuration System (Kconfig)*).
+>    * Xem nguyên lý nạp cấu hình theo thứ tự ưu tiên: `Kconfig` gốc -> `defconfig` của bo mạch -> `prj.conf` của ứng dụng.
+
 ---
 
 ## 1.2. Cơ Chế Đa Luồng (Multi-Threading) & Phân Bổ Mức Ưu Tiên
@@ -88,6 +94,11 @@ Nhân Zephyr quản lý các tác vụ thực thi bằng bộ lập lịch ưu t
 Độ ưu tiên THẤP ▼  Idle Thread (Mức ưu tiên thấp nhất: CONFIG_NUM_PREEMPT_PRIO)
 ```
 
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Tài Liệu Chuẩn Zephyr Project:**
+> 1. **Tra cứu Bộ lập lịch (Scheduler):** Mở mục *Kernel Services -> Scheduling* (`https://docs.zephyrproject.org/latest/kernel/services/threads/index.html`).
+>    * Đọc quy định về dải ưu tiên: Macro `CONFIG_NUM_COOP_PRIORITIES` (các số âm) và `CONFIG_NUM_PREEMPT_PRIORITIES` (các số dương).
+>    * Tra cứu thuật toán chọn luồng chạy tiếp theo: Luồng Cooperative luôn nắm quyền CPU cho đến khi tự nhường (Yield/Sleep); Luồng Preemptive bị ngắt ngay khi có luồng ưu tiên cao hơn thức dậy.
+
 ---
 
 ## 1.3. Cơ Chế Bảo Vệ Ngăn Xếp Bằng Phần Cứng (`CONFIG_MPU_STACK_GUARD`)
@@ -108,6 +119,11 @@ Zephyr sử dụng khối **MPU (Memory Protection Unit)** của ARM Cortex-M7 �
 * Khi con trỏ `SP` của luồng tụt quá giới hạn và ghi vào vùng **MPU Guard Region**:
 * Phần cứng Cortex-M7 lập tức kích hoạt ngoại lệ **`MemManage Fault`**.
 * Nhân Zephyr bắt ngay lập tức luồng phạm quy, in chính xác tên luồng và địa chỉ gây lỗi ra Terminal qua hàm `k_panic()`, ngăn chặn hoàn toàn việc phá hỏng dữ liệu của các luồng khác!
+
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Zephyr & ARM Architecture:**
+> 1. **Tra cứu Kconfig MPU Guard:** Trong tài liệu Kconfig của Zephyr, tìm kiếm `CONFIG_MPU_STACK_GUARD` hoặc mở file `zephyr/arch/arm/core/cortex_m/mpu/arm_mpu.c`.
+>    * Đọc cơ chế triển khai phần cứng: Zephyr lập trình khối MPU của Cortex-M7 để đặt một trang nhớ bảo vệ (Guard Region, 32 bytes) nằm sát dưới chân của từng thread stack khi context switch.
+> 2. **Tra cứu Xử lý Lỗi MemManage Fault:** Mở PM0253 Section 2.5: Bất kỳ lệnh `STR` nào của CPU cố tình ghi vào vùng MPU Guard đều gây ngoại lệ MemManage, kích hoạt `z_arm_fatal_error()`.
 
 ---
 
@@ -204,6 +220,11 @@ zephyr_gateway/
 
 ### 📂 KHỐI 1: CẤU HÌNH DỰ ÁN [ `CMakeLists.txt` & `prj.conf` ]
 
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 1:
+1. **Quy chuẩn hệ thống build Zephyr CMake:**
+   - **Mở Zephyr Docs** ➔ Tìm kiếm: `Application Development Primer` ➔ Section `CMakeLists.txt`.
+   - Cú pháp bắt buộc: Lệnh `find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})` nạp toàn bộ toolchain, Kconfig, Devicetree và thư viện hệ điều hành trước khi định nghĩa target.
+
 #### TODO 1 [File: `CMakeLists.txt`]: Tích Hợp Dự Án Zephyr RTOS
 ```cmake
 cmake_minimum_required(VERSION 3.20.0)
@@ -213,6 +234,14 @@ project(can_gateway_zephyr)
 
 target_sources(app PRIVATE src/main.c)
 ```
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 2:
+1. **Tra cứu Kconfig qua công cụ Menuconfig:**
+   - Trong terminal, gõ: `west build -t menuconfig` ➔ Bấm phím `/` để tra cứu symbol:
+     - Gõ `GPIO`: Bật `CONFIG_GPIO=y` để biên dịch driver GPIO của STM32.
+     - Gõ `LOG_MODE_DEFERRED`: Bật hệ thống ghi log bất đồng bộ (tránh giật lag).
+     - Gõ `MPU_STACK_GUARD`: Kích hoạt phần cứng MPU bảo vệ ngăn xếp luồng.
+     - Gõ `HEAP_MEM_POOL_SIZE`: Cấp phát vùng nhớ Heap chung cho hệ điều hành.
 
 #### TODO 2 [File: `prj.conf`]: Cấu Hình Subsystem Nhân Zephyr
 ```properties
@@ -240,6 +269,14 @@ CONFIG_HEAP_MEM_POOL_SIZE=4096
 
 ### 📂 KHỐI 2: ĐỊNH NGHĨA PHẦN CỨNG [ `app.overlay` ]
 
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 3:
+1. **Tra cứu Schema Devicetree Binding (.yaml):**
+   - Mở file: `zephyr/dts/bindings/gpio/gpio-leds.yaml`:
+     - Xem mục `compatible: "gpio-leds"`.
+     - Xem thuộc tính `gpios`: Yêu cầu tham chiếu đến phandle của GPIO controller (ví dụ `&gpioi 1`) và cờ cực tính `GPIO_ACTIVE_HIGH`.
+2. **Tra cứu chân nối bo mạch:**
+   - Mở file: `zephyr/boards/arm/stm32f746g_disco/stm32f746g_disco.dts`: Đèn LED xanh gắn vào chân `PI1`.
+
 #### TODO 3 [File: `app.overlay`]: Khai Báo Node LED & Thiết Bị Ngoại Vi
 ```dts
 / {
@@ -265,6 +302,15 @@ CONFIG_HEAP_MEM_POOL_SIZE=4096
 ---
 
 ### 📂 KHỐI 3: MÃ NGUỒN ỨNG DỤNG ĐA LUỒNG [ `src/main.c` ]
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 4:
+1. **Khai báo Thread tĩnh bằng K_THREAD_DEFINE:**
+   - **Mở Zephyr Docs** ➔ `Kernel Services -> Threads`:
+     - Cú pháp `K_THREAD_DEFINE(name, stack_size, entry, p1, p2, p3, prio, options, delay)`.
+     - Bộ nhớ stack được cấp tĩnh và tự động căn lề theo yêu cầu của MPU.
+2. **Ánh xạ thiết bị Devicetree qua GPIO_DT_SPEC_GET:**
+   - **Mở Zephyr Docs** ➔ `Devicetree API -> GPIO DT Spec`:
+     - Macro `GPIO_DT_SPEC_GET(node_id, prop)` chuyển đổi node trong file overlay thành struct `struct gpio_dt_spec` chứa con trỏ `device` và số chân pin tại compile-time.
 
 #### TODO 4 [File: `src/main.c`]: Khởi Tạo Luồng Độc Lập & Nhận Diện Thiết Bị Devicetree
 ```c
@@ -298,6 +344,15 @@ K_THREAD_DEFINE(monitor_tid, MONITOR_STACK_SIZE,
                 monitor_thread_entry, NULL, NULL, NULL,
                 MONITOR_PRIORITY, 0, 0);
 ```
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 5:
+1. **Kiểm tra ngoại vi sẵn sàng và cấu hình:**
+   - **Mở Zephyr Docs** ➔ `Device Driver Model`:
+     - Bắt buộc kiểm tra `gpio_is_ready_dt()` trước khi truy cập ngoại vi.
+     - Hàm `gpio_pin_configure_dt(&s_led, GPIO_OUTPUT_ACTIVE)` cấu hình chiều xuất dữ liệu.
+     - Hàm `gpio_pin_toggle_dt(&s_led)` đảo trạng thái chân LED.
+2. **Cơ chế nhường CPU và điều phối:**
+   - Hàm `k_msleep(500)` đưa luồng vào trạng thái ngủ, nhường CPU cho các luồng khác thực thi.
 
 #### TODO 5 [File: `src/main.c`]: Thân Luồng Thực Thi & Kiểm Tra Sẵn Sàng Thiết Bị
 ```c

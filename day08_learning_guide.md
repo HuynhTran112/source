@@ -66,6 +66,10 @@ Trong Bare-metal ở Ngày 3, chúng ta phải tự quản lý 3 Transmit Mailbo
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Tài Liệu Zephyr CAN Controller:**
+> 1. **Tra cứu Kiến trúc CAN Driver:** Mở tài liệu Zephyr tại `https://docs.zephyrproject.org/latest/hardware/peripherals/can/index.html` (Mục *Controller Area Network (CAN)*).
+> 2. Đọc luồng kiến trúc: Phân biệt giữa 2 tầng: Tầng ứng dụng giao tiếp qua API đồng bộ/bất đồng bộ (`can.h`) và Tầng Low-Level Controller Driver triển khai cho vi điều khiển STM32 (`drivers/can/can_stm32.c`).
+
 ---
 
 ## 1.2. Giải Pháp Gắn Bộ Lọc Phần Cứng Trực Tiếp Vào Message Queue (`can_add_rx_filter_msgq`)
@@ -79,6 +83,11 @@ Trong Bare-metal ở Ngày 3, chúng ta phải tự quản lý 3 Transmit Mailbo
 CAN Bus Frame đến ──► bxCAN Hardware Filter Match ──► ISR Driver ──► k_msgq_put() ──► Đánh thức Worker Thread!
 ```
 
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Zephyr CAN API:**
+> 1. **Mở header:** `zephyr/include/zephyr/drivers/can.h`.
+> 2. Tìm kiếm hàm: `can_add_rx_filter_msgq()` và `can_add_rx_filter()`:
+>    * Đọc tài liệu Doxygen của hàm: Hàm liên kết trực tiếp `k_msgq` vào bảng filter của driver. Khi ISR nhận ngắt FIFO, driver tự gọi `k_msgq_put(msgq, frame, K_NO_WAIT)` từ ngữ cảnh ISR mà không cần context switch sang thread xử lý.
+
 ---
 
 ## 1.3. Căn Bệnh "Im Lặng Vĩnh Viễn": Cơ Chế Chân Standby (STB/EN) của Transceiver Ngoài
@@ -88,6 +97,12 @@ Bo mạch STM32F746G-Discovery không có chip CAN Transceiver onboard. Khi gắ
   * `STB = HIGH (3.3V / 5V)`: Transceiver rơi vào chế độ **Standby / Sleep**. Mạch phát (Driver) bị ngắt điện, mạch thu (Receiver) chuyển sang chế độ phản hồi chậm. **Vi điều khiển gửi dữ liệu ra chân TX nhưng ngoài bus vật lý không có tín hiệu gì!**
   * `STB = LOW (0V - Nối GND)`: Transceiver hoạt động ở chế độ **Normal High-Speed Mode**. Tín hiệu logic từ PB9 được chuyển đổi thành điện áp vi sai $CAN\_H - CAN\_L$ với tốc độ lên tới $1\text{ Mbps}$.
 * 👉 **Nguyên tắc kỹ thuật:** Bắt buộc phải dùng 1 chân GPIO của STM32 để kéo chân STB xuống mức `0V` ngay khi khởi động.
+
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Datasheet CAN Transceiver (SN65HVD230 / TJA1050):**
+> 1. **Mở file Datasheet của chip Transceiver ngoài:** Tìm mục *Operating Modes* hoặc *Pin Description*.
+> 2. Đọc bảng chân chức năng: Chân `Rs` (hoặc `STB`):
+>    * Mức logic HIGH ($V_{CC}$): Kích hoạt chế độ Low-Current Standby Mode (Bộ phát TX bị vô hiệu hóa hoàn toàn).
+>    * Mức logic LOW (GND): Kích hoạt chế độ High-Speed Operation Mode (Bộ phát và bộ thu hoạt động đầy đủ).
 
 ---
 
@@ -200,6 +215,14 @@ zephyr_gateway/
 
 ### 📂 KHỐI 1: FILE HEADER GIAO TIẾP CAN [ `src/can_gateway.h` ]
 
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 1:
+1. **Tra cứu Header Subsystem CAN chuẩn của Zephyr:**
+   - **Mở Zephyr SDK** ➔ `zephyr/include/zephyr/drivers/can.h`:
+     - Chứa toàn bộ định nghĩa `struct can_frame`, `struct can_filter`, và các mã lỗi trả về (`-ENODEV`, `-ENOSPC`, `-EBUSY`).
+   - `zephyr/include/zephyr/kernel.h`: Cung cấp cấu trúc hàng đợi tin nhắn `struct k_msgq`.
+2. **Khai báo dung lượng hàng đợi an toàn:**
+   - Đặt `CAN_RX_QUEUE_SIZE = 16` đảm bảo chứa đủ các burst frame khi tải bus tăng vọt lên 80-90%.
+
 #### TODO 1 [File: `src/can_gateway.h`]: Định Nghĩa Cấu Trúc Gói Tin & Queue
 ```c
 #ifndef CAN_GATEWAY_H
@@ -226,6 +249,18 @@ extern struct k_msgq g_can_rx_msgq;
 ---
 
 ### 📂 KHỐI 2: FILE SOURCE DRIVER CAN ZEPHYR [ `src/can_gateway.c` ]
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 2:
+1. **Lấy con trỏ thiết bị CAN qua Devicetree:**
+   - Sử dụng `DEVICE_DT_GET(DT_ALIAS(can_primary))` để lấy con trỏ `const struct device *`.
+2. **Đánh thức Transceiver vật lý (SN65HVD230 / TJA1050):**
+   - Tra cứu Datasheet chip Transceiver: Chân STB phải ở mức LOW (0V) để đưa mạch vào High-Speed Mode.
+   - Cấu hình qua Zephyr GPIO API: `gpio_pin_configure_dt(&s_can_stb, GPIO_OUTPUT_INACTIVE)`.
+3. **Đăng ký giám sát lỗi Bus-Off:**
+   - Tra cứu `can_set_state_change_callback()` trong `can.h`: Đón nhận sự kiện `CAN_STATE_BUS_OFF` và log lại chỉ số đếm lỗi `tx_err_cnt` (TEC), `rx_err_cnt` (REC).
+4. **Cài đặt Filter Bank liên kết trực tiếp vào k_msgq:**
+   - Tra cứu `can_add_rx_filter_msgq()`: Nhận vào struct `can_filter`, kết nối trực tiếp hardware filter vào `g_can_rx_msgq`.
+   - Gọi `can_start(s_can_dev)` để bắt đầu hoạt động trên bus.
 
 #### TODO 2 [File: `src/can_gateway.c`]: Đánh Thức Transceiver & Đăng Ký Filter MsgQ
 ```c
@@ -305,6 +340,11 @@ int CAN_Gateway_Init(void)
 }
 ```
 
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 3:
+1. **Cấu trúc can_frame và truyền tin:**
+   - **Mở `can.h`**: `struct can_frame` chứa `id`, `dlc` (tối đa 8 bytes với CAN 2.0A/B), và mảng `data[8]`.
+   - Hàm `can_send()`: Truyền timeout hữu hạn `K_MSEC(100)` để ngăn ngừa luồng bị treo vĩnh viễn khi dây bus bị đứt hoặc mất ACK từ các node khác.
+
 #### TODO 3 [File: `src/can_gateway.c`]: Hàm Truyền Gói Tin An Toàn Kèm Timeout
 ```c
 int CAN_Gateway_Send(uint32_t std_id, const uint8_t *data, uint8_t dlc)
@@ -334,6 +374,12 @@ int CAN_Gateway_Send(uint32_t std_id, const uint8_t *data, uint8_t dlc)
 ---
 
 ### 📂 KHỐI 3: LUỒNG THỰC THI CHÍNH [ `src/main.c` ]
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 4:
+1. **Đón nhận tin nhắn từ k_msgq trong luồng Worker:**
+   - **Mở Zephyr Docs** ➔ `Kernel Services -> Message Queues`:
+     - Hàm `k_msgq_get(&g_can_rx_msgq, &rx_frame, K_FOREVER)` đưa luồng vào trạng thái ngủ khi không có gói tin, hoàn toàn không tiêu tốn chu kỳ CPU nào (Zero-CPU idle).
+     - Khi phần cứng bxCAN nhận frame, ISR đẩy frame vào queue và kernel đánh thức luồng dậy tức thì.
 
 #### TODO 4 [File: `src/main.c`]: Khởi Chạy Luồng Nhận CAN Bất Đồng Bộ
 ```c

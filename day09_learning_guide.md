@@ -71,6 +71,12 @@ Thay vì phải tự viết driver khởi tạo thanh ghi LTDC và tự quản l
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Zephyr Display Driver & LVGL:**
+> 1. **Tra cứu Zephyr Display API:** Mở tài liệu Zephyr tại `https://docs.zephyrproject.org/latest/hardware/peripherals/display/index.html` (Mục *Display Interface*).
+>    * Xem cấu trúc `struct display_driver_api`: các hàm callback `write()`, `read()`, `get_capabilities()`.
+> 2. **Tra cứu Driver LTDC Zephyr:** Mở file nguồn `zephyr/drivers/display/display_stm32_ltdc.c`:
+>    * Xem cách Zephyr kết nối ngắt dòng quét LTDC, quản lý Framebuffer trong SDRAM, và chuyển tiếp các vùng chữ nhật pixel từ hàm `display_stm32_ltdc_write()`.
+
 ---
 
 ## 1.2. Cơ Chế Invalidation & Virtual Display Buffer (VDB)
@@ -81,6 +87,11 @@ Thay vì phải tự viết driver khởi tạo thanh ghi LTDC và tự quản l
    * Khi kim đồng hồ tốc độ nhích từ $80 \rightarrow 85\text{ km/h}$, chỉ có một vùng hình chữ nhật nhỏ khoảng $60 \times 30$ pixel bị thay đổi.
    * LVGL **chỉ vẽ lại đúng vùng bẩn $60 \times 30$ pixel** này vào VDB, sau đó gọi hàm `display_write()` để đẩy đúng vùng đó ra Framebuffer ngoài SDRAM.
    * **Hiệu quả:** Giảm tải lưu lượng bus FMC SDRAM tới **$90\%$**, triệt tiêu hoàn toàn hiện tượng nghẽn bus với mạng CAN.
+
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Tài Liệu LVGL:**
+> 1. **Mở tài liệu LVGL Porting Guide:** Truy cập `https://docs.lvgl.io/master/porting/display.html`.
+>    * Đọc phần *Draw buffer*: Phân biệt 3 chế độ đệm: 1 buffer (One buffer), 2 buffers (Double buffer), và kích thước đệm tối ưu ($1/10$ màn hình).
+>    * Xem giải thích cơ chế `disp_drv.flush_cb`: Sau khi vẽ xong một vùng bẩn (Dirty Area `[x1, y1, x2, y2]`), LVGL gọi callback này để đưa con trỏ mảng pixel sang cho hardware driver xuất ra màn hình, và driver phải gọi `lv_disp_flush_ready()` khi hoàn tất.
 
 ---
 
@@ -94,6 +105,11 @@ Thay vì phải tự viết driver khởi tạo thanh ghi LTDC và tự quản l
 Luồng CAN Worker:    k_mutex_lock(&gui_mutex) ──► lv_label_set_text() ──► k_mutex_unlock(&gui_mutex)
 Luồng GUI Render:    k_mutex_lock(&gui_mutex) ──► lv_timer_handler()  ──► k_mutex_unlock(&gui_mutex)
 ```
+
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Tài Liệu LVGL & Zephyr Kernel:**
+> 1. **Mở tài liệu LVGL Operating System & Thread-safety:** Truy cập `https://docs.lvgl.io/master/porting/os.html`.
+>    * Đọc quy định cốt lõi: "LVGL is not thread-safe". Mọi thao tác tạo widget, đổi thuộc tính hoặc gọi `lv_timer_handler()` từ nhiều luồng khác nhau bắt buộc phải được bảo vệ bởi Mutual Exclusion (Mutex).
+> 2. **Tra cứu Mutex Zephyr:** Mở `zephyr/include/zephyr/kernel.h` xem cách khai báo `K_MUTEX_DEFINE(gui_mutex)` và hàm `k_mutex_lock()`, `k_mutex_unlock()`.
 
 ---
 
@@ -208,6 +224,13 @@ zephyr_gateway/
 
 ### 📂 KHỐI 1: FILE HEADER GIAO DIỆN TÁP-LÔ [ `src/gui_cluster.h` ]
 
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 1:
+1. **Tra cứu Thư viện đồ họa LVGL trong Zephyr:**
+   - **Mở Zephyr SDK** ➔ `zephyr/modules/lvgl`: File header chính `<lvgl.h>`.
+   - Tra cứu quy tắc đa luồng: LVGL không hỗ trợ thread-safe nội tại, bắt buộc khai báo `extern struct k_mutex g_gui_mutex` để bảo vệ tài nguyên chia sẻ.
+2. **Khai báo nguyên mẫu giao diện xe hơi:**
+   - Các API cập nhật số liệu tốc độ `GUI_Cluster_UpdateSpeed(uint16_t speed_kmh)` và vòng tua `GUI_Cluster_UpdateRPM(uint16_t rpm)`.
+
 #### TODO 1 [File: `src/gui_cluster.h`]: Khai Báo API Cập Nhật Giao Diện
 ```c
 #ifndef GUI_CLUSTER_H
@@ -234,6 +257,19 @@ extern struct k_mutex g_gui_mutex;
 ---
 
 ### 📂 KHỐI 2: FILE SOURCE WIDGET ĐỒ HỌA [ `src/gui_cluster.c` ]
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 2:
+1. **Tra cứu Widget Arc (Đồng hồ vòng cung):**
+   - **Mở tài liệu LVGL** ➔ `Widgets -> Arc`:
+     - `lv_arc_create(parent)`: Tạo đối tượng vòng cung.
+     - `lv_arc_set_rotation()`, `lv_arc_set_bg_angles()`: Góc quay và độ mở góc (0 đến 270 độ).
+     - `lv_arc_set_range(arc, min, max)`: Cài dải đo từ 0 đến 240 km/h.
+     - `lv_obj_remove_style(..., LV_PART_KNOB)`: Ẩn núm kéo tròn để biến thành mặt đồng hồ hiển thị tĩnh.
+2. **Tra cứu Widget Bar & Label:**
+   - `lv_bar_create()`: Thanh đo vòng tua 0 - 8000 RPM.
+   - `lv_label_create()`: Hiển thị chỉ số số học kích thước font chữ lớn.
+3. **Cơ chế đồng bộ hóa Mutex an toàn:**
+   - Bắt buộc gọi `k_mutex_lock(&g_gui_mutex, K_FOREVER)` trước khi can thiệp widget, và giải phóng bằng `k_mutex_unlock(&g_gui_mutex)` ngay sau khi hoàn tất.
 
 #### TODO 2 [File: `src/gui_cluster.c`]: Khởi Tạo Widget Đồng Hồ Vòng Cung (Arc)
 ```c
@@ -329,6 +365,15 @@ void GUI_Cluster_UpdateRPM(uint16_t rpm)
 ---
 
 ### 📂 KHỐI 3: LUỒNG QUẢN TRỊ ĐỒ HỌA [ `src/main.c` ]
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 3:
+1. **Lấy thiết bị hiển thị mặc định qua Devicetree:**
+   - Macro `DEVICE_DT_GET(DT_CHOSEN(zephyr_display))` trỏ đến node được khai báo trong `chosen { zephyr,display = &ltdc; };`.
+   - Kiểm tra `device_is_ready(display_dev)` trước khi render.
+2. **Vòng lặp LVGL Task Handler:**
+   - **Mở tài liệu LVGL** ➔ `Porting -> Timer Handler`:
+     - Hàm `lv_timer_handler()` tính toán lại tọa độ, vẽ lại các vùng bẩn (Dirty Areas) và kích hoạt flush callback xuống phần cứng.
+     - Bọc bởi Mutex và cho luồng ngủ `k_msleep(10)` để CPU đạt tốc độ làm tươi ổn định 100 FPS mà không làm nghẽn bus.
 
 #### TODO 3 [File: `src/main.c`]: Khởi Động Vòng Lặp Render Định Kỳ
 ```c

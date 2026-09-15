@@ -61,6 +61,10 @@ BO_ 288 Vehicle_Dynamics: 8 Gateway_ECU
   * `@0-`: `@0` nghĩa là định dạng **Motorola (Big-Endian)**; dấu `-` nghĩa là số có dấu (**Signed** bù hai).
   * `(0.5,-1024)`: $\text{Factor} = 0.5$, $\text{Offset} = -1024$.
 
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Vector CANdb++ Specification:**
+> 1. **Tra cứu Tài liệu Đặc tả Vector DBC:** Tìm kiếm tài liệu *Vector CANdb++ File Format Specification* hoặc mở phần trợ giúp (Help Documentation) của phần mềm Vector CANdb++ Editor.
+> 2. Đọc định nghĩa trường bản tin: Cú pháp dòng `BO_` (Message) và các dòng `SG_` (Signals), cách biểu diễn tín hiệu multiplexed (`m0`, `M`), giá trị mặc định, đơn vị đo lường và danh sách các node nhận (Receivers).
+
 ---
 
 ## 1.2. Bản Chất Sự Khác Biệt Giữa Định Dạng Intel và Motorola Trên Mạng CAN
@@ -88,6 +92,11 @@ Byte 3: [31 30 29 28 27 26 25 24 ]
   * Sau đó nhảy sang Bit 7 (MSB) của Byte kế tiếp và tiếp tục đếm lùi!
 * 👉 **Hiểm họa lớn nhất:** Nếu lập trình viên giải mã Motorola bằng thuật toán Intel, toàn bộ các bit MSB và LSB sẽ bị lộn ngược hoàn toàn, khiến xe tính toán sai vận tốc hoặc góc lái.
 
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Chuẩn Biểu Diễn Bit Ô Tô:**
+> 1. **Tra cứu Chuẩn Endianness Vector:** Tìm kiếm tài liệu *Vector Application Note: CAN Message Layout and Byte Order*.
+>    * Xem giản đồ ma trận 64-bit: Đối chiếu cách sắp xếp bit của Intel (Standard Little-Endian: LSB bit thấp -> MSB bit cao) và Motorola (Sequential / Backward Sawtooth: Start bit = MSB, các bit tiếp theo lùi dần về byte trước).
+> 2. Đọc quy tắc giải thuật giải nạp: Xem cách hàm trích xuất bit di chuyển con trỏ byte để không bị nhầm lẫn giữa hai chuẩn.
+
 ---
 
 ## 1.3. Giải Thuật Chuyển Đổi Vật Lý Bằng Số Nguyên Định Điểm (Fixed-Point Scaling)
@@ -105,6 +114,11 @@ $$\text{Physical Value} = (\text{Raw Value} \times \text{Factor}) + \text{Offset
   $$\text{Speed (km/h)} = \text{raw\_val} \gg 4$$
 * Với các hệ số phức tạp như $\text{Factor} = 0.1$ (tương đương chia 10), ta lưu hệ số dưới dạng **Tử số / Mẫu số**:
   $$\text{Value} = \frac{\text{raw\_val} \times \text{Factor\_Numerator}}{\text{Factor\_Denominator}} + \text{Offset}$$
+
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Tiêu Chuẩn AUTOSAR & MISRA:**
+> 1. **Tra cứu AUTOSAR E2E Specification:** Xem tài liệu *AUTOSAR Specification of End-to-End Communication Protection (E2E Protocol)*.
+>    * Tra cứu đa thức CRC-8 Profile 1 (`0x1D` hoặc `0x2F`) và cách trường Alive Counter (4-bit, chu kỳ $0 \dots 15$) bảo vệ gói tin chống đứng gói (Frozen message).
+> 2. **Tra cứu Quy chuẩn MISRA-C Số học:** Quy tắc cấm phép toán dấu phẩy động không tất định trong bộ điều khiển ECU thời gian thực, khuyến nghị sử dụng số nguyên tỷ lệ (Scaled Integers).
 
 ---
 
@@ -169,6 +183,15 @@ src/
 
 ### 📂 KHỐI 1: FILE HEADER MA TRẬN TÍN HIỆU [ `drivers/inc/dbc_decoder.h` ]
 
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 1:
+1. **Tra cứu Đặc tả Vector CANdb++ Specification:**
+   - **Mở tài liệu CANdb++ File Format**:
+     - Cú pháp `SG_ <Signal_Name> : <Start_Bit>|<Length>@<Byte_Order><Sign> (<Factor>,<Offset>) [<Min>|<Max>] "<Unit>" <Receiver>`.
+     - Ánh xạ `@1` ➔ `DBC_BYTE_ORDER_INTEL` (Little-Endian).
+     - Ánh xạ `@0` ➔ `DBC_BYTE_ORDER_MOTOROLA` (Big-Endian).
+2. **Khai báo struct metadata chuẩn tối ưu Flash (.rodata):**
+   - Định nghĩa `DbcSignalMeta_t` chứa đầy đủ trường start bit, bit length, hệ số tử/mẫu (`factor_num`, `factor_den`), offset và ngưỡng bão hòa `min_val`, `max_val`.
+
 #### TODO 1 [File: `drivers/inc/dbc_decoder.h`]: Khai Báo Cấu Trúc Signal Metadata
 ```c
 #ifndef DBC_DECODER_H
@@ -214,6 +237,14 @@ int32_t DBC_DecodeSignal(const uint8_t *payload, uint8_t dlc, const DbcSignalMet
 ---
 
 ### 📂 KHỐI 2: FILE SOURCE THUẬT TOÁN BÓC TÁCH BIT [ `drivers/src/dbc_decoder.c` ]
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 2:
+1. **Tra cứu Chuẩn biểu diễn Bit Endianness trong ô tô:**
+   - **Mở Vector Application Note "CAN Message Layout and Byte Order"**:
+     - Định dạng **Intel (`@1`)**: Start Bit là LSB. Bit tăng tịnh tiến `current_bit = start_bit + i`, chia 8 lấy `byte_idx` và chia dư 8 lấy `bit_idx`.
+     - Định dạng **Motorola Sequential (`@0`)**: Start Bit là MSB. Các bit tiếp theo đếm lùi trong nội bộ byte (`current_bit--`), khi chạm bit 0 của byte đó thì nhảy zíc-zắc sang bit 7 của byte kế tiếp (`current_bit += 15`).
+2. **Bảo vệ an toàn bộ nhớ:**
+   - Bắt buộc kiểm tra `byte_idx < dlc` chống truy cập ngoài mảng khi frame thực nhận ngắn hơn dự kiến.
 
 #### TODO 2 [File: `drivers/src/dbc_decoder.c`]: Giải Thuật Bóc Tách Bit Intel & Motorola
 ```c
@@ -275,6 +306,14 @@ uint32_t DBC_UnpackRaw(const uint8_t *payload, uint8_t dlc,
 }
 ```
 
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 3:
+1. **Thuật toán Sign Extension (Mở rộng dấu bù hai):**
+   - Nếu `is_signed = true` và bit cao nhất của trường bit bằng 1: Tạo mặt nạ `(~0UL << bit_length)` để điền các bit 1 lên vị trí 31 của kiểu `int32_t`.
+2. **Số học số nguyên định điểm (Fixed-point Scaling):**
+   - Ép kiểu `int64_t` trước khi thực hiện phép nhân `(signed_raw * factor_num)` để tránh hiện tượng tràn số nguyên 32-bit (Integer Overflow).
+3. **Bảo vệ biên bão hòa (Clamping):**
+   - Kiểm tra và ép giá trị vào khoảng `[min_val, max_val]` chống sai số ngoại lai.
+
 #### TODO 3 [File: `drivers/src/dbc_decoder.c`]: Mở Rộng Dấu Bù Hai & Tính Giá Trị Vật Lý
 ```c
 int32_t DBC_DecodeSignal(const uint8_t *payload, uint8_t dlc, const DbcSignalMeta_t *meta)
@@ -312,6 +351,11 @@ int32_t DBC_DecodeSignal(const uint8_t *payload, uint8_t dlc, const DbcSignalMet
 ---
 
 ### 📂 KHỐI 3: KIỂM THỬ GIẢI MÃ TÍN HIỆU XE HƠI [ `src/main.c` ]
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 4:
+1. **Kiểm thử đối chiếu với Vector CANoe / CANalyzer:**
+   - Tạo mẫu mảng 8 bytes đại diện frame thực tế từ mạng CAN động cơ.
+   - Gọi `DBC_DecodeSignal()` cho tín hiệu `SIG_SPEED` (Intel, Factor 1/16) và `SIG_RPM` (Intel, Factor 1/2) và xác nhận kết quả khớp 100% với file DBC mẫu.
 
 #### TODO 4 [File: `src/main.c`]: Kiểm Thử Thực Tế Với Gói Tin Mạng CAN Ô Tô
 ```c

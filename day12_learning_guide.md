@@ -169,6 +169,12 @@ src/
 
 ### 📂 KHỐI 1: FILE HEADER GIÁM SÁT AN TOÀN [ `drivers/inc/signal_supervision.h` ]
 
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 1:
+1. **Tra cứu Tiêu chuẩn ISO 26262 & AUTOSAR E2E:**
+   - **Mở tài liệu AUTOSAR Specification of End-to-End Communication Protection**:
+     - Định nghĩa các trạng thái lỗi: `SIGNAL_STATUS_TIMEOUT` (mất frame), `SIGNAL_STATUS_CRC_ERROR` (sai toàn vẹn bit), `SIGNAL_STATUS_COUNTER_ERROR` (sai nhịp đếm chu kỳ).
+   - Thiết kế struct `CanMsgSupervisor_t` quản lý ngưỡng FTTI timeout, thời gian nhận cuối, rolling counter và mã nhận diện bí mật `data_id`.
+
 #### TODO 1 [File: `drivers/inc/signal_supervision.h`]: Cấu Trúc Đối Tượng Giám Sát
 ```c
 #ifndef SIGNAL_SUPERVISION_H
@@ -213,6 +219,12 @@ void Supervision_PeriodicCheck(CanMsgSupervisor_t *sup, uint32_t current_time_ms
 
 ### 📂 KHỐI 2: FILE SOURCE GIẢI THUẬT AN TOÀN [ `drivers/src/signal_supervision.c` ]
 
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 2:
+1. **Tra cứu Đa thức CRC-8 AUTOSAR Profile 1:**
+   - Đa thức toán học: $P(x) = x^8 + x^5 + x^3 + x^2 + x + 1$ (Mã Hex: `0x2F`).
+   - Giá trị khởi tạo chuẩn: `0xFF`, Giá trị đảo cuối: `^ 0xFF`.
+   - Bắt buộc tính toán kèm 2 bytes của trường bí mật `data_id` trước khi quét mảng payload (từ Byte 1 đến Byte n-1).
+
 #### TODO 2 [File: `drivers/src/signal_supervision.c`]: Thuật Toán Bảng Tra Cứu CRC-8 AUTOSAR
 ```c
 #include "signal_supervision.h"
@@ -253,6 +265,13 @@ static uint8_t Calculate_E2E_CRC8(const uint8_t *data, uint8_t len, uint16_t dat
     return (crc ^ 0xFF); /* XOR kết quả cuối */
 }
 ```
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 3:
+1. **Kiểm tra nhịp sống Rolling Counter 4-bit:**
+   - Bộ đếm nhịp sống 4-bit chạy tuần hoàn từ 0 đến 15: `expected_rc = (last_rc + 1) & 0x0F`.
+   - Nếu `current_rc != expected_rc` ➔ Trả về `SIGNAL_STATUS_COUNTER_ERROR`.
+2. **Quy tắc tính toán Timeout chống tràn biến Timer Wrap-around:**
+   - **QUY TẮC SỐNG CÒN:** Luôn sử dụng phép trừ số nguyên không dấu `(uint32_t)(current_time_ms - sup->last_rx_time_ms) >= sup->timeout_threshold_ms`. Cơ chế toán học số học bù hai đảm bảo hiệu số này luôn đúng kể cả khi biến thời gian chạy qua mốc tràn số 32-bit (sau 49.7 ngày)!
 
 #### TODO 3 [File: `drivers/src/signal_supervision.c`]: Kiểm Tra Rolling Counter & Timeout Chuẩn Xác
 ```c
@@ -312,6 +331,15 @@ void Supervision_PeriodicCheck(CanMsgSupervisor_t *sup, uint32_t current_time_ms
 
 ### 📂 KHỐI 3: MÁY TRẠNG THÁI PHỤC HỒI BUS-OFF [ `drivers/src/bus_off_sm.c` ]
 
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 4:
+1. **Tra cứu cờ Bus-Off và bit điều khiển tự động trong RM0385:**
+   - **Mở `RM0385.pdf`** ➔ `Ctrl + F` ➔ `CAN_ESR` (Section 31.9.2): Bit 2 `BOFF` (Bus-off flag, Read-Only).
+   - `Ctrl + F` ➔ `CAN_MCR` (Section 31.9.1): Bit 6 `ABOM` (Automatic bus-off management).
+2. **Cơ chế máy trạng thái FSM ISO 11898-1:**
+   - Trạng thái `BUS_STATE_ACTIVE`: Theo dõi cờ `BOFF`.
+   - Trạng thái `BUS_STATE_OFF_DETECTED`: Dừng truyền, đếm lùi thời gian trễ an toàn 100ms.
+   - Trạng thái `BUS_STATE_WAIT_RECOVERY`: Bật `ABOM` và chờ phần cứng xác nhận 128 chuỗi 11-bit Recessive để trở lại `BUS_STATE_ACTIVE`.
+
 #### TODO 4 [File: `drivers/src/bus_off_sm.c`]: FSM Phục Hồi Lỗi Chuẩn ISO 11898-1
 ```c
 #include "Reg.h"
@@ -367,6 +395,11 @@ void BusOff_FSM_Poll(uint32_t current_time_ms)
 ---
 
 ### 📂 KHỐI 4: VÒNG LẶP KIỂM CHỨNG HỆ THỐNG [ `src/main.c` ]
+
+#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 5:
+1. **Tích hợp chu kỳ giám sát thời gian thực:**
+   - Cài đặt chu kỳ kiểm tra 10ms bằng `Supervision_PeriodicCheck(&s_sup_engine, current_time)`.
+   - Xử lý chuyển đổi Failsafe khi `status == SIGNAL_STATUS_TIMEOUT`.
 
 #### TODO 5 [File: `src/main.c`]: Tích Hợp Giám Sát Và Kích Hoạt Đèn Báo Lỗi Táp-Lô
 ```c

@@ -61,6 +61,12 @@
                └─────────────────────────────────────────────────────────────┘
 ```
 
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Programming Manual (PM0253) & ARMv7-M:**
+> 1. **Mở file `PM0253.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`Data watchpoint and trace (DWT)`**
+>    * Nhảy đến **Chapter 4: Core peripherals -> Section 4.8: DWT unit**:
+>    * Xem cấu trúc các thanh ghi: `DWT_CTRL` (Bit 0 `CYCCNTENA`), `DWT_CYCCNT` (Bộ đếm 32-bit chu kỳ xung nhịp).
+>    * Đọc quy định phần cứng: Khối DWT chỉ nhận xung đếm khi bit `TRCENA` trong thanh ghi `CoreDebug->DEMCR` (Section 4.9.4) được kích hoạt trước đó.
+
 ---
 
 ## 1.2. Bốn Chỉ Số Đánh Giá (KPIs) Giữa Hai Kiến Trúc
@@ -74,6 +80,10 @@
 4. **Memory Footprint (Dung lượng tiêu hao Flash và RAM):**
    * Đánh giá chi phí phần cứng (BOM Cost) xem có thể chạy trên chip giá rẻ hơn hay không.
 
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Tiêu Chuẩn Hiệu Năng Ô Tô:**
+> 1. **Tra cứu Tiêu chuẩn Khởi động Ô tô (Automotive Cold Boot Standard):** Các tiêu chuẩn như ISO 14229 / OEM Requirements quy định màn hình Cluster phải hiển thị cụm đồng hồ và các đèn báo an toàn (Tell-tales) trong vòng 2 giây kể từ khi nhận tín hiệu KL15 (Ignition).
+> 2. **Tra cứu Đo lường Ngăn xếp:** Trong tài liệu Zephyr, tìm kiếm `CONFIG_INIT_STACKS` và cách kernel tô màu pattern `0xAA` vào toàn bộ stack để tính toán Watermark.
+
 ---
 
 ## 1.3. Triết Lý Host-Based Unit Testing (Kiểm Thử Đơn Vị Trên Máy Tính PC)
@@ -83,6 +93,11 @@
   * Tách rời các file thuật toán C (`dbc_decoder.c`, `signal_supervision.c`) khỏi phần cứng.
   * Dùng trình biên dịch **GCC trên máy tính (Host x86/x64)** biên dịch cùng thư viện kiểm thử mã nguồn mở **Unity**.
   * Chạy $100$ ca kiểm thử tự động (Test Cases) chỉ trong vòng **$0.05\text{ giây}$** ngay trên Terminal của lập trình viên hoặc tích hợp vào hệ thống CI/CD (GitHub Actions).
+
+> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Unity Test Framework:**
+> 1. **Mở tài liệu Unity Testing Framework:** Truy cập `https://github.com/ThrowTheSwitch/Unity`.
+>    * Xem nguyên mẫu các macro kiểm tra: `TEST_ASSERT_EQUAL_HEX8()`, `TEST_ASSERT_EQUAL_INT32()`, `TEST_ASSERT_TRUE()`.
+>    * Đọc phương pháp bóc tách phần cứng (Hardware Abstraction): Cô lập toàn bộ code thuật toán không phụ thuộc vào include `stm32f7xx.h` để chạy kiểm thử hồi quy (Regression Testing) trên máy chủ CI/CD.
 
 ---
 
@@ -119,16 +134,29 @@
 
 ## 2.2. Bảng So Sánh Thực Nghiệm Đo Đạc: Bare-Metal vs Zephyr RTOS
 
-Số liệu được đo thực tế trên phần cứng **STM32F746G-Discovery ($216\text{ MHz}$, $512\text{ KB}$ SRAM, $1\text{ MB}$ Flash)**:
+Số liệu được đo thực tế trên phần cứng **STM32F746G-Discovery (216 MHz, 512 KB SRAM, 1 MB Flash)**:
 
 | Chỉ số Đo lường (KPI) | Kiến trúc 1: Bare-Metal Driver | Kiến trúc 2: Zephyr RTOS | Chênh lệch & Nhận định Kỹ thuật |
 | :--- | :---: | :---: | :--- |
-| **Boot-to-Display Time** | **$18.4\text{ ms}$** | **$142.6\text{ ms}$** | **Bare-Metal nhanh gấp ~8 lần** (Không tốn thời gian nạp bộ lập lịch và duyệt Devicetree). Cả 2 đều đạt chuẩn ô tô ($< 2\text{s}$). |
-| **Dung lượng Flash ROM** | **$26.8\text{ KB}$** | **$194.2\text{ KB}$** | **Bare-Metal siêu gọn nhẹ** (Chỉ chiếm $2.6\%$ Flash). Zephyr tốn $19\%$ Flash do mang theo Kernel, Subsystems và LVGL. |
-| **Dung lượng RAM tĩnh** | **$6.2\text{ KB}$** | **$44.8\text{ KB}$** | Zephyr tiêu tốn nhiều RAM hơn do mỗi luồng cần một vùng Stack riêng ($1\text{KB} - 4\text{KB}$) kèm hàng đợi Message Queue. |
-| **Độ trễ ngắt (ISR Latency)**| **$12\text{ chu kỳ (55 ns)}$** | **$48\text{ chu kỳ (222 ns)}$**| Bare-Metal đi thẳng vào Vector Table. Zephyr phải qua tầng bọc ngắt chung của Kernel để quản lý Context Switch. |
+| **Boot-to-Display Time** | **18.4 ms** | **142.6 ms** | **Bare-Metal nhanh gấp ~8 lần** (Không tốn thời gian nạp bộ lập lịch và duyệt Devicetree). Cả 2 đều đạt chuẩn ô tô (< 2.0s). |
+| **Dung lượng Flash ROM** | **26.8 KB** | **194.2 KB** | **Bare-Metal siêu gọn nhẹ** (Chỉ chiếm 2.6% Flash). Zephyr tốn 19% Flash do mang theo Kernel, Subsystems và LVGL. |
+| **Dung lượng RAM tĩnh** | **6.2 KB** | **44.8 KB** | Zephyr tiêu tốn nhiều RAM hơn do mỗi luồng cần một vùng Stack riêng (1KB - 4KB) kèm hàng đợi Message Queue. |
+| **Độ trễ ngắt (ISR Latency)**| **12 chu kỳ (55 ns)** | **48 chu kỳ (222 ns)**| Bare-Metal đi thẳng vào Vector Table. Zephyr phải qua tầng bọc ngắt chung của Kernel để quản lý Context Switch. |
 | **Độ phức tạp phát triển** | Rất cao (Tự code từ thanh ghi) | Thấp / Chuẩn hóa quốc tế | Zephyr có sẵn hệ sinh thái Driver, Shell, Logging, LVGL và chuẩn POSIX. |
 | **Khả năng mở rộng dự án** | Rất khó khi thêm mạng Ethernet/BLE | Cực kỳ dễ dàng (Chỉ cần bật Kconfig) | Zephyr vượt trội hoàn toàn khi hệ thống phát triển lên quy mô phức tạp. |
+
+> 📖 **Hướng Dẫn Tra Cứu Đo Đạc Footprint Bộ Nhớ & Độ Trễ Ngắt (Memory Footprint & Latency Lookup):**
+> 1. **Tra cứu Dung lượng Flash/RAM bằng GNU Toolchain**:
+>    * Lệnh bóc tách footprint Bare-Metal: Chạy `arm-none-eabi-size -B build/stm32f7_gateway.elf`.
+>      * Cột `text` + `rodata`: Dung lượng tiêu hao Flash ROM lưu trữ mã lệnh và hằng số.
+>      * Cột `data` + `bss`: Dung lượng tiêu hao SRAM tĩnh cho biến khởi tạo và biến chưa khởi tạo.
+>    * Lệnh bóc tách Zephyr RTOS Footprint:
+>      * Trong thư mục build Zephyr, chạy lệnh: `ninja rom_report` và `ninja ram_report`.
+>      * Hệ thống sinh bảng phân tích chi tiết từng subsystem: Kernel scheduler, CAN driver, Display LTDC, LVGL graphics, Shell CLI chiếm bao nhiêu byte ROM/RAM.
+> 2. **Tra cứu Độ trễ ngắt (Interrupt Latency) trong ARM Cortex-M7 Technical Reference Manual (TRM)**:
+>    * Nhấn `Ctrl + F` trong tài liệu Cortex-M7 TRM -> Tìm từ khóa: **`Interrupt latency`**.
+>    * Tài liệu nêu rõ: Lõi Cortex-M7 tốn đúng 12 chu kỳ xung nhịp (khi truy cập bộ nhớ 0 wait-state) để tự động đẩy 8 thanh ghi (R0-R3, R12, LR, PC, xPSR) vào Stack phần cứng (Hardware Stacking).
+>    * Ở tần số 216 MHz, 12 chu kỳ = 12 * 4.63 ns = 55.5 ns.
 
 ---
 
@@ -153,6 +181,17 @@ test/
 ### 📂 KHỐI 1: DRIVER ĐO CHU KỲ PHẦN CỨNG DWT [ `drivers/src/benchmark_dwt.c` ]
 
 #### TODO 1 [File: `drivers/inc/benchmark_dwt.h`]: Khai Báo API Đo Đạc Lõi ARM
+
+> 📖 **Hướng Dẫn Tra Cứu Kỹ Thuật Từng Bước Cho TODO 1 (benchmark_dwt.h):**
+> 1. **Mở tài liệu ARM Programming Manual (`PM0253.pdf`)**:
+>    * Nhấn `Ctrl + F` ➔ Tìm từ khóa: **`DWT_CYCCNT`** hoặc nhảy đến **Section 4.8: DWT unit -> Section 4.8.2: DWT cycle count register**.
+>    * Địa chỉ cơ sở (Base Address): `DWT Base = 0xE0001000`. Offset của `CYCCNT` là `0x04` ➔ Địa chỉ tuyệt đối: `0xE0001004UL`.
+>    * Kiểu truy cập: Đọc/Ghi (`RW`), giá trị Reset: `0x00000000`.
+> 2. **Cơ sở tính toán chu kỳ sang micro-giây (us):**
+>    * Tần số hệ thống CPU: `f_SYSCLK = 216 MHz` (đã cấu hình ở Ngày 01 qua PLL).
+>    * `1 micro-giây (1 us) = 216 chu kỳ xung nhịp (216 clock cycles)`.
+>    * Công thức quy đổi: `us = cycles / 216U`. Dùng từ khóa `static inline` trong header file để tránh chi phí gọi hàm (zero function-call overhead), bảo đảm thời gian đọc chu kỳ là tức thì.
+
 ```c
 #ifndef BENCHMARK_DWT_H
 #define BENCHMARK_DWT_H
@@ -179,6 +218,20 @@ static inline uint32_t DWT_CyclesToMicroseconds(uint32_t cycles)
 ```
 
 #### TODO 2 [File: `drivers/src/benchmark_dwt.c`]: Mở Khóa Khối Trace & Bật Bộ Đếm
+
+> 📖 **Hướng Dẫn Tra Cứu Kỹ Thuật Từng Bước Cho TODO 2 (benchmark_dwt.c):**
+> 1. **Mở tài liệu ARM Programming Manual (`PM0253.pdf`)**:
+>    * Nhấn `Ctrl + F` ➔ Tìm từ khóa: **`Debug exception and monitor control register`** hoặc nhảy đến **Section 4.9.4: DEMCR**.
+>    * Địa chỉ tuyệt đối `CoreDebug->DEMCR`: `0xE000EDFCUL`.
+>    * Vị trí Bit: Bit 24 mang tên `TRCENA` (Trace Enable).
+>    * Ý nghĩa phần cứng: Bit này điều khiển cấp xung nhịp (Clock Gating) cho toàn bộ hệ thống DWT và ITM. Bắt buộc phải set bit 24 lên `1` trước khi can thiệp vào bất kỳ thanh ghi DWT nào. Nếu quên, thanh ghi DWT sẽ bị đóng băng tại `0`!
+> 2. **Tra cứu thanh ghi điều khiển DWT (`DWT_CTRL`)**:
+>    * Nhấn `Ctrl + F` ➔ Tìm: **`Control register (DWT_CTRL)`** (Section 4.8.1).
+>    * Địa chỉ tuyệt đối: `0xE0001000UL`.
+>    * Vị trí Bit: Bit 0 mang tên `CYCCNTENA` (Cycle Counter Enable). Ghi `1` để cho phép bộ đếm 32-bit `DWT_CYCCNT` bắt đầu đếm nhịp xung.
+> 3. **Quy tắc Read-Modify-Write (RMW)**:
+>    * Dùng toán tử `|=` cho `DEMCR` và `DWT_CTRL` để giữ nguyên các bit điều khiển debug khác của trình nạp J-Link/ST-Link.
+
 ```c
 #include "benchmark_dwt.h"
 
@@ -208,6 +261,19 @@ void DWT_Benchmark_Init(void)
 ### 📂 KHỐI 2: BỘ KIỂM THỬ ĐƠN VỊ TỰ ĐỘNG TRÊN PC [ `test/test_dbc_decoder.c` ]
 
 #### TODO 3 [File: `test/test_dbc_decoder.c`]: Ca Kiểm Thử Độc Lập Cho DBC Decoder
+
+> 📖 **Hướng Dẫn Tra Cứu Kỹ Thuật Từng Bước Cho TODO 3 (test_dbc_decoder.c):**
+> 1. **Tra cứu tài liệu Unity Test Framework (`unity.h`)**:
+>    * Mở repo mã nguồn Unity: Tìm các macro so sánh số nguyên: `TEST_ASSERT_EQUAL_INT32(expected, actual)`, `TEST_ASSERT_NOT_EQUAL(expected, actual)`.
+>    * Quy tắc vòng đời Unit Test: Hàm `setUp(void)` (chạy trước mỗi ca test) và `tearDown(void)` (chạy sau mỗi ca test dọn dẹp biến).
+> 2. **Tra cứu Ma trận Tín hiệu DBC (từ Ngày 11)**:
+>    * Mở lại file `day11_learning_guide.md` mục Bước 3 `DBC_DecodeSignal`:
+>    * Case 1: Tốc độ xe Intel Little-Endian 12-bit, factor `1/16`, offset `0`. Dữ liệu raw `1600` tương đương `100 km/h`.
+>    * Case 2: Nhiệt độ có dấu Signed Negative 8-bit bù hai, factor `1`, offset `-40`. Dữ liệu raw `15` tương đương `-25 độ C`.
+>    * Case 3: Góc lái Motorola Big-Endian 14-bit, kiểm tra bóc tách bit qua các ranh giới byte (Sawtooth bit pattern).
+> 3. **Nguyên tắc Decoupling phần cứng**:
+>    * File `test_dbc_decoder.c` và `dbc_decoder.c` KHÔNG được chứa bất kỳ include thanh ghi phần cứng nào (`stm32f7xx.h`, CMSIS), chỉ dùng các thư viện C chuẩn `<stdint.h>`, `<stdbool.h>` để trình biên dịch máy chủ Host GCC x86/x64 có thể build trực tiếp.
+
 ```c
 #include "unity.h"
 #include "dbc_decoder.h"
@@ -280,6 +346,16 @@ int main(void)
 ### 📂 KHỐI 3: FILE MAKEFILE CHẠY KIỂM THỬ TRÊN PC [ `test/Makefile` ]
 
 #### TODO 4 [File: `test/Makefile`]: Tự Động Hóa Kiểm Thử Bằng Lệnh `make test`
+
+> 📖 **Hướng Dẫn Tra Cứu Kỹ Thuật Từng Bước Cho TODO 4 (test/Makefile):**
+> 1. **Tra cứu Cú pháp GNU Make**:
+>    * Trình biên dịch Host: `CC = gcc` (sử dụng GCC nội tại trên Linux / MSYS2 / MinGW-w64).
+>    * Cờ cảnh báo: `-Wall -Wextra` để phát hiện cảnh báo ép kiểu có dấu / không dấu và biến không sử dụng.
+>    * Cờ Include: `-I../drivers/inc` để nhận diện nguyên mẫu hàm `dbc_decoder.h`, `-I./unity` để nhận diện `unity.h`.
+> 2. **Mục tiêu tự động hóa (Target `test`)**:
+>    * Biên dịch mã nguồn kiểm thử và thực thi ngay lập tức `./$(TARGET)`.
+>    * Trả về Exit Code `0` nếu toàn bộ test pass, giúp tích hợp mượt mà vào luồng GitHub Actions CI/CD.
+
 ```makefile
 CC = gcc
 CFLAGS = -Wall -Wextra -I../drivers/inc -I./unity

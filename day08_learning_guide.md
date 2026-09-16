@@ -161,7 +161,22 @@ Mạng CAN trên ô tô là môi trường cực kỳ khắc nghiệt (nhiễu t
 
 # PHẦN 3: CÁCH SỬ DỤNG THỰC CHIẾN (MÃ NGUỒN MODULAR HOÀN CHỈNH TỪNG FILE)
 
-Để hệ thống CAN Gateway vận hành ổn định trong thực tế, mã nguồn được phân chia thành **4 khối tệp hoàn chỉnh, có đầu có đuôi rõ ràng**, thể hiện trọn vẹn luồng dữ liệu từ phần cứng đến ứng dụng:
+Để hệ thống CAN Gateway vận hành ổn định trong thực tế, mã nguồn được phân chia thành **các khối tệp hoàn chỉnh, có đầu có đuôi rõ ràng**, thể hiện trọn vẹn luồng dữ liệu từ phần cứng đến ứng dụng:
+
+---
+
+### 3.0. Tệp Điều Phối Biên Dịch [ File: `CMakeLists.txt` ]
+```cmake
+cmake_minimum_required(VERSION 3.20.0)
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(automotive_can_gateway)
+
+# Khai báo liên kết cả 2 file mã nguồn vào ứng dụng
+target_sources(app PRIVATE 
+    src/main.c 
+    src/can_gateway.c
+)
+```
 
 ---
 

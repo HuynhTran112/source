@@ -215,21 +215,46 @@ flowchart TD
 
 ---
 
-### 3.1. Quy Chuẩn 3 Bước Để Sử Dụng Một Ngoại Vi Trong Zephyr
+### 3.1. Quy Chuẩn 5 Thành Phần Hoàn Chỉnh Của Một Dự Án Zephyr
 
-Khi muốn sử dụng bất kỳ ngoại vi nào (GPIO, UART, CAN, I2C, SPI), bạn luôn áp dụng **cùng một tư duy thống nhất 3 bước**:
+Khi xây dựng một ứng dụng Zephyr RTOS, bạn bắt buộc phải có **bộ 4 file mã nguồn** và **1 công cụ điều phối dòng lệnh (West)**:
 
 ```text
-┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                             QUY TRÌNH 3 BƯỚC LÀM VIỆC VỚI ZEPHYR NGOẠI VI                       │
-├─────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ BƯỚC 1: BẬT DRIVER TRONG prj.conf     ➔   Khai báo CONFIG_xxx=y                                 │
-│ BƯỚC 2: MÔ TẢ PHẦN CỨNG TRONG .overlay ➔   Gán chân, tốc độ baud, kích hoạt status = "okay"     │
-│ BƯỚC 3: LẤY THIẾT BỊ VÀ GỌI API TRONG .c ➔   DEVICE_DT_GET() -> device_is_ready() -> Gọi API   │
-└─────────────────────────────────────────────────────────────────────────────────────────────────┘
+my_zephyr_project/
+├── CMakeLists.txt      <=== [KHỐI 1 - CMAKE]: Khai báo gói Zephyr & file mã nguồn C
+├── prj.conf            <=== [KHỐI 2 - KCONFIG]: Bật/tắt các module tính năng phần mềm
+├── app.overlay         <=== [KHỐI 3 - DEVICETREE]: Gán chân, kích hoạt ngoại vi phần cứng
+└── src/
+    └── main.c          <=== [KHỐI 4 - SOURCE C]: Mã nguồn logic ứng dụng điều khiển
+(Và công cụ [WEST] gõ trong Terminal để build & flash vào vi điều khiển)
 ```
 
-#### BƯỚC 1: Bật Tính Năng Trong `prj.conf` (Kconfig Cheat Sheet)
+---
+
+#### 📂 KHỐI 1: FILE ĐIỀU PHỐI BIÊN DỊCH CMAKE [ `CMakeLists.txt` ]
+
+File này là "trái tim" của hệ thống build. Nếu thiếu file này, CMake sẽ báo lỗi ngay lập tức vì không biết lấy Kernel Zephyr từ đâu:
+
+```cmake
+# Yêu cầu phiên bản CMake tối thiểu
+cmake_minimum_required(VERSION 3.20.0)
+
+# Tìm và liên kết toàn bộ hệ điều hành Zephyr RTOS vào dự án
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+
+# Đặt tên cho dự án của bạn
+project(zephyr_f746_app)
+
+# Khai báo các file mã nguồn C cần biên dịch thành file nhị phân
+target_sources(app PRIVATE src/main.c)
+```
+
+---
+
+#### 📂 KHỐI 2: FILE CẤU HÌNH TÍNH NĂNG KCONFIG [ `prj.conf` ]
+
+Nơi bạn bật các Subsystem mà không cần sửa một dòng code C nào:
+
 ```properties
 # 1. Bật hệ thống GPIO và UART Console
 CONFIG_GPIO=y
@@ -242,7 +267,7 @@ CONFIG_LOG=y
 CONFIG_LOG_MODE_DEFERRED=y
 CONFIG_LOG_DEFAULT_LEVEL=3
 
-# 3. Kích hoạt khiên bảo vệ tràn ngăn xếp bằng phần cứng MPU
+# 3. Kích hoạt khiên bảo vệ tràn ngăn xếp bằng phần cứng MPU Cortex-M7
 CONFIG_MPU_STACK_GUARD=y
 CONFIG_THREAD_NAME=y
 CONFIG_THREAD_STACK_INFO=y
@@ -253,7 +278,12 @@ CONFIG_THREAD_ANALYZER_AUTO=y
 CONFIG_THREAD_ANALYZER_AUTO_INTERVAL=5
 ```
 
-#### BƯỚC 2: Định Nghĩa Phần Cứng Trong `app.overlay` (Devicetree Cheat Sheet)
+---
+
+#### 📂 KHỐI 3: FILE MÔ TẢ PHẦN CỨNG DEVICETREE [ `app.overlay` ]
+
+Nơi bạn tùy biến chân cẳng phần cứng cho ứng dụng:
+
 ```dts
 / {
     /* Đặt bí danh (alias) để mã nguồn C không bị phụ thuộc vào tên node */
@@ -271,13 +301,15 @@ CONFIG_THREAD_ANALYZER_AUTO_INTERVAL=5
     };
 };
 
-/* Bắt buộc bật controller quản lý cổng GPIOI */
+/* Bắt buộc kích hoạt controller quản lý cổng GPIOI */
 &gpioi {
     status = "okay";
 };
 ```
 
-#### BƯỚC 3: Mẫu Code C Vận Hành Chuẩn Mực (Design Pattern)
+---
+
+#### 📂 KHỐI 4: MÃ NGUỒN C ỨNG DỤNG [ `src/main.c` ]
 ```c
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
@@ -324,6 +356,28 @@ int main(void)
     /* Hàm main kết thúc nhiệm vụ, Kernel tự động quản lý các luồng Worker */
     return 0;
 }
+```
+
+---
+
+#### 📂 KHỐI 5: QUY TRÌNH THAO TÁC DÒNG LỆNH VỚI WEST (WEST WORKFLOW CHEAT SHEET)
+
+West là công cụ meta-tool điều phối toàn bộ vòng đời phát triển dự án. Bạn mở Terminal tại thư mục dự án và thực hiện 4 lệnh chuẩn mực:
+
+```bash
+# 1. Biên dịch ứng dụng cho bo mạch STM32F746G-Discovery:
+#    (West tự động đọc CMakeLists.txt -> nạp prj.conf -> nạp app.overlay -> gọi Ninja/GCC)
+west build -b stm32f746g_disco
+
+# 2. Biên dịch sạch sẽ từ đầu (Clean Build - nếu vừa sửa file .overlay hoặc đổi chân cẳng):
+west build -p always -b stm32f746g_disco
+
+# 3. Nạp file nhị phân zephyr.bin vào vi điều khiển STM32F7 qua ST-LINK:
+#    (West tự động kết nối OpenOCD / pyOCD nạp vào Flash tại địa chỉ 0x08000000)
+west flash
+
+# 4. Mở giao diện đồ họa Kconfig trực quan trên Terminal để tra cứu tính năng:
+west build -t menuconfig
 ```
 
 ---

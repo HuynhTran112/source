@@ -38,13 +38,13 @@
 
 # 🧠 BƯỚC 1: NGUYÊN LÝ AN TOÀN Ô TÔ (SO SÁNH TRỰC DIỆN VỚI FREERTOS)
 
-### 1.1. So Sánh Cơ Chế Giám Sát An Toàn: FreeRTOS vs Zephyr RTOS
+### 1.1. So Sánh Cơ Chế Giám Sát An Toàn: FreeRTOS vs Zephyr RTOS (Chi Tiết Ưu / Nhược Điểm)
 
-| Bài toán an toàn | 1. FreeRTOS | 2. Zephyr RTOS | Bản Chất Kỹ Thuật |
+| Bài toán An toàn | 1. FreeRTOS | 2. Zephyr RTOS | Đánh Giá Kỹ Thuật, Ưu / Nhược Điểm & Trade-off Chuyên Sâu |
 | :--- | :--- | :--- | :--- |
-| **Đo thời gian trôi qua** | `xTaskGetTickCount() * portTICK_PERIOD_MS` | `k_uptime_get_32()` | Đều lấy số mili-giây từ lúc khởi động. Dùng phép trừ không dấu `(now - last) >= timeout` chống tràn số. |
-| **Bộ định thời giám sát** | Tạo FreeRTOS Software Timer (`xTimerCreate()`). | Tạo Zephyr Work Queue hoặc kiểm tra định kỳ trong luồng Worker. | Tránh tạo quá nhiều Software Timer làm phình RAM; gom các tín hiệu vào 1 hàm kiểm tra định kỳ `Supervision_PeriodicCheck()`. |
-| **Phục hồi Bus-Off** | Tự đọc thanh ghi `CAN_ESR`, tự bật bit `ABOM`. | Đăng ký callback `can_set_state_change_callback()` và gọi `can_recover()`. | Không được kết nối lại mạng ngay lập tức mà phải chờ trễ an toàn 100ms để tránh làm tê liệt bus nếu đang chập điện. |
+| **1. Đo lường thời gian trôi qua (Elapsed Time)** | `xTaskGetTickCount() * portTICK_PERIOD_MS` | `k_uptime_get_32()` (trả về số mili-giây dạng `uint32_t`). | • **FreeRTOS:** Phải tự nhân nhẩm với độ dài chu kỳ tick; nếu cấu hình `configTICK_RATE_HZ` khác $1000\text{ Hz}$ thì phép chia có thể làm chậm chu kỳ thực thi.<br>• **Zephyr:** Hàm `k_uptime_get_32()` được tối ưu hóa cực kỳ mượt mà, trả về mili-giây chuẩn xác. Cả hai bắt buộc phải áp dụng quy tắc **Phép trừ không dấu** `(uint32_t)(now - last) >= timeout` để triệt tiêu lỗi tràn số sau $49.7\text{ ngày}$. |
+| **2. Cơ chế Bộ định thời giám sát (Timeout Supervision)** | Tạo FreeRTOS Software Timer riêng cho từng tín hiệu (`xTimerCreate()`). | Tạo một luồng Worker kiểm tra định kỳ gom cụm hoặc Zephyr Work Queue (`k_work_schedule()`). | • **FreeRTOS:** Tạo nhiều Software Timer làm phình to Timer Task Queue và tiêu tốn nhiều RAM cho các Timer Control Block.<br>• **Zephyr:** Thiết kế gom cụm $1$ hàm `Supervision_PeriodicCheck()` chạy chu kỳ $10\text{ ms}$ trong một luồng duy nhất; duyệt mảng giám sát tĩnh giúp kiểm tra $100$ tín hiệu ô tô chỉ trong vài micro-giây, tiết kiệm $90\%$ RAM. |
+| **3. Phục hồi sự cố Bus-Off (ISO 11898-1)** | Lập trình viên tự đọc thanh ghi `CAN_ESR`, hoặc bật bừa cờ tự động phục hồi `ABOM`. | Đăng ký callback `can_set_state_change_callback()` và chủ động gọi `can_recover()`. | • **FreeRTOS (Bật ABOM bừa bãi):** Cực kỳ nguy hiểm theo chuẩn an toàn ô tô ISO 26262! Nếu dây bus CAN bị chập điện vật lý liên tục, việc chip tự động thử kết nối lại tức thì sẽ gây xung đột làm tê liệt toàn bộ mạng xe hơi.<br>• **Zephyr:** Hỗ trợ máy trạng thái hữu hạn (FSM) chuẩn công nghiệp: ngắt kết nối an toàn, đếm thời gian trễ an toàn ($100\text{ ms}$), kích hoạt Failsafe nạp giá trị mặc định an toàn cho táp-lô, rồi mới kiểm tra điện áp bus và phục hồi. |
 
 ---
 
@@ -112,9 +112,10 @@ Phần mềm phải quản lý quá trình phục hồi theo máy trạng thái 
 
 ### 1.5. Bẫy Tràn Số Sau 49.7 Ngày & Quy Tắc Trừ Số Nguyên Không Dấu
 
-Vi điều khiển đếm thời gian bằng biến 32-bit `uint32_t` (tính bằng mili-giây).
-* Giá trị lớn nhất mà biến này chứa được là `4,294,967,295 ms` (tương đương đúng **49.7 ngày**).
-* Khi xe chạy liên tục qua mốc 49.7 ngày, biến thời gian sẽ bị tràn và tự động quay về `0`.
+Vi điều khiển đếm thời gian bằng biến 32-bit `uint32_t` (tính bằng mili-giây):
+* Dung lượng cực đại của biến đếm:
+  $$T_{\text{overflow}} = \frac{2^{32} - 1\text{ ms}}{1000\text{ ms/s} \times 3600\text{ s/h} \times 24\text{ h/ngày}} = \frac{4{,}294{,}967{,}295}{86{,}400{,}000} \approx 49.71\text{ ngày}$$
+* Khi xe chạy liên tục vượt qua mốc $49.71\text{ ngày}$, biến thời gian phần cứng sẽ bị tràn nhị phân và tự động quay về $0$.
 
 **Bẫy chết người nếu dùng phép cộng:**
 ```c
@@ -163,20 +164,20 @@ Nhờ cơ chế toán học số bù hai của hệ nhị phân, hiệu số gi�
 
 ---
 
-## 2.2. Bảng Tham Số Giám Sát Tín Hiệu Táp-Lô Ô Tô
+## 2.2. Bảng Tham Số Giám Sát Tín Hiệu Táp-Lô Ô Tô (Kèm Đánh Giá An Toàn FTTI)
 
-| Thông Điệp | CAN ID | Chu Kỳ Gửi (Nominal) | Ngưỡng Timeout | Số Lần Mất Tối Đa | Hành Vi Failsafe Khi Timeout |
+| Thông Điệp | CAN ID | Chu Kỳ Gửi (Nominal) | Ngưỡng Timeout ($T_{\text{timeout}}$) | Cấp Độ An Toàn & FTTI | Hành Vi Failsafe Khi Timeout & Nhận Định Kỹ Thuật |
 | :--- | :---: | :---: | :---: | :---: | :--- |
-| **`Engine_Telemetry`**| `0x120` | **20 ms** | **100 ms** | 5 chu kỳ | Tốc độ -> `---`, RPM -> `0`, Bật đèn báo động cơ. |
-| **`Brake_Dynamics`** | `0x240` | **10 ms** | **50 ms** | 5 chu kỳ | Cảnh báo mất phanh ABS, kích hoạt chuông bíp an toàn. |
-| **`Battery_Status`** | `0x300` | **100 ms** | **500 ms** | 5 chu kỳ | Báo lỗi nguồn ắc quy, tắt các tải phụ trợ màn hình. |
+| **`Engine_Telemetry`**| `0x120` | **$20\text{ ms}$** | **$100\text{ ms}$** (5 chu kỳ) | **ASIL-B**<br>($\text{FTTI} = 200\text{ ms}$) | • Tốc độ xe $\rightarrow$ `---`, RPM $\rightarrow$ `0`, bật đèn check-engine màu vàng cam.<br>• Ngưỡng $100\text{ ms} \le \frac{1}{2} \times \text{FTTI}$ đảm bảo người lái phát hiện mất tín hiệu trước khi xảy ra sự cố nghiêm trọng. |
+| **`Brake_Dynamics`** | `0x240` | **$10\text{ ms}$** | **$50\text{ ms}$** (5 chu kỳ) | **ASIL-D**<br>($\text{FTTI} = 100\text{ ms}$) | • Bật còi báo động khẩn cấp, cảnh báo mất phanh ABS trên màn hình trung tâm.<br>• Tín hiệu an toàn tối cao: Ngưỡng timeout cực ngắn $50\text{ ms}$ để lập tức kích hoạt cơ chế phanh dự phòng cơ học. |
+| **`Battery_Status`** | `0x300` | **$100\text{ ms}$** | **$500\text{ ms}$** (5 chu kỳ) | **QM**<br>($\text{FTTI} = 1000\text{ ms}$) | • Cảnh báo điện áp ắc quy thấp, ngắt nguồn các tải phụ trợ (đèn trang trí, quạt sưởi ghế).<br>• Tín hiệu phi an toàn tính mạng (Quality Management), chu kỳ $500\text{ ms}$ đủ thong thả để chống cảnh báo giả khi đề máy (Cranking). |
 
 ---
 
 ## 2.2. Bảng Tra Cứu Đa Thức CRC-8 AUTOSAR (Profile 1: 0x2F)
 
 Để tính toán CRC-8 nhanh trong vòng vài nano-giây trên Cortex-M7 mà không dùng vòng lặp dịch bit, ta sử dụng **Bảng tra cứu tĩnh (Lookup Table 256 phần tử)** được nạp sẵn trên Flash. Đa thức chuẩn:
-`P(x) = x^8 + x^5 + x^3 + x^2 + x + 1` (Mã Hex: `0x2F`)
+$$P(x) = x^8 + x^5 + x^3 + x^2 + x + 1 \quad (\text{Mã Hex: } \mathbf{0x2F})$$
 
 ---
 
@@ -252,7 +253,7 @@ void Supervision_PeriodicCheck(CanMsgSupervisor_t *sup, uint32_t current_time_ms
 
 #### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 2:
 1. **Tra cứu Đa thức CRC-8 AUTOSAR Profile 1:**
-   - Đa thức toán học: $PP(x) = x^8 + x^5 + x^3 + x^2 + x + 1 (Mã Hex: `0x2F`).
+   - Đa thức toán học: $P(x) = x^8 + x^5 + x^3 + x^2 + x + 1$ (Mã Hex: `0x2F`).
    - Giá trị khởi tạo chuẩn: `0xFF`, Giá trị đảo cuối: `^ 0xFF`.
    - Bắt buộc tính toán kèm 2 bytes của trường bí mật `data_id` trước khi quét mảng payload (từ Byte 1 đến Byte n-1).
 

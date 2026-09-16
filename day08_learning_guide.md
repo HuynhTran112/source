@@ -39,14 +39,29 @@
 
 # 🧠 BƯỚC 1: KIẾN TRÚC HỆ THỐNG (SO SÁNH TRỰC DIỆN VỚI FREERTOS)
 
-### 1.1. So Sánh Cơ Chế Lập Trình CAN: Bare-Metal / FreeRTOS vs Zephyr
+### 1.1. So Sánh Cơ Chế Lập Trình CAN: Bare-Metal / FreeRTOS vs Zephyr (Chi Tiết Ưu / Nhược Điểm)
 
-| Khía cạnh | 1. Bare-Metal / FreeRTOS (HAL) | 2. Zephyr CAN Subsystem |
-| :--- | :--- | :--- |
-| **Tính toán Baudrate** | Phải tự tính toán thanh ghi `CAN_BTR` (Prescaler, Tseg1, Tseg2, Sample Point 87.5%) | Khai báo 2 dòng trong `app.overlay` (`bus-speed = <500000>; sample-point = <875>;`). Zephyr tự tính toán 100%! |
-| **Bộ lọc ID phần cứng** | Phải tự cấu hình 28 Filter Banks (thanh ghi `CAN_FMR`, `CAN_FA1R`, nạp Mask ID) | Định nghĩa struct `can_filter` và gọi hàm `can_add_rx_filter_msgq()` |
-| **Cơ chế nhận dữ liệu** | Trong ngắt ISR phải gọi `HAL_CAN_GetRxMessage()`, rồi tự gọi `xQueueSendFromISR()` | **TỰ ĐỘNG 100%:** Zephyr tự bốc gói tin từ phần cứng ném thẳng vào Message Queue ngay trong ngắt |
-| **Bảo vệ luồng Task** | Task trong FreeRTOS phải tự kiểm tra lỗi bus CAN | Zephyr có sẵn Callback tự động báo khi bus chuyển sang trạng thái Bus-Off |
+| Khía cạnh Kỹ thuật | 1. Bare-Metal / FreeRTOS (HAL) | 2. Zephyr CAN Subsystem | Đánh Giá Kỹ Thuật, Ưu / Nhược Điểm & Trade-off Chuyên Sâu |
+| :--- | :--- | :--- | :--- |
+| **1. Tính toán Baudrate & Bit Timing** | Phải tự tính toán thủ công thanh ghi `CAN_BTR` (Prescaler, Tseg1, Tseg2, Sample Point $87.5\%$). Dễ sai lệch 1 tick gây lỗi CRC bus. | Khai báo 2 dòng trong `app.overlay` (`bus-speed = <500000>; sample-point = <875>;`). Zephyr tự tính toán tối ưu $100\%$ lúc compile-time. | • **Bare-Metal:** Hiểu sâu cấu trúc phần cứng từng Time Quanta ($t_q$), nhưng tốn hàng giờ tra RM0385 và dễ tính sai khi đổi tần số $f_{\text{PCLK1}}$.<br>• **Zephyr:** Thuật toán Bit Timing Solver tự động chọn tỉ lệ chia Prescaler và Phase Segments sao cho sai số Baudrate đạt $0\%$ và vị trí Sample Point gần sát nhất với yêu cầu ($87.5\%$). Giảm thiểu $100\%$ lỗi định thời do con người. |
+| **2. Cấu hình Bộ lọc ID phần cứng (Filter Banks)** | Phải tự cấu hình 28 Filter Banks (thanh ghi `CAN_FMR`, `CAN_FA1R`, nạp Mask ID, quản lý ngân hàng bộ lọc kép với CAN1 Master). | Định nghĩa struct `can_filter` và gọi hàm API chuẩn hóa `can_add_rx_filter_msgq()`. | • **Bare-Metal:** Tận dụng triệt để cả 28 ngân hàng lọc phần cứng của bxCAN, $0\text{ byte}$ RAM runtime; nhưng code cấu hình mặt nạ (Mask/Filter) vô cùng phức tạp, dễ cấu hình nhầm làm lọt gói tin rác hoặc chặn nhầm gói tin hợp lệ.<br>• **Zephyr:** Trừu tượng hóa hoàn toàn. Lập trình viên chỉ cần truyền ID và Mask nhị phân (`CAN_STD_ID_MASK`), Zephyr tự động tìm và gán vào Filter Bank còn trống trong phần cứng. |
+| **3. Cơ chế đón nhận dữ liệu (RX Handshake)** | Trong hàm ngắt ISR (`HAL_CAN_RxFifo0MsgPendingCallback`), phải tự gọi `HAL_CAN_GetRxMessage()` rồi tự gọi `xQueueSendFromISR()`. | **TỰ ĐỘNG HÓA HOÀN TOÀN:** Zephyr tự bốc gói tin từ phần cứng FIFO ném thẳng vào Message Queue `k_msgq` ngay trong ngắt. | • **Bare-Metal / FreeRTOS:** Dễ mắc lỗi gọi nhầm hàm Blocking trong ISR, hoặc xử lý quá lâu trong ISR làm mất ngắt của các ngoại vi khác.<br>• **Zephyr:** Cơ chế Zero-Lock Kernel binding. Driver ngầm thực hiện thao tác copy cực nhanh ($O(1)$) vào `k_msgq` rồi giải phóng ngắt ngay lập tức, chuyển toàn bộ logic xử lý cho Thread Worker mà không cần lập trình viên viết $1$ dòng code ISR nào. |
+| **4. Giám sát lỗi & Phục hồi Bus-Off** | Phải tự viết vòng lặp kiểm tra thanh ghi `CAN_ESR`, tự bật cờ `ABOM` (Automatic Bus-Off Management). | Tích hợp sẵn cơ chế Callback tự động `can_set_state_change_callback()` và hàm phục hồi `can_recover()`. | • **Bare-Metal:** Bật `ABOM` tự động có thể gây nguy hiểm nếu bus bị chập điện vật lý liên tục (phần cứng cứ liên tục kết nối lại làm phá hoại bus).<br>• **Zephyr:** Cho phép kiểm soát an toàn theo chuẩn ISO 11898-1: ngắt kết nối an toàn khi Bus-Off, trì hoãn $100\text{ ms}$, kiểm tra điều kiện an toàn rồi mới chủ động gọi `can_recover()`. |
+
+#### 📐 Công Thức Toán Học Bit Timing Chuẩn Ô Tô (CiA 301 / ISO 11898-1):
+
+Định thời 1 bit CAN bao gồm 4 phân đoạn (Segments):
+$$\text{Nominal Bit Time} = T_{\text{Sync\_Seg}} + T_{\text{Prop\_Seg}} + T_{\text{Phase\_Seg1}} + T_{\text{Phase\_Seg2}} = (1 + \text{TS1} + \text{TS2}) \times t_q$$
+
+Trong đó độ dài của một Time Quanta ($t_q$) được chia từ bus APB1:
+$$t_q = \frac{\text{BRP}}{f_{\text{PCLK1}}}$$
+
+Vị trí điểm lấy mẫu (Sample Point) theo quy chuẩn ô tô ($80\% \sim 87.5\%$):
+$$\text{Sample Point} = \frac{1 + \text{TS1}}{1 + \text{TS1} + \text{TS2}} \times 100\%$$
+
+*Với $f_{\text{PCLK1}} = 54\text{ MHz}$, Baudrate $= 500\text{ kbps}$, chọn tổng $18\ t_q$:*
+$$\text{BRP} = \frac{54 \times 10^6\text{ Hz}}{500 \times 10^3\text{ bps} \times 18} = 6 \implies \text{Prescaler} = 6$$
+$$\text{TS1} = 14,\ \text{TS2} = 3 \implies \text{Sample Point} = \frac{1 + 14}{18} \times 100\% = 83.33\%$$
 
 ---
 
@@ -142,13 +157,13 @@ Bo mạch STM32F746G-Discovery không tích hợp sẵn chip chuyển đổi m�
 
 ## 2.2. Bảng Cấu Hình Tính Năng Kconfig (`prj.conf`)
 
-| Kconfig Symbol | Giá trị | Ý nghĩa Kỹ thuật trong Zephyr RTOS |
-| :--- | :---: | :--- |
-| **`CONFIG_CAN`** | `y` | Kích hoạt toàn bộ Subsystem điều khiển mạng CAN của Zephyr. |
-| **`CONFIG_CAN_INIT_PRIORITY`** | `80` | Mức ưu tiên khởi tạo Driver lúc boot (sau GPIO và Clock). |
-| **`CONFIG_CAN_MAX_FILTER`** | `14` | Cấp phát vùng nhớ quản lý tối đa 14 bộ lọc CAN cho ứng dụng. |
-| **`CONFIG_CAN_STATS`** | `y` | Bật bộ đếm thống kê gói tin gửi/nhận và cờ lỗi phần cứng. |
-| **`CONFIG_LOG`** | `y` | Bật Zephyr Logging để theo dõi gói tin CAN. |
+| Kconfig Symbol | Giá trị | Ý nghĩa Kỹ thuật trong Zephyr RTOS | Đánh Giá Kỹ Thuật, Ưu / Nhược Điểm & Chi Phí Tài Nguyên |
+| :--- | :---: | :--- | :--- |
+| **`CONFIG_CAN`** | `y` | Kích hoạt toàn bộ Subsystem điều khiển mạng CAN của Zephyr. | • **Ưu điểm:** Cung cấp API CAN chuẩn hóa, trừu tượng hóa toàn bộ thanh ghi bxCAN của STM32.<br>• **Chi phí:** Tăng khoảng $\approx 8.4\text{ KB}$ Flash ROM. |
+| **`CONFIG_CAN_INIT_PRIORITY`** | `80` | Mức ưu tiên khởi tạo Driver lúc boot (sau GPIO và Clock). | • **Đánh giá Kỹ thuật:** Bắt buộc phải khởi tạo sau GPIO (Priority 40) và Clock RCC để các chân Pinmux PB8/PB9 đã sẵn sàng trước khi nạp lệnh bxCAN.<br>• **Lưu ý:** Nếu đặt mức ưu tiên nhỏ hơn GPIO, driver CAN sẽ bị lỗi lúc boot. |
+| **`CONFIG_CAN_MAX_FILTER`** | `14` | Cấp phát vùng nhớ quản lý tối đa 14 bộ lọc CAN cho ứng dụng. | • **Ưu điểm:** Khớp chính xác với 14 bộ lọc của khối CAN1 độc lập (hoặc 28 bộ lọc chia sẻ với CAN2).<br>• **Trade-off:** Mỗi bộ lọc tiêu tốn $\approx 32\text{ bytes}$ RAM quản lý nội bộ trong driver. Nếu khai báo thiếu, hàm `can_add_rx_filter` trả về mã lỗi `-ENOSPC`. |
+| **`CONFIG_CAN_STATS`** | `y` | Bật bộ đếm thống kê gói tin gửi/nhận và cờ lỗi phần cứng. | • **Ưu điểm:** Theo dõi số gói TX/RX thành công, số lần tràn FIFO (Overrun), số lần chuyển trạng thái Error Warning / Error Passive / Bus-Off.<br>• **Chi phí:** Tốn thêm $\approx 64\text{ bytes}$ RAM cho struct thống kê. Cực kỳ hữu ích trong giai đoạn chẩn đoán mạng ô tô. |
+| **`CONFIG_LOG`** | `y` | Bật Zephyr Logging để theo dõi gói tin CAN. | • **Ưu điểm:** Cho phép in chi tiết từng frame ID, DLC, Payload khi debug.<br>• **Lưu ý:** Trong môi trường xe tải bus cao ($> 2000\text{ frames/s}$), bắt buộc phải tắt hoặc chuyển log sang chế độ Deferred để tránh làm nghẽn bus. |
 
 ---
 

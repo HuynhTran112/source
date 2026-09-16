@@ -25,12 +25,12 @@
 
 Cùng một cơ sở mã nguồn và phần cứng STM32F746 bạn đã viết trong 14 ngày, bạn có thể ứng tuyển vào **hai phân khúc công việc khác nhau** bằng cách thay đổi trọng tâm nhấn mạnh trong CV:
 
-| Tiêu chí so sánh | Hướng 1: Ứng tuyển Kỹ sư Ô Tô (Automotive ECU / Gateway) | Hướng 2: Ứng tuyển Kỹ sư Firmware / Embedded C thuần |
-| :--- | :--- | :--- |
-| **Tiêu đề Dự án trong CV** | **Automotive CAN Gateway & Digital Instrument Cluster** | **Dual-Architecture Embedded Display & Communication System** |
-| **Mục tiêu nhấn mạnh** | Độ tin cậy mạng truyền thông xe hơi, an toàn chức năng, chuẩn giao tiếp quốc tế. | Kỹ năng lập trình thanh ghi Bare-metal, kiến trúc đa luồng RTOS, tối ưu hóa bộ nhớ. |
-| **Từ khóa "Ghi điểm"** | `CAN Bus`, `Vector DBC`, `AUTOSAR E2E`, `ISO 11898-1 Bus-Off`, `ISO 26262`, `Rolling Counter`. | `ARM Cortex-M7`, `L1 D-Cache Coherency`, `FMC SDRAM`, `DMA2D Chrom-ART`, `Zephyr RTOS`, `IPC`. |
-| **Tài liệu chứng minh** | Ma trận giải mã DBC, thuật toán E2E CRC-8, máy trạng thái Bus-Off Recovery. | Bảng đo đạc hiệu năng DWT Cycle Counter, bản đồ căn lề 32-byte Alignment, MPU Stack Guard. |
+| Tiêu chí So Sánh | Hướng 1: Ứng tuyển Kỹ sư Ô Tô (Automotive ECU / Gateway) | Hướng 2: Ứng tuyển Kỹ sư Firmware / Embedded C thuần | Đánh Giá Kỹ Thuật, Ưu / Nhược Điểm & Chiến Lược Phỏng Vấn |
+| :--- | :--- | :--- | :--- |
+| **1. Tiêu đề Dự án trong CV** | **Automotive CAN Gateway & Digital Instrument Cluster** | **Dual-Architecture Embedded Display & Communication System** | • **Hướng 1:** Thu hút ngay lập tức các nhà tuyển dụng Tier-1 (Bosch, Denso, LG VS, Continental, VinFast).<br>• **Hướng 2:** Tạo ấn tượng mạnh với các công ty thiết bị IoT công nghiệp, thiết bị y tế, viễn thông và thiết kế mạch bán dẫn. |
+| **2. Mục tiêu nhấn mạnh** | Độ tin cậy mạng truyền thông xe hơi, an toàn chức năng ISO 26262, chuẩn hóa giao tiếp Vector DBC & AUTOSAR E2E. | Kỹ năng lập trình thanh ghi Bare-metal cấp thấp, làm chủ phần cứng ARM Cortex-M7, kiến trúc đa luồng RTOS, tối ưu hóa bộ nhớ và tốc độ CPU. | • **Ưu điểm Hướng 1:** Mức lương khởi điểm rất cao ($15\text{M - }35\text{M}$ VND cho Fresher/Junior), nhu cầu tuyển dụng ô tô điện đang bùng nổ.<br>• **Ưu điểm Hướng 2:** Phổ việc làm cực kỳ rộng lớn, không bị giới hạn trong ngành ô tô, thể hiện nền tảng khoa học máy tính và kỹ thuật máy tính vững chắc. |
+| **3. Từ khóa "Ghi điểm" (Keywords ATS)** | `bxCAN`, `Vector DBC`, `AUTOSAR E2E Profile 1`, `ISO 11898-1 Bus-Off FSM`, `ISO 26262 FTTI`, `Rolling Counter`. | `ARM Cortex-M7`, `L1 D-Cache Coherency`, `FMC SDRAM 108MHz`, `DMA2D Chrom-ART`, `Zephyr RTOS`, `k_msgq`, `MPU Guard`. | • **Chiến lược:** Vượt qua vòng lọc tự động (ATS Resume Scanner) bằng cách bố trí các từ khóa kỹ thuật chuẩn xác ở phần Project Description và Skills Matrix. |
+| **4. Bằng chứng Kỹ thuật (Proof of Work)** | Ma trận giải mã tín hiệu DBC, thuật toán bảng tra cứu CRC-8 ($0\text{x2F}$), máy trạng thái phục hồi Bus-Off FSM. | Bảng số liệu thực nghiệm DWT Cycle Counter, bản đồ căn lề $32\text{ bytes}$ DMA, báo cáo Unit Test Unity chạy trên PC. | • **Điểm ăn tiền khi phỏng vấn:** Trình diễn trực tiếp biểu đồ so sánh Bare-Metal vs Zephyr RTOS và giải trình được chi tiết các lỗi kinh điển (ORE, D-Cache stale, Priority Inversion). |
 
 > 📖 **Hướng Dẫn Tra Cứu Tiêu Chuẩn & Thuật Ngữ Khi Viết CV (Standards Lookup):**
 > 1. **Tiêu chuẩn An toàn Chức năng Ô tô (ISO 26262)**:
@@ -242,10 +242,13 @@ Dưới đây là 20 câu hỏi kỹ thuật hóc búa nhất thường được
   4. Polling chờ cờ `ODSWRDY = 1` trong `PWR_CSR1` (Xác nhận mạch đã chuyển áp sang lõi thành công).
 
 #### 5. Công thức tính toán thanh ghi làm tươi FMC SDRAM Refresh Rate Counter (`SDRTR`) là gì?
-* **Trả lời:** Chip SDRAM cần làm tươi 4096 hàng trong vòng 64 ms.
-  * Thời gian làm tươi một hàng: T_refresh = 64 ms / 4096 = 15.625 us.
-  * Tần số FMC Clock = 108\text{ MHz} \implies \text{Chu kỳ } T_{clk} = 9.26\text{ ns}.
-  * Công thức chuẩn RM0385: COUNT = (T_refresh * f_FMC) - 20 = 1667 (Hex: 0x0683).
+* **Trả lời:** Chip SDRAM IS42S32400F cần làm tươi $4096\text{ hàng}$ trong khoảng thời gian tối đa $64\text{ ms}$:
+  * Thời gian làm tươi một hàng:
+    $$T_{\text{refresh\_row}} = \frac{64\text{ ms}}{4096} = 15.625\ \mu\text{s}$$
+  * Chu kỳ xung nhịp FMC ($f_{\text{FMC}} = 108\text{ MHz}$):
+    $$T_{\text{clk}} = \frac{1}{108\text{ MHz}} \approx 9.26\text{ ns}$$
+  * Công thức nạp thanh ghi `FMC_SDRTR` theo Reference Manual RM0385:
+    $$\text{COUNT} = (T_{\text{refresh\_row}} \times f_{\text{FMC}}) - 20 = (15.625\ \mu\text{s} \times 108\text{ MHz}) - 20 = 1687.5 - 20 = 1667.5 \approx \mathbf{1667} \ (\mathtt{0x0683})$$
 
 ---
 
@@ -266,10 +269,16 @@ Dưới đây là 20 câu hỏi kỹ thuật hóc búa nhất thường được
 * **Trả lời:** Trong silicon của STM32, khối phần cứng chứa **28 Filter Banks là tài nguyên dùng chung và do CAN1 làm Master quản lý độc quyền**. Thanh ghi cấu hình phân chia ranh giới bộ lọc `CAN2SB[5:0]` nằm trong `CAN1->FMR`. Nếu không cấp clock cho CAN1 và không đưa `CAN1->FMR` vào chế độ cấu hình (`FINIT = 1`), thì CAN2 hoàn toàn không được cấp bất kỳ Filter Bank nào và sẽ vứt bỏ toàn bộ frame nhận được ngoài bus!
 
 #### 10. Điểm lấy mẫu (Sample Point) trong Bit Timing mạng CAN là gì? Tại sao chuẩn ô tô yêu cầu 87.5%?
-* **Trả lời:** Sample Point là thời điểm bộ điều khiển CAN đọc mức điện áp trên bus trong 1 chu kỳ bit. Với f_{PCLK1} = 54\text{ MHz}, Baudrate 500 kbps, 1 bit gồm 18 Time Quanta (tq). Ta cài \text{Sync\_Seg} = 1, \text{Prop\_Seg} + \text{Phase\_Seg1} = 14, \text{Phase\_Seg2} = 3 \implies \text{Sample Point} = (1 + 14) / 18 = \mathbf{83.33\% \sim 87.5\%}. Chuẩn ô tô đặt điểm lấy mẫu ở cuối bit (> 80%) để triệt tiêu ảnh hưởng của độ trễ lan truyền vật lý trên đường cáp dài và thời gian trễ của chip thu phát Transceiver.
+* **Trả lời:** Sample Point là thời điểm bộ điều khiển CAN đọc mức điện áp trên bus trong 1 chu kỳ bit.
+  * Với $f_{\text{PCLK1}} = 54\text{ MHz}$, Baudrate $500\text{ kbps}$, 1 bit danh định gồm $18\text{ Time Quanta (tq)}$.
+  * Cấu hình các phân đoạn: $\text{Sync\_Seg} = 1$, $\text{Prop\_Seg} + \text{Phase\_Seg1} = 14$, $\text{Phase\_Seg2} = 3$:
+    $$\text{Sample Point} = \frac{1 + \text{TS1}}{1 + \text{TS1} + \text{TS2}} \times 100\% = \frac{1 + 14}{1 + 14 + 3} \times 100\% = \frac{15}{18} \approx \mathbf{83.33\% \sim 87.5\%}$$
+  * Chuẩn ô tô (CiA 301 / ISO 11898-1) luôn yêu cầu điểm lấy mẫu nằm ở cuối bit ($> 80\%$) để triệt tiêu ảnh hưởng của độ trễ lan truyền vật lý trên đường cáp dài và thời gian trễ chuyển mạch của chip thu phát Transceiver.
 
 #### 11. Thanh ghi độ lệch dòng `DMA2D_OOR` được tính như thế nào? Đơn vị của nó là gì?
-* **Trả lời:** Khi vẽ hình chữ nhật W_box x H_box lên màn hình W_screen x H_screen, thanh ghi Output Offset Register được tính: OOR = W_screen - W_box. Đơn vị của `OOR` là **số pixel, KHÔNG PHẢI số byte**! Nếu cấu hình sai thành byte, hình vẽ sẽ bị biến dạng xé xéo trên màn hình.
+* **Trả lời:** Khi vẽ hình chữ nhật $W_{	ext{box}} 	imes H_{	ext{box}}$ lên màn hình $W_{	ext{screen}} 	imes H_{	ext{screen}}$, thanh ghi Output Offset Register được tính:
+  $$\text{OOR} = W_{\text{screen}} - W_{\text{box}}$$
+  Đơn vị của `OOR` là **số pixel, KHÔNG PHẢI số byte**! Nếu cấu hình sai thành byte, hình vẽ sẽ bị biến dạng xé xéo trên màn hình.
 
 #### 12. Mạch Clock Security System (CSS) hoạt động ra sao khi mất thạch anh ngoài HSE?
 * **Trả lời:** Khi HSE mất dao động, mạch phần cứng CSS tự động thực hiện 3 hành động tức thì: (1) Tự động ngắt kết nối HSE và chuyển nguồn SYSCLK sang dao động nội **HSI 16MHz**, (2) Vô hiệu hóa bộ nhân PLL, (3) Phát tín hiệu ngắt bất khả kháng **NMI (Exception 2)** để CPU nhảy vào `NMI_Handler` thực thi quy trình hạ cánh an toàn (Fail-Safe), không bao giờ bị treo cứng.

@@ -92,7 +92,7 @@ Lõi STM32F746 có bộ nhớ SRAM nội 512 KB. Để chứa các lớp đồ h
 * **Số đường địa chỉ Hàng (`NR`):** **12 Rows** (`01b` - từ `A0` đến `A11`).
 * **Số đường địa chỉ Cột (`NC`):** **8 Columns** (`00b` - từ `A0` đến `A7`).
 * **Tần số xung nhịp SDRAM Clock (`SDCLK`):**
-  `f_SDCLK = f_HCLK / 2 = 216 MHz / 2 = 108 MHz -> T_SDCLK ~ 9.26 ns`
+  $$f_{	ext{SDCLK}} = rac{f_{	ext{HCLK}}}{2} = rac{216	ext{ MHz}}{2} = 108	ext{ MHz} \implies T_{	ext{SDCLK}} pprox 9.26	ext{ ns}$$
 * **CAS Latency (`CAS`):** Cài đặt **2 chu kỳ** (`10b`).
 
 ---
@@ -141,20 +141,21 @@ Không giống như SRAM thông thường (cấp điện là đọc/ghi được
 >    * Quan sát **Figure 83. Command mode timing diagram** để thấy quan hệ thời gian giữa tín hiệu `SDCKE`, `SDCS` và các chu kỳ lệnh JEDEC.
 
 ### Công thức tính toán Bộ đếm Refresh Timer (`FMC_SDRTR`):
-Theo Datasheet của chip SDRAM: Toàn bộ 4096 hàng phải được làm tươi trong vòng tối đa 64 ms:
-`Thời gian làm tươi cho 1 hàng = 64 ms / 4096 Rows = 15.625 us`
+Theo Datasheet của chip SDRAM: Toàn bộ 4096 hàng phải được làm tươi trong vòng tối đa $64	ext{ ms}$:
+$$T_{	ext{row}} = rac{T_{	ext{Refresh}}}{	ext{Số hàng}} = rac{64	ext{ ms}}{4096	ext{ Rows}} = 15.625\ \mu	ext{s}$$
 
-Với tần số f_{SDCLK = 108 MHz (1 chu kỳ = 9.26 ns):
-`Số chu kỳ Clock = 15.625 us * 108 MHz = 1687.5 chu kỳ`
+Với tần số $f_{	ext{SDCLK}} = 108	ext{ MHz}$ (1 chu kỳ $T_{	ext{SDCLK}} pprox 9.26	ext{ ns}$):
+$$	ext{Số chu kỳ Clock} = T_{	ext{row}} 	imes f_{	ext{SDCLK}} = 15.625\ \mu	ext{s} 	imes 108	ext{ MHz} = 1687.5	ext{ chu kỳ}$$
 
 Theo Reference Manual RM0385 (Section 13.7.7), giá trị nạp vào trường `COUNT[12:0]` có biên dự phòng 20 chu kỳ:
-`COUNT = (Refresh Rate * f_SDCLK) - 20 = 1687 - 20 = 1667 (Mã Hex: 0x0683)`
+$$	ext{COUNT} = (T_{	ext{row}} 	imes f_{	ext{SDCLK}}) - 20 = 1687.5 - 20 pprox 1667 \quad (	ext{Mã Hex: 0x0683})$$
 
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385):**
 > 1. **Mở file `RM0385.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`SDRAM Refresh Timer register`**
 > 2. Nhảy đến **Section 13.7.7: FMC_SDRTR**:
->    * Đối chiếu công thức tính trường `COUNT[12:0]` do ST quy định: COUNT = (SDRAM refresh rate x f_{SDCLK) - 20.
->    * Giải thích kỹ thuật: Trừ đi 20 chu kỳ clock là yêu cầu an toàn phần cứng để đảm bảo xung làm tươi không bị vi phạm thời gian trễ tối đa t_{REF khi bộ điều khiển FMC đang bận xử lý giao dịch dữ liệu dở dang trên bus.
+>    * Đối chiếu công thức tính trường `COUNT[12:0]` do ST quy định:
+>      $$	ext{COUNT} = (	ext{SDRAM refresh rate} 	imes f_{	ext{SDCLK}}) - 20$$
+>    * Giải thích kỹ thuật: Trừ đi $20	ext{ chu kỳ clock}$ là yêu cầu an toàn phần cứng để đảm bảo xung làm tươi không bị vi phạm thời gian trễ tối đa $t_{	ext{REF}}$ khi bộ điều khiển FMC đang bận xử lý giao dịch dữ liệu dở dang trên bus.
 
 ---
 
@@ -177,6 +178,15 @@ Khối **LTDC (LCD-TFT Display Controller)** điều khiển màn hình màu 4.3
  Total Height = 10 + 2  + 272 + 2  = 286 lines (VSYNC=10, VBP=2, Active=272, VFP=2)
  Pixel Clock (DOTCLK) mục tiêu: 566 x 286 x 60 Hz = 9.71 MHz (Cấp từ PLLSAI)
 ```
+
+$$
+\begin{aligned}
+H_{\text{total}} &= \text{HSYNC} + \text{HBP} + \text{Active Width} + \text{HFP} = 41 + 13 + 480 + 32 = 566\ \text{pixels} \\
+V_{\text{total}} &= \text{VSYNC} + \text{VBP} + \text{Active Height} + \text{VFP} = 10 + 2 + 272 + 2 = 286\ \text{lines} \\
+f_{\text{DOTCLK}} &= H_{\text{total}} \times V_{\text{total}} \times \text{Frame Rate} = 566 \times 286 \times 60\text{ Hz} \approx 9.71\text{ MHz} \\
+\text{Framebuffer Size} &= 480 \times 272 \times 2\text{ bytes (RGB565)} = 261{,}120\text{ bytes} \approx 255\text{ KB}
+\end{aligned}
+$$
 
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385):**
 > 1. **Mở file `RM0385.pdf`** ➔ Bấm `Ctrl + F` ➔ Gõ từ khóa: **`LTDC functional description`**
@@ -885,9 +895,9 @@ int main(void)
 
 ### ❓ Câu 5: Công thức tính toán giá trị nạp vào thanh ghi `FMC_SDRTR` (Refresh Timer) trên STM32F7 là gì?
 * **Trả lời:**
-  `COUNT = ( (T_Refresh / Số Hàng) * f_SDCLK ) - 20`
-  Với chip SDRAM trên board Discovery (T_{Refresh = 64 ms, Số Hàng = 4096, f_{SDCLK = 108 MHz):
-  `COUNT = ( (0.064 / 4096) * 108,000,000 ) - 20 = 1687.5 - 20 = 1667 (Hex: 0x0683)`
+  $$	ext{COUNT} = \left( rac{T_{	ext{Refresh}}}{	ext{Số Hàng}} 	imes f_{	ext{SDCLK}} ight) - 20$$
+  Với chip SDRAM trên board Discovery ($T_{	ext{Refresh}} = 64	ext{ ms}$, Số Hàng $= 4096$, $f_{	ext{SDCLK}} = 108	ext{ MHz}$):
+  $$	ext{COUNT} = \left( rac{0.064	ext{ s}}{4096} 	imes 108{,}000{,}000	ext{ Hz} ight) - 20 = 1687.5 - 20 pprox 1667 \quad (	ext{Hex: 0x0683})$$
 
 ---
 

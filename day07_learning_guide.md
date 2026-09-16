@@ -250,15 +250,15 @@ my_zephyr_app/
 
 Để không bị bỡ ngỡ khi chuyển từ lập trình truyền thống sang Zephyr RTOS, hãy đối chiếu trực diện 4 thành phần cốt lõi của Zephyr với Bare-Metal và FreeRTOS:
 
-### 1.1. Bảng Đối Chiếu 3 Mô Hình Lập Trình
+### 1.1. Bảng Đối Chiếu 3 Mô Hình Lập Trình (Chi Tiết Ưu / Nhược Điểm & Đánh Giá Chuyên Sâu)
 
-| Khía cạnh | 1. Bare-Metal (Ngày 0-6) | 2. FreeRTOS | 3. Zephyr RTOS (Ngày 7-14) |
-| :--- | :--- | :--- | :--- |
-| **Cấu hình chân phần cứng** | Gõ trực tiếp thanh ghi: `GPIOI->MODER`, `AFRH` | Dùng giao diện STM32CubeMX click chuột sinh code C (`gpio.c`) | Dùng file văn bản **Devicetree (`app.overlay`)** để mô tả chân |
-| **Bật/tắt tính năng OS** | Không có hệ điều hành | Sửa macro `#define` trong file **`FreeRTOSConfig.h`** | Gõ các cờ `CONFIG_XXX=y` trong file **`prj.conf` (Kconfig)** |
-| **Tạo luồng đa nhiệm** | Vòng lặp đơn `while(1)` trong hàm `main()` | Gọi hàm **`xTaskCreate()`** | Dùng macro **`K_THREAD_DEFINE()`** hoặc `k_thread_create()` |
-| **Mức ưu tiên (Priority)** | Mức ưu tiên ngắt NVIC (Số bé ưu tiên cao) | Số càng LỚN -> Ưu tiên càng CAO (Priority 5 > 1) | Số càng NHỎ -> Ưu tiên càng CAO (Priority 0 > 5, giống NVIC) |
-| **Giao tiếp liên luồng (IPC)**| Dùng biến toàn cục `volatile` và cờ ngắt | `xQueueSend()` / `xQueueReceive()` | `k_msgq_put()` / `k_msgq_get()` |
+| Khía cạnh Kỹ thuật | 1. Bare-Metal (Ngày 0-6) | 2. FreeRTOS (ST HAL / CubeMX) | 3. Zephyr RTOS (Ngày 7-14) | Đánh Giá Ưu / Nhược Điểm & Trade-off Kỹ Thuật |
+| :--- | :--- | :--- | :--- | :--- |
+| **1. Cấu hình chân phần cứng (Pinmux)** | Gõ trực tiếp thanh ghi: `GPIOI->MODER`, `AFRH` | Dùng STM32CubeMX click chuột sinh code C (`MX_GPIO_Init()`) | Dùng file văn bản **Devicetree (`app.overlay`)** để mô tả chân | • **Bare-Metal:** Tối ưu hiệu năng tuyệt đối ($0\text{ ns}$ overhead), nhưng phụ thuộc chặt vào mã chip; đổi vi điều khiển phải viết lại toàn bộ.<br>• **FreeRTOS:** Kéo thả trực quan ban đầu, nhưng code sinh ra phân mảnh, khó quản lý Git diff và dễ bị CubeMX ghi đè khi re-generate.<br>• **Zephyr:** Tách biệt 100% phần cứng khỏi mã nguồn C; đổi sang bo mạch chip NXP/TI chỉ cần sửa file `.overlay` mà giữ nguyên $100\%$ code logic C. Nhược điểm: Cú pháp DTS trừu tượng, dốc học tập ban đầu cao. |
+| **2. Bật/tắt tính năng OS & Subsystem** | Không có hệ điều hành (Tự code logic bằng cờ phần mềm) | Sửa macro `#define` trong file **`FreeRTOSConfig.h`** | Gõ cờ `CONFIG_XXX=y` trong file **`prj.conf` (Kconfig)** | • **Bare-Metal:** Tiết kiệm Flash/RAM tối đa, nhưng thiếu chuẩn mực khi tích hợp các stack phức tạp (TCP/IP, BLE, CANopen).<br>• **FreeRTOS:** Macro C truyền thống, đơn giản, nhưng thiếu cơ chế tự động giải quyết phụ thuộc (Dependency Resolution).<br>• **Zephyr:** Chuẩn Kconfig Linux cực mạnh, tự động nạp driver và bật các thư viện phụ thuộc lúc compile-time; có menu trực quan `west build -t menuconfig`. Nhược điểm: Phụ thuộc vào công cụ Python và CMake/West. |
+| **3. Tạo luồng đa nhiệm (Multi-Tasking)** | Vòng lặp đơn `while(1)` trong hàm `main()` + Ngắt ISR | Gọi hàm động **`xTaskCreate()`** hoặc tĩnh `xTaskCreateStatic()` | Dùng macro tĩnh **`K_THREAD_DEFINE()`** hoặc `k_thread_create()` | • **Bare-Metal:** $0\text{ byte}$ RAM cho Stack luồng, nhưng mã nguồn bị nghẽn (Blocking) nếu có tác vụ chạy lâu; khó đáp ứng đa nhiệm thời gian thực.<br>• **FreeRTOS:** Linh hoạt, tạo task lúc runtime dễ dàng; tuy nhiên `xTaskCreate` dùng Heap dễ gây phân mảnh RAM nếu tạo/xóa task liên tục.<br>• **Zephyr:** `K_THREAD_DEFINE` cấp phát tĩnh toàn bộ Stack và Thread Control Block lúc biên dịch ($0\%$ phân mảnh RAM, an toàn cho chuẩn MISRA-C/ISO 26262). |
+| **4. Mức ưu tiên (Priority Model)** | Mức ưu tiên ngắt NVIC (Số bé ưu tiên cao, 0 là khẩn cấp nhất) | Số càng LỚN $\rightarrow$ Ưu tiên càng CAO (Priority 5 > 1) | Số càng NHỎ $\rightarrow$ Ưu tiên càng CAO (Priority 0 > 5, giống NVIC) | • **Bare-Metal:** Chỉ có ưu tiên ngắt NVIC, không có ưu tiên mức tác vụ phần mềm.<br>• **FreeRTOS:** Quy ước ngược với phần cứng ARM Cortex-M NVIC, khiến lập trình viên mới dễ bị nhầm lẫn giữa NVIC Priority và FreeRTOS Task Priority.<br>• **Zephyr:** Nhất quán hoàn hảo với chuẩn phần cứng ARM Cortex-M: Số nhỏ hơn là mức ưu tiên cao hơn ($0$ là cao nhất trong dải Preemptive). Ngoài ra có thêm dải số âm (Negative Priorities) dành riêng cho Cooperative Threads (không bao giờ bị chiếm quyền). |
+| **5. Giao tiếp liên luồng (IPC)** | Biến toàn cục `volatile` kết hợp cờ hiệu (Flags) | `xQueueSend()` / `xQueueReceive()` | `k_msgq_put()` / `k_msgq_get()` | • **Bare-Metal:** Tốc độ tức thì nhưng dễ gặp lỗi Race Condition, xé vụn dữ liệu (Torn Read/Write), CPU phải chạy vòng lặp đói (Busy Polling).<br>• **FreeRTOS:** Hàng đợi an toàn, nhưng phải phân biệt rạch ròi 2 hàm riêng biệt: hàm trong Thread (`xQueueSend`) và hàm trong ngắt (`xQueueSendFromISR`), rất dễ gây lỗi crash nếu gọi nhầm.<br>• **Zephyr:** Dùng **1 hàm duy nhất** `k_msgq_put()` cho cả ngữ cảnh Thread lẫn ngắt ISR (chỉ cần truyền timeout `K_NO_WAIT`). Copy theo giá trị an toàn, tự động đưa Thread vào trạng thái Sleep ($0\%$ CPU) khi hàng đợi rỗng. |
 
 ---
 
@@ -365,16 +365,16 @@ Khi cần thêm một node thiết bị vào file `app.overlay`, để biết no
 
 Tập tin `prj.conf` kích hoạt các subsystem cần thiết cho dự án:
 
-| Kconfig Symbol | Giá trị | Ý nghĩa Kỹ thuật trong Zephyr RTOS |
-| :--- | :---: | :--- |
-| **`CONFIG_GPIO`** | `y` | Bật hệ thống driver điều khiển GPIO chuẩn Zephyr. |
-| **`CONFIG_SERIAL`** | `y` | Bật giao tiếp nối tiếp UART/USART. |
-| **`CONFIG_CONSOLE`** | `y` | Điều hướng đầu ra Console sang cổng nối tiếp ST-Link. |
-| **`CONFIG_UART_CONSOLE`** | `y` | Sử dụng UART làm kênh Console chuẩn. |
-| **`CONFIG_LOG`** | `y` | Bật hệ thống ghi nhật ký Zephyr Logging Subsystem. |
-| **`CONFIG_LOG_MODE_DEFERRED`**| `y` | Nhật ký ghi vào RAM đệm, chỉ in ra UART lúc CPU rảnh rỗi (Chống giật khung hình). |
-| **`CONFIG_MPU_STACK_GUARD`** | `y` | Bật mạch phần cứng MPU giám sát tràn ngăn xếp của từng luồng. |
-| **`CONFIG_THREAD_NAME`** | `y` | Cho phép gán tên chuỗi cho từng luồng phục vụ gỡ lỗi. |
+| Kconfig Symbol | Giá trị | Ý nghĩa Kỹ thuật trong Zephyr RTOS | Đánh Giá Kỹ Thuật, Ưu / Nhược Điểm & Chi Phí Tài Nguyên |
+| :--- | :---: | :--- | :--- |
+| **`CONFIG_GPIO`** | `y` | Bật hệ thống driver điều khiển GPIO chuẩn Zephyr. | • **Ưu điểm:** Cung cấp API GPIO đồng nhất (`gpio_pin_configure_dt`, `gpio_pin_set_dt`), độc lập với phần cứng chip.<br>• **Chi phí:** Tăng khoảng $\approx 1.2\text{ KB}$ Flash ROM. |
+| **`CONFIG_SERIAL`** | `y` | Bật giao tiếp nối tiếp UART/USART. | • **Ưu điểm:** Nền tảng cho Console, Logging và truyền thông Gateway.<br>• **Chi phí:** Tăng $\approx 2.5\text{ KB}$ Flash, chiếm 1 bộ đệm truyền nhận UART trong SRAM. |
+| **`CONFIG_CONSOLE`** | `y` | Điều hướng đầu ra Console sang cổng nối tiếp ST-Link. | • **Ưu điểm:** Cho phép in debug qua `printk()` và xem trạng thái bo mạch trực tiếp từ terminal PC.<br>• **Hạn chế:** Nếu in quá nhiều mà không dùng chế độ Deferred sẽ làm chậm các luồng thời gian thực. |
+| **`CONFIG_UART_CONSOLE`** | `y` | Sử dụng UART làm kênh Console chuẩn. | • **Ưu điểm:** Đơn giản, độ tin cậy cao, chạy được ngay khi khởi động bo mạch mà không cần thiết lập USB phức tạp.<br>• **Trade-off:** Chiếm dụng ngoại vi USART1 trên bo STM32F746-Disco. |
+| **`CONFIG_LOG`** | `y` | Bật hệ thống ghi nhật ký Zephyr Logging Subsystem. | • **Ưu điểm:** Hỗ trợ lọc mức độ log (`ERR`, `WRN`, `INF`, `DBG`), định dạng màu sắc ANSI và gắn nhãn theo module.<br>• **Chi phí:** Tiêu tốn khoảng $\approx 4\text{ KB}$ Flash và $\approx 1\text{ KB}$ RAM cho cấu trúc metadata log. |
+| **`CONFIG_LOG_MODE_DEFERRED`**| `y` | Nhật ký ghi vào RAM đệm, chỉ in ra UART lúc CPU rảnh rỗi. | • **Ưu điểm Cốt tử:** Giải phóng hoàn toàn luồng thời gian thực khỏi độ trễ in UART ($1\text{ - }10\text{ ms}$/lệnh in); triệt tiêu hiện tượng giật khung hình giao diện táp-lô.<br>• **Nhược điểm:** Tốn thêm Ring Buffer RAM ($\approx 1024\text{ bytes}$); nếu CPU gặp HardFault ngay lập tức thì các log chưa kịp đẩy ra UART có thể bị mất. |
+| **`CONFIG_MPU_STACK_GUARD`** | `y` | Bật mạch phần cứng MPU giám sát tràn ngăn xếp của từng luồng. | • **Ưu điểm Vượt trội:** Bắt lỗi Stack Overflow bằng ngắt MemManage ngay thời điểm vi phạm; ngăn chặn $100\%$ lỗi ghi đè phá hỏng RAM của luồng bên cạnh.<br>• **Chi phí:** Không tốn chu kỳ CPU khi chạy bình thường (phần cứng MPU tự kiểm tra địa chỉ bus AXI/AHB). Mỗi Stack luồng phải căn lề $32\text{ bytes}$ tương ứng với 1 Region MPU. |
+| **`CONFIG_THREAD_NAME`** | `y` | Cho phép gán tên chuỗi cho từng luồng phục vụ gỡ lỗi. | • **Ưu điểm:** In rõ tên luồng (`"can_rx"`, `"gui_task"`) khi xem lệnh `thread-analyzer` hoặc lúc xảy ra lỗi Panic thay vì chỉ in địa chỉ hex vô nghĩa.<br>• **Chi phí:** Tốn thêm $\approx 16\text{ bytes}$ RAM cho mỗi Thread Control Block để lưu chuỗi tên. |
 
 ---
 

@@ -47,11 +47,13 @@ Trên đường dây CAN Bus của xe hơi, các hộp điều khiển ECU chỉ
   * Chiều dài bao nhiêu bit?
   * Lấy số thô đó nhân với bao nhiêu (Factor) và cộng với bao nhiêu (Offset) thì ra giá trị thực tế ngoài đời (km/h, RPM, độ C)?
 
-| Khía cạnh giải mã | Cách làm thủ công (Bare-Metal / FreeRTOS) | Thiết kế Driver Chuẩn (DBC Engine) |
-| :--- | :--- | :--- |
-| **Bóc tách bit** | Lập trình viên tự viết các phép `>>`, `&` cứng (hardcode) rải rác khắp các task. Khó bảo trì khi hãng đổi vị trí chân tín hiệu. | Tạo bảng `DbcSignalMeta_t` tĩnh trên Flash. Chỉ cần 1 hàm giải mã chung `DBC_DecodeSignal()` xử lý mọi tín hiệu! |
-| **Hệ quy chiếu byte** | Thường chỉ hỗ trợ Intel. Khi gặp gói tin Motorola từ hộp số hoặc động cơ thì bị đọc sai hoàn toàn. | Hỗ trợ song song cả hai chuẩn Intel (Little-Endian) và Motorola (Big-Endian). |
-| **Phép toán số học** | Dùng số thực `float` gây tốn chu kỳ FPU và không an toàn thời gian thực. | Dùng số nguyên định điểm (Fixed-point: nhân tử số rồi chia mẫu số), nhanh gấp 10 lần và an toàn tuyệt đối. |
+### 1.1. Bảng Đối Chiếu Giải Mã Tín Hiệu: Thủ Công vs DBC Engine Chuẩn (Chi Tiết Ưu / Nhược Điểm)
+
+| Khía cạnh Giải mã | Cách làm thủ công (Bare-Metal / FreeRTOS) | Thiết kế Driver Chuẩn (DBC Engine) | Đánh Giá Kỹ Thuật, Ưu / Nhược Điểm & Trade-off Chuyên Sâu |
+| :--- | :--- | :--- | :--- |
+| **1. Bóc tách bit (Bit Unpacking)** | Lập trình viên tự gõ các phép toán `>>`, `<<`, `&` cứng (Hardcode) rải rác khắp các task ứng dụng. | Tạo bảng `DbcSignalMeta_t` tĩnh trên Flash. Chỉ cần **$1$ hàm giải mã dùng chung duy nhất** `DBC_DecodeSignal()` xử lý mọi tín hiệu! | • **Thủ công:** Tốc độ tức thì ($1\text{ - }2$ lệnh máy), nhưng cực kỳ mong manh; chỉ cần hãng xe đổi vị trí từ bit 8 sang bit 12 là kỹ sư phải tìm và sửa lại hàng chục file nguồn C, nguy cơ sót bug cực cao.<br>• **DBC Engine:** Kiến trúc định hướng dữ liệu (Data-Driven Architecture). Độc lập hoàn toàn giữa thuật toán bóc tách và sơ đồ mạng xe; khi hãng đổi chân tín hiệu chỉ cần cập nhật lại bảng Metadata tĩnh trên Flash. |
+| **2. Hệ quy chiếu thứ tự byte (Endianness)** | Thường chỉ hỗ trợ một chiều Intel (Little-Endian). Khi gặp thông điệp từ hộp số (TCU) hay trợ lực lái (EPS) dùng chuẩn Motorola thì giải mã sai lệch hoàn toàn. | Hỗ trợ song song cả hai chuẩn **Intel (`@1` - Little-Endian)** và **Motorola (`@0` - Big-Endian zíc-zắc Sawtooth)**. | • **Thủ công:** Rất dễ bị ngộ nhận thứ tự bit; giải mã sai giá trị góc lái hoặc momen xoắn động cơ có thể dẫn đến hành vi điều khiển xe nguy hiểm.<br>• **DBC Engine:** Tích hợp thuật toán di chuyển con trỏ byte theo vết răng cưa (Sawtooth Path) của chuẩn Motorola, tự động đảo bit MSB/LSB chuẩn xác $100\%$ theo đặc tả quốc tế Vector CANdb++. |
+| **3. Phép toán chuyển đổi vật lý (Scaling & Offset)** | Sử dụng kiểu số thực dấu phẩy động `float/double`: `speed = raw * 0.0625f + 0.0f;`. | Ứng dụng số nguyên định điểm (**Fixed-Point Scaling**): Lưu tỷ lệ dạng Phân số Tối giản $\frac{\text{Tử số}}{\text{Mẫu số}}$ và dịch bit nhị phân. | • **Thủ công (Float):** Tốn chu kỳ phần cứng FPU, kết quả có sai số làm tròn thập phân không xác định; vi phạm nghiêm trọng quy chuẩn an toàn hàng không/ô tô (DO-178C / MISRA-C:2012).<br>• **DBC Engine (Fixed-Point):** Nhanh gấp $\approx 10\text{ lần}$, tính toán xác định $100\%$ (Deterministic), loại trừ hoàn toàn sai số trôi số thực, an toàn tuyệt đối cho vi điều khiển cấp an toàn ASIL-D. |
 
 ---
 
@@ -118,25 +120,25 @@ Byte 3: [31 30 29 28 27 26 25 24 ]
 
 ### 1.4. Giải Thuật Chuyển Đổi Vật Lý Bằng Số Nguyên Định Điểm (Fixed-Point Scaling)
 
-Công thức toán học:
-```text
-Giá trị thực tế = (Giá trị thô x Factor) + Offset
-```
+Công thức toán học chuyển đổi vật lý chuẩn AUTOSAR / Vector DBC:
+$$\text{Physical\_Value} = (\text{Raw\_Value} \times \text{Factor}) + \text{Offset}$$
 
-* **Nếu dùng Float thông thường:**
+* **Hạn chế của phép tính Float thông thường:**
   ```c
-  float speed = (raw_val * 0.0625f) + 0.0f; // Tốn chu kỳ lệnh FPU, không chuẩn MISRA-C thời gian thực!
+  float speed = (raw_val * 0.0625f) + 0.0f; // Tốn chu kỳ lệnh FPU, sai số làm tròn, không chuẩn MISRA-C!
   ```
-* **Giải pháp Số nguyên Định điểm (Integer Scaling):**
-  Nhận thấy Factor = 0.0625 = 1/16 = 1/(2^4).  
-  Ta chỉ cần thực hiện phép dịch bit phải:
+* **Giải pháp Số nguyên Định điểm (Fixed-Point Scaling):**
+  Khi $\text{Factor} = 0.0625 = \frac{1}{16} = \frac{1}{2^4}$, ta chỉ cần thực hiện phép dịch bit phải siêu nhanh:
+  $$\text{Speed}_{\text{km/h}} = \text{raw\_val} \gg 4$$
+* Với các hệ số hữu tỉ tổng quát dạng số thập phân tuần hoàn hoặc không phải lũy thừa của 2 (ví dụ $\text{Factor} = 0.1 = \frac{1}{10}$), ta biểu diễn hệ số dưới dạng **Phân số Tối giản** $\frac{\text{factor\_num}}{\text{factor\_den}}$:
+  $$\text{Physical\_Value} = \frac{(\text{int64\_t})\text{raw\_val} \times \text{factor\_num}}{\text{factor\_den}} + \text{offset}$$
   ```c
-  Speed_kmh = raw_val >> 4;
+  int32_t val = ((int64_t)raw_val * meta->factor_num) / meta->factor_den + meta->offset;
   ```
-* Với các hệ số phức tạp như Factor = 0.1 (tương đương chia 10), ta lưu hệ số dưới dạng **Tử số / Mẫu số**:
-  ```c
-  Value = ((int64_t)raw_val * factor_num) / factor_den + offset;
-  ```
+
+* **Thuật toán Mở rộng Dấu bù hai (Sign Extension):**
+  Đối với tín hiệu có dấu dài $N\text{ bits}$ (ví dụ $14\text{ bits}$ góc lái), nếu bit có trọng số cao nhất (bit thứ $N-1$) bằng $1$, đó là số âm. Ta mở rộng dấu sang 32-bit:
+  $$\text{Sign\_Extended}(X, N) = \begin{cases} X & \text{nếu } (X \ \& \ (1 \ll (N - 1))) = 0 \\ X \mid (\sim 0 \ll N) & \text{nếu } (X \ \& \ (1 \ll (N - 1))) \ne 0 \end{cases}$$
 
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Tiêu Chuẩn AUTOSAR & MISRA:**
 > 1. **Tra cứu AUTOSAR E2E Specification:** Xem tài liệu *AUTOSAR Specification of End-to-End Communication Protection (E2E Protocol)*.
@@ -170,21 +172,24 @@ Khi mở file `.dbc` bằng bất kỳ trình soạn thảo nào hoặc phần m
 ### 📖 Kênh 2: Cách Tra Cứu Đa Thức Kiểm Tra Toàn Vẹn E2E CRC-8 (AUTOSAR)
 Trong mạng ô tô (chống lỗi rớt bit phần cứng hoặc can thiệp dữ liệu):
 1. **Tra cứu tài liệu chuẩn AUTOSAR E2E Profile 1/2:**
-   * Đa thức CRC-8 chuẩn công nghiệp ô tô: $PP(x) = x^8 + x^4 + x^3 + x^2 + 1 (Mã Hex: **`0x1D`** hoặc **`0x2F`**).
+   * Đa thức CRC-8 chuẩn công nghiệp ô tô:
+     $$P(x) = x^8 + x^4 + x^3 + x^2 + 1 \quad (\text{Mã Hex: } \mathbf{0x1D})$$
+     hoặc theo chuẩn AUTOSAR 8H2F Profile 1:
+     $$P(x) = x^8 + x^5 + x^3 + x^2 + x + 1 \quad (\text{Mã Hex: } \mathbf{0x2F})$$
    * Giá trị khởi tạo (Init Value): **`0xFF`**.
    * Giá trị XOR ngõ ra (XOR Out): **`0xFF`**.
 2. **Alive Counter:** Bộ đếm 4-bit (`0x0` đến `0xF`) tăng liên tục sau mỗi chu kỳ gửi để phát hiện lỗi đứng gói (Frozen Message).
 
 ---
 
-## 2.2. Bảng Ma Trận Tín Hiệu Mạng Ô Tô Mẫu (Vehicle Telematics DBC)
+## 2.2. Bảng Ma Trận Tín Hiệu Mạng Ô Tô Mẫu (Vehicle Telematics DBC - Kèm Phân Tích Kỹ Thuật)
 
-| Tên Tín Hiệu | Message ID | Start Bit | Độ Dài | Byte Order | Signed? | Factor | Offset | Đơn Vị | Dải Đo |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **`Vehicle_Speed`** | `0x120` | 0 | 12 bits | **Intel** (`@1`) | Unsigned | 0.0625 (1/16) | 0 | km/h | 0 đến 255 |
-| **`Engine_RPM`** | `0x120` | 16 | 14 bits | **Intel** (`@1`) | Unsigned | 0.5 (1/2) | 0 | RPM | 0 đến 8191 |
-| **`Coolant_Temp`** | `0x120` | 32 | 8 bits | **Intel** (`@1`) | Signed | 1.0 | -40 | độ C | -40 đến 215 |
-| **`Steering_Angle`**| `0x240` | 7 | 14 bits | **Motorola** (`@0`)| Signed | 0.1 (1/10) | -720 | Độ | -720 đến 720 |
+| Tên Tín Hiệu | Message ID | Start Bit | Độ Dài | Byte Order | Signed? | Factor | Offset | Đơn Vị | Dải Đo | Nhận Xét Chuyên Sâu Kỹ Thuật Ô Tô (Design Rationale) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
+| **`Vehicle_Speed`** | `0x120` | 0 | 12 bits | **Intel** (`@1`) | Unsigned | 0.0625 (1/16) | 0 | km/h | 0 đến 255 | • Độ phân giải $0.0625\text{ km/h}$ giúp hiển thị kim đồng hồ táp-lô cực mượt mà.<br>• Factor $\frac{1}{16}$ cho phép tối ưu bằng phép dịch bit `>> 4`, $0\text{ cycle}$ chia CPU.<br>• $12\text{ bits}$ đủ biểu diễn tối đa $(2^{12} - 1) \times 0.0625 = 4095 \times 0.0625 \approx 255.9\text{ km/h}$. |
+| **`Engine_RPM`** | `0x120` | 16 | 14 bits | **Intel** (`@1`) | Unsigned | 0.5 (1/2) | 0 | RPM | 0 đến 8191 | • $14\text{ bits}$ biểu diễn từ $0$ đến $(2^{14}-1) \times 0.5 = 8191.5\text{ RPM}$, bao phủ toàn bộ dải vòng tua của động cơ xăng/diesel.<br>• Factor $0.5$ (chia 2) tối ưu bằng phép `>> 1`. |
+| **`Coolant_Temp`** | `0x120` | 32 | 8 bits | **Intel** (`@1`) | Signed | 1.0 | -40 | độ C | -40 đến 215 | • Chỉ chiếm đúng $1\text{ byte}$ ($8\text{ bits}$).<br>• Offset $-40^\circ\text{C}$ để đo được nhiệt độ khởi động xe trong mùa đông băng tuyết (từ $-40^\circ\text{C}$ đến $+215^\circ\text{C}$). Không cần chia mẫu số. |
+| **`Steering_Angle`**| `0x240` | 7 | 14 bits | **Motorola** (`@0`)| Signed | 0.1 (1/10) | -720 | Độ | -720 đến 720 | • Sử dụng chuẩn **Motorola Big-Endian** kinh điển từ hộp trợ lực lái EPS.<br>• Tín hiệu có dấu Signed, dải đo $\pm 720^\circ$ (tương đương 2 vòng quay vô lăng sang trái/phải). Bắt buộc phải áp dụng thuật toán Sign Extension mở rộng dấu bù hai. |
 
 ---
 

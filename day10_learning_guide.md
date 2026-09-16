@@ -39,15 +39,15 @@
 
 # 🧠 BƯỚC 1: KIẾN TRÚC HỆ THỐNG & CƠ CHẾ HOẠT ĐỘNG (SO SÁNH FREERTOS)
 
-### 1.1. So Sánh Cơ Chế Giao Tiếp Đa Luồng (IPC): FreeRTOS vs Zephyr RTOS
+### 1.1. So Sánh Cơ Chế Giao Tiếp Đa Luồng (IPC): FreeRTOS vs Zephyr RTOS (Chi Tiết Ưu / Nhược Điểm)
 
-| Khái niệm IPC | 1. FreeRTOS | 2. Zephyr RTOS | Điểm Khác Biệt Trọng Tâm |
+| Khái niệm IPC | 1. FreeRTOS | 2. Zephyr RTOS | Đánh Giá Kỹ Thuật, Ưu / Nhược Điểm & Trade-off Chuyên Sâu |
 | :--- | :--- | :--- | :--- |
-| **Hàng đợi (Queue)** | `xQueueCreate()`, `QueueHandle_t` | `K_MSGQ_DEFINE()`, `struct k_msgq` | Cả hai đều copy dữ liệu theo giá trị (`memcpy`), chống lỗi con trỏ rác. |
-| **Gửi dữ liệu vào Queue** | Phải phân biệt rõ ràng: Luồng dùng `xQueueSend()`, còn trong ngắt ISR phải dùng `xQueueSendFromISR()`. | **DÙNG CHUNG 1 HÀM DUY NHẤT:** `k_msgq_put()` gọi được từ cả Thread lẫn ngắt ISR (chỉ cần truyền timeout `K_NO_WAIT`). |
-| **Nhận dữ liệu từ Queue** | `xQueueReceive(queue, &buf, portMAX_DELAY)` | `k_msgq_get(&msgq, &buf, K_FOREVER)` | Cả hai đều đưa luồng vào trạng thái Sleep (0% CPU) khi hàng đợi rỗng. |
-| **Khóa Mutex** | `xSemaphoreCreateMutex()` | `K_MUTEX_DEFINE(my_mutex)` | Cả hai đều tự động tích hợp **Priority Inheritance** (Kế thừa mức ưu tiên) chống treo luồng cao. |
-| **Giao diện dòng lệnh (CLI)** | `FreeRTOS-Plus-CLI` (Phải tự viết bộ tách chuỗi UART, tự xử lý ký tự phím bấm). | **Zephyr Shell Subsystem** (`CONFIG_SHELL=y`): Có sẵn phím Tab tự hoàn thành lệnh, phím mũi tên lật lại lịch sử, gõ lệnh trực tiếp qua ST-Link UART! |
+| **1. Khai báo & Khởi tạo Hàng đợi (Queue)** | `xQueueCreate()`, cấp phát động từ FreeRTOS Heap qua `pvPortMalloc()`. Trả về handle `QueueHandle_t`. | Macro tĩnh **`K_MSGQ_DEFINE()`**, cấp phát Ring Buffer tĩnh trên RAM lúc biên dịch. | • **FreeRTOS:** Linh hoạt tạo hàng đợi lúc runtime, nhưng có nguy cơ thất bại trả về `NULL` nếu Heap cạn kiệt; dễ gây phân mảnh bộ nhớ.<br>• **Zephyr:** Tuân thủ tuyệt đối chuẩn an toàn MISRA-C/ISO 26262. Toàn bộ bộ nhớ hàng đợi được định vị tĩnh trên phân vùng `.bss` lúc link code ($0\text{ risk}$ cấp phát thất bại, $0\text{ fragmentation}$). |
+| **2. Gửi dữ liệu vào Queue (Producer)** | Bắt buộc phải phân biệt 2 hàm riêng rẽ:<br>• Luồng: `xQueueSend()`<br>• Ngắt: `xQueueSendFromISR()` | **DÙNG CHUNG 1 HÀM DUY NHẤT:**<br>`k_msgq_put(&msgq, &data, timeout)`<br>(Trong ngắt chỉ cần truyền `K_NO_WAIT`). | • **FreeRTOS:** Thiết kế cổ điển, chia tách hàm ngắt để tránh nhầm lẫn ngữ cảnh; tuy nhiên rất dễ bị lập trình viên gọi nhầm `xQueueSend()` trong ISR gây lỗi Assert crash hệ thống.<br>• **Zephyr:** Trải nghiệm lập trình viên (DX) hiện đại. Nhân Zephyr tự kiểm tra ngữ cảnh thực thi (`_is_in_isr()`), nếu là ngắt nó tự động bỏ qua tính năng lập lịch ngủ; code gọn gàng, an toàn tuyệt đối. |
+| **3. Nhận dữ liệu từ Queue (Consumer)** | `xQueueReceive(queue, &buf, portMAX_DELAY)` | `k_msgq_get(&msgq, &buf, K_FOREVER)` | • **Cả hai:** Đều đưa luồng nhận vào trạng thái Blocked/Sleep ($0\%$ CPU tiêu hao) khi hàng đợi rỗng và lập tức đánh thức luồng khi có dữ liệu mới.<br>• **Zephyr:** Hỗ trợ thêm `k_msgq_peek()` để kiểm tra trước nội dung bản tin mà không xóa khỏi hàng đợi, cực kỳ tiện lợi cho các thuật toán tiền kiểm tra. |
+| **4. Khóa bảo vệ tài nguyên (Mutex)** | `xSemaphoreCreateMutex()` | Macro tĩnh `K_MUTEX_DEFINE(my_mutex)` | • **Cả hai:** Đều tự động kích hoạt thuật toán **Priority Inheritance** (Kế thừa mức ưu tiên) để triệt tiêu hiểm họa Priority Inversion.<br>• **Zephyr:** Tích hợp sâu với MPU và Subsystem Logging, cho phép truy vết luồng nào đang giữ khóa nếu xảy ra hiện tượng giữ khóa quá lâu. |
+| **5. Giao diện tương tác dòng lệnh (CLI Shell)** | `FreeRTOS-Plus-CLI` (Lập trình viên phải tự viết bộ đệm vòng nhận từng ký tự UART, tự viết parser tách từ khóa). | **Zephyr Shell Subsystem** (`CONFIG_SHELL=y`): Có sẵn phím Tab tự gợi ý lệnh, phím mũi tên lật lại lịch sử, gõ lệnh trực tiếp qua ST-Link Console. | • **FreeRTOS:** Tốn nhiều công sức tự viết glue-code, khó mở rộng khi cần thêm lệnh debug.<br>• **Zephyr:** Đạt chuẩn công nghiệp như một Unix Shell thu nhỏ. Macro `SHELL_CMD_REGISTER()` cho phép đăng ký lệnh ở bất kỳ file nguồn nào mà không cần sửa file trung tâm. Tiết kiệm hàng tuần phát triển công cụ debug. |
 
 ---
 
@@ -144,12 +144,14 @@ KỊCH BẢN NGUY HIỂM (Priority Inversion khi dùng Khóa không có Kế th�
 
 ### 1.5. So Sánh Cơ Chế IPC: `k_msgq` vs `k_fifo` vs `k_sem`
 
-| Tiêu chí kỹ thuật | `k_msgq` (Message Queue) | `k_fifo` (First-In First-Out) | `k_sem` (Semaphore) |
-| :--- | :--- | :--- | :--- |
-| **Cơ chế truyền dữ liệu** | **Copy theo giá trị (`memcpy`)** vào bộ đệm tĩnh có sẵn. | **Truyền con trỏ (`pointer passing`)** tới vùng nhớ động. | Chỉ truyền **tín hiệu cờ (Event Signal)**, không mang dữ liệu. |
-| **Cấp phát bộ nhớ** | Tĩnh hoàn toàn lúc khai báo (`CAN_MSGQ_DEFINE`). 0 rủi ro cấp phát. | Cần cấp phát bộ nhớ động (`k_heap` hoặc `k_mem_slab`) cho từng node. | 0 byte dữ liệu. |
-| **Rủi ro rò rỉ bộ nhớ** | **KHÔNG CÓ** (Bộ nhớ quay vòng tĩnh). | CÓ NGUY CƠ (Nếu bên nhận quên `free` con trỏ nhận được). | Không có. |
-| **Khuyến nghị sử dụng** | **Chuẩn mực cho gói tin vi điều khiển (CAN, UART, Sensor data).** | Truyền các khối dữ liệu khổng lồ (Ảnh camera, gói tin TCP/IP). | Đồng bộ hóa sự kiện đơn lẻ hoặc đếm tài nguyên. |
+### 1.5. So Sánh Cơ Chế IPC: `k_msgq` vs `k_fifo` vs `k_sem` (Chi Tiết Ưu / Nhược Điểm)
+
+| Tiêu chí Kỹ thuật | `k_msgq` (Message Queue) | `k_fifo` (First-In First-Out) | `k_sem` (Semaphore) | Đánh Giá Kỹ Thuật, Ưu / Nhược Điểm & Trade-off Chuyên Sâu |
+| :--- | :--- | :--- | :--- | :--- |
+| **1. Cơ chế truyền dữ liệu** | **Copy theo giá trị (`memcpy`)** vào bộ đệm tĩnh nội bộ. | **Truyền con trỏ (`pointer passing`)** tới vùng nhớ được cấp phát. | **Chỉ truyền tín hiệu (Signal)** thông qua bộ đếm số nguyên, $0\text{ byte}$ dữ liệu mang theo. | • **`k_msgq`:** An toàn tuyệt đối, bên gửi và bên nhận sở hữu bản sao độc lập, không sợ con trỏ bị ghi đè.<br>• **`k_fifo`:** Tốc độ tức thì ($O(1)$) bất kể dữ liệu lớn cỡ nào vì chỉ hoán đổi con trỏ $4\text{ bytes}$. Tuy nhiên, rủi ro cực cao nếu bên gửi sửa dữ liệu khi bên nhận đang đọc (Race Condition).<br>• **`k_sem`:** Nhanh nhất ($10\text{ - }20\text{ ns}$), chuyên dùng báo thức sự kiện (Event Wake-up) nhưng không truyền được thông tin đo lường. |
+| **2. Cấp phát bộ nhớ & Phân mảnh RAM** | **Tĩnh $100\%$:** Cấp phát mảng Ring Buffer cố định lúc khai báo (`K_MSGQ_DEFINE`). | **Động:** Cần cấp phát heap (`k_malloc` hoặc `k_mem_slab`) cho từng phần tử node. | **Cực tiểu:** Chỉ gồm 1 biến đếm nguyên tử `atomic_t` và hàng đợi chờ của thread. | • **`k_msgq`:** Đạt chuẩn an toàn ASIL-B / MISRA-C ($0\%$ rủi ro cạn RAM lúc runtime).<br>• **`k_fifo`:** Rất dễ gây phân mảnh RAM nếu cấp phát và giải phóng liên tục các node có kích thước khác nhau.<br>• **`k_sem`:** Chiếm dưới $24\text{ bytes}$ RAM cho cấu trúc điều khiển. |
+| **3. Nguy cơ rò rỉ bộ nhớ (Memory Leak)** | **KHÔNG CÓ:** Dữ liệu được ghi đè tuần hoàn trong mảng tĩnh. | **NGUY CƠ CAO:** Nếu bên nhận nhận được con trỏ nhưng gặp lỗi nhánh logic và quên giải phóng (`k_free`), hệ thống sẽ cạn RAM sau vài giờ chạy. | **KHÔNG CÓ:** Không cấp phát bất kỳ khối nhớ nào. | • **Bài toán Kỹ sư:** Với các hệ thống nhúng hoạt động liên tục nhiều năm (24/7) như ô tô, `k_msgq` là lựa chọn số 1 về độ tin cậy. `k_fifo` chỉ nên dùng kèm `k_mem_slab` (Fixed-size memory pool) để loại trừ phân mảnh. |
+| **4. Kịch bản ứng dụng tối ưu** | **Chuẩn mực cho gói tin vi điều khiển:** CAN Frame ($16\text{ bytes}$), dữ liệu cảm biến telemetry, sự kiện bàn phím. | **Truyền dữ liệu khối lượng lớn:** Khung hình camera, gói tin mạng TCP/IP, mảng nén âm thanh. | **Đồng bộ hóa nhịp:** Báo ngắt DMA hoàn tất, giới hạn số lượng tài nguyên chia sẻ (Counting Semaphore). | • **Khuyến nghị Dự án:** Sử dụng `k_msgq` làm xương sống kết nối giữa luồng CAN Worker và GUI Model; sử dụng `k_mutex` để bảo vệ tài nguyên vẽ LVGL. |
 
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Zephyr Data Passing:**
 > 1. **Tra cứu Message Queue:** Mở `https://docs.zephyrproject.org/latest/kernel/services/data_passing/message_queues.html`.
@@ -195,15 +197,15 @@ KỊCH BẢN NGUY HIỂM (Priority Inversion khi dùng Khóa không có Kế th�
 
 ## 2.2. Bảng Cấu Hình Tính Năng Kconfig (`prj.conf`)
 
-| Kconfig Symbol | Giá trị | Ý nghĩa Kỹ thuật trong Zephyr RTOS |
-| :--- | :---: | :--- |
-| **`CONFIG_SHELL`** | `y` | Kích hoạt hệ thống giao diện dòng lệnh Zephyr Shell. |
-| **`CONFIG_SHELL_BACKENDS`** | `y` | Kích hoạt các backend hỗ trợ xuất nhập Shell. |
-| **`CONFIG_SHELL_BACKEND_SERIAL`**| `y` | Sử dụng cổng UART nối tiếp Console làm cổng nhập lệnh Shell. |
-| **`CONFIG_THREAD_ANALYZER`** | `y` | Bật công cụ đo lường mức tiêu thụ ngăn xếp của từng luồng. |
-| **`CONFIG_THREAD_ANALYZER_USE_LOG`**| `y` | In kết quả phân tích Stack qua Zephyr Logging. |
-| **`CONFIG_THREAD_ANALYZER_AUTO`**| `y` | Tự động quét và in báo cáo Stack định kỳ. |
-| **`CONFIG_THREAD_ANALYZER_AUTO_INTERVAL`**| `10` | Chu kỳ quét phân tích ngăn xếp: 10 giây/lần. |
+| Kconfig Symbol | Giá trị | Ý nghĩa Kỹ thuật trong Zephyr RTOS | Đánh Giá Kỹ Thuật, Ưu / Nhược Điểm & Chi Phí Tài Nguyên |
+| :--- | :---: | :--- | :--- |
+| **`CONFIG_SHELL`** | `y` | Kích hoạt hệ thống giao diện dòng lệnh Zephyr Shell. | • **Ưu điểm Vượt trội:** Biến bo mạch thành một thiết bị chẩn đoán chuyên nghiệp; hỗ trợ gõ lệnh, tự hoàn thành phím Tab, lật lại lịch sử, kiểm tra trạng thái xe tại hiện trường mà không cần nạp lại firmware.<br>• **Chi phí:** Tăng khoảng $\approx 18\text{ KB}$ Flash và tiêu tốn một vùng Stack riêng ($\approx 2048\text{ bytes}$ RAM). |
+| **`CONFIG_SHELL_BACKENDS`** | `y` | Kích hoạt các backend hỗ trợ xuất nhập Shell. | • **Ưu điểm:** Cho phép kết nối Shell qua nhiều giao thức khác nhau (UART, RTT Segger, Telnet, BLE).<br>• **Chi phí:** $\approx 1.2\text{ KB}$ Flash. |
+| **`CONFIG_SHELL_BACKEND_SERIAL`**| `y` | Sử dụng cổng UART nối tiếp Console làm cổng nhập lệnh Shell. | • **Ưu điểm:** Thuận tiện nhất, dùng chung dây cáp micro-USB ST-Link cắm vào máy tính, không cần thêm phần cứng chuyển đổi USB-UART ngoài.<br>• **Trade-off:** Chiếm dụng băng thông cổng Console; các lệnh in log dài có thể làm trôi con trỏ nhập lệnh. |
+| **`CONFIG_THREAD_ANALYZER`** | `y` | Bật công cụ đo lường mức tiêu thụ ngăn xếp của từng luồng. | • **Ưu điểm Cốt tử:** Quét toàn bộ các byte mẫu (Pattern `0xAA`) được nạp lúc boot để tính toán chính xác mức đỉnh (High Watermark) mà Stack từng chạm tới.<br>• **Chi phí:** Tốn $\approx 3.5\text{ KB}$ Flash ROM; cực kỳ cần thiết trong giai đoạn phát triển để định cỡ Stack chính xác (Sizing Stack), tránh lãng phí RAM. |
+| **`CONFIG_THREAD_ANALYZER_USE_LOG`**| `y` | In kết quả phân tích Stack qua Zephyr Logging. | • **Ưu điểm:** In bảng thống kê chi tiết từng luồng với mức độ ưu tiên `LOG_INF`, phân biệt màu sắc rõ ràng trên terminal.<br>• **Chi phí:** Phụ thuộc vào hệ thống Zephyr Logging. |
+| **`CONFIG_THREAD_ANALYZER_AUTO`**| `y` | Tự động quét và in báo cáo Stack định kỳ. | • **Ưu điểm:** Tự động phát hiện các luồng có nguy cơ tràn stack mà không cần kỹ sư phải gõ lệnh thủ công.<br>• **Lưu ý:** Khi đưa sản phẩm vào sản xuất hàng loạt (Production), nên tắt tính năng này để tiết kiệm chu kỳ CPU. |
+| **`CONFIG_THREAD_ANALYZER_AUTO_INTERVAL`**| `10` | Chu kỳ quét phân tích ngăn xếp: 10 giây/lần. | • **Đánh giá Trade-off:** Chu kỳ $10\text{ giây}$ là điểm cân bằng lý tưởng: đủ thưa để không ảnh hưởng đến các tác vụ đo lường thời gian thực ($< 0.1\%$ CPU overhead), nhưng đủ nhanh để cảnh báo kịp thời trước khi stack bị phình to. |
 
 ---
 

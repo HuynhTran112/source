@@ -94,12 +94,14 @@ Chip STM32F746NG chỉ tích hợp khối **CAN Controller (bxCAN)**, chịu tr�
 
 ### Mức logic trên Bus Vi sai CAN (Differential Bus):
 * **Trạng thái Dominant (Mức logic 0 - Mức Thống trị):**
-  * Chân `CAN_H` được kéo lên khoảng 3.5V. Chân `CAN_L` được kéo xuống khoảng 1.5V.
-  * Điện áp vi sai: V_{DIFF = V_{CAN_H - V_{CAN_L ~ 2.0 V > 0.9 V.
+  * Chân `CAN_H` được kéo lên khoảng $3.5	ext{ V}$. Chân `CAN_L` được kéo xuống khoảng $1.5	ext{ V}$.
+  * Điện áp vi sai:
+    $$V_{	ext{DIFF}} = V_{	ext{CAN\_H}} - V_{	ext{CAN\_L}} pprox 3.5	ext{ V} - 1.5	ext{ V} = 2.0	ext{ V} \quad (> 0.9	ext{ V})$$
   * Nếu một node phát mức 0 và một node phát mức 1 cùng lúc, mức 0 sẽ đè bẹp mức 1 trên bus (Cơ chế phân định quyền ưu tiên Bus Arbitration).
 * **Trạng thái Recessive (Mức logic 1 - Mức Ẩn / Trạng thái Nghỉ):**
-  * Cả hai dây `CAN_H` và `CAN_L` đều được thả về mức điện áp trung gian khoảng 2.5V.
-  * Điện áp vi sai: V_{DIFF = V_{CAN_H - V_{CAN_L ~ 0 V < 0.5 V.
+  * Cả hai dây `CAN_H` và `CAN_L` đều được thả về mức điện áp trung gian khoảng $2.5	ext{ V}$.
+  * Điện áp vi sai:
+    $$V_{	ext{DIFF}} = V_{	ext{CAN\_H}} - V_{	ext{CAN\_L}} pprox 2.5	ext{ V} - 2.5	ext{ V} = 0.0	ext{ V} \quad (< 0.5	ext{ V})$$
 
 ---
 
@@ -139,7 +141,7 @@ Một gói tin CAN dữ liệu chuẩn 11-bit ID gồm **7 trường liên tiế
    * `DLC[3:0]` (Data Length Code - 4 bits): Báo số byte dữ liệu trong Data Field (từ `0` đến `8`).
 4. **`Data Field` (Trường Dữ liệu - 0 sim 8 Bytes):** Chứa payload truyền thực tế (tối đa 64 bits), truyền bit trọng số lớn (MSB) trước.
 5. **`CRC Field` (Trường Kiểm tra Mã Thừa Tuần Hoàn - 16 bits):**
-   * `CRC Sequence` (15 bits): Mã băm đa thức x^{15 + x^{14 + x^{10 + x^8 + x^7 + x^4 + x^3 + 1 để bảo vệ tính toàn vẹn của SOF, Arbitration, Control và Data.
+   * `CRC Sequence` (15 bits): Mã băm theo đa thức chuẩn CAN $P(x) = x^{15} + x^{14} + x^{10} + x^8 + x^7 + x^4 + x^3 + 1$ để bảo vệ tính toàn vẹn của SOF, Arbitration, Control và Data.
    * `CRC Delimiter` (1 bit Recessive '1'): Bit ranh giới cố định ngăn cách giữa CRC và ACK.
 6. **`ACK Field` (Trường Xác nhận - 2 bits):**
    * `ACK Slot` (1 bit): Node phát truyền ra mức Recessive (`1`). Mọi node nhận đúng dữ liệu và khớp CRC trên bus sẽ **chủ động kéo bus xuống Dominant (`0`)** tại chu kỳ bit này để báo xác nhận nhận thành công!
@@ -335,39 +337,28 @@ Khung Báo Quá Tải (Overload Frame):
 
 Trước khi đi vào các bước tính toán số học, các khái niệm thời gian trong mạng CAN được chuẩn hóa quốc tế theo ISO 11898-1 và Reference Manual RM0385 như sau:
 
-#### 1. Chu kỳ 1 Bit CAN (T_bit) và Tốc độ Baudrate
+#### 1. Chu kỳ 1 Bit CAN ($T_{	ext{bit}}$) và Tốc độ Baudrate
 * Thời lượng của 1 bit là khoảng thời gian để truyền trọn vẹn 1 bit dữ liệu trên bus:
-  ```text
-  T_bit = 1 / Baudrate
-  ```
-  *Ví dụ:* Ở tốc độ 500 kbps (500,000 bps), chu kỳ 1 bit là:
-  ```text
-  T_bit = 1 / 500,000 = 0.000002 s = 2000 ns (2.0 µs)
-  ```
+  $$T_{	ext{bit}} = rac{1}{	ext{Baudrate}}$$
+  *Ví dụ:* Ở tốc độ $500	ext{ kbps}$ ($500{,}000	ext{ bps}$), chu kỳ 1 bit là:
+  $$T_{	ext{bit}} = rac{1}{500{,}000	ext{ bps}} = 0.000002	ext{ s} = 2000	ext{ ns} \quad (2.0\ \mu	ext{s})$$
 
-#### 2. Bản chất của tq (Time Quantum) & Bộ chia BRP (Baud Rate Prescaler)
-* **tq (Time Quantum - số nhiều: Time Quanta):** Là **đơn vị thời gian nguyên tử nhỏ nhất (Atomic Clock Tick)** của khối điều khiển Bit Timing Logic (BTL) trong silicon CAN controller.
-* **Cách tạo ra từ phần cứng:** Bộ điều khiển CAN không đếm bit bằng micro-giây tùy ý, mà dùng một bộ chia tần số số học **Baud Rate Prescaler (BRP)** từ xung nhịp bus f_PCLK1 (trên STM32F746 là 54 MHz):
-  ```text
-  tq = BRP / f_PCLK1
-  ```
-* **Lượng tử hóa chu kỳ bit:** Chu kỳ T_bit luôn được cấu thành từ một **số nguyên lần các đơn vị tq** (N_q nằm trong khoảng từ 8 đến 25 tq theo chuẩn ISO 11898-1):
-  ```text
-  T_bit = N_q * tq
-  ```
+#### 2. Bản chất của $t_q$ (Time Quantum) & Bộ chia BRP (Baud Rate Prescaler)
+* **$t_q$ (Time Quantum - số nhiều: Time Quanta):** Là **đơn vị thời gian nguyên tử nhỏ nhất (Atomic Clock Tick)** của khối điều khiển Bit Timing Logic (BTL) trong silicon CAN controller.
+* **Cách tạo ra từ phần cứng:** Bộ điều khiển CAN dùng bộ chia tần số số học **Baud Rate Prescaler (BRP)** từ xung nhịp bus $f_{	ext{PCLK1}}$ ($54	ext{ MHz}$ trên STM32F746):
+  $$t_q = rac{	ext{BRP}}{f_{	ext{PCLK1}}}$$
+* **Lượng tử hóa chu kỳ bit:** Chu kỳ $T_{	ext{bit}}$ luôn được cấu thành từ một **số nguyên lần các đơn vị $t_q$** ($N_q \in [8 \dots 25]\ t_q$ theo chuẩn ISO 11898-1):
+  $$T_{	ext{bit}} = N_q 	imes t_q$$
 
 #### 3. Bốn Phân Đoạn (Segments) Cấu Thành 1 Bit CAN (ISO 11898-1)
 Chu kỳ 1 bit CAN được chia làm 4 phân đoạn liên tiếp với nhiệm vụ vật lý riêng biệt:
 
 1. **`Sync_Seg` (Synchronization Segment - Đoạn Đồng bộ):**
-   * **Độ dài:** Cố định đúng **1 tq** (phần cứng quy định, không thể thay đổi).
+   * **Độ dài:** Cố định đúng **$1\ t_q$** (phần cứng quy định, không thể thay đổi).
    * **Nhiệm vụ:** Dùng để đồng bộ hóa cạnh xung giữa các nút trên mạng. Cạnh xuống từ Recessive sang Dominant của bit kỳ vọng phải rơi vào đoạn này.
 2. **`Prop_Seg` (Propagation Segment - Đoạn Bù trễ Dây dẫn & Transceiver):**
-   * **Nhiệm vụ:** Bù trừ độ trễ vật lý khi tín hiệu điện chạy dọc trên đường dây cáp và đi qua các cổng bán dẫn của chip CAN Transceiver.
-   * **Cơ sở vật lý:** Tín hiệu từ Node A phải truyền tới Node xa nhất B, rồi từ Node B phản hồi ngược lại Node A trong cùng 1 chu kỳ bit:
-     ```text
-     T_Prop_Seg >= 2 * (t_wire_delay + t_transceiver_delay)
-     ```
+   * **Nhiệm vụ:** Bù trừ độ trễ vật lý khi tín hiệu điện chạy dọc trên đường dây cáp và đi qua các cổng bán dẫn của chip CAN Transceiver:
+     $$T_{	ext{Prop\_Seg}} \ge 2 	imes (t_{	ext{wire\_delay}} + t_{	ext{transceiver\_delay}})$$
    * Đoạn này giúp điện áp trên toàn bộ chiều dài sợi cáp đạt trạng thái ổn định phẳng lặng trước khi đo đạc.
 3. **`Phase_Seg1` (Phase Buffer Segment 1 - Đoạn Đệm Pha 1):**
    * **Vị trí:** Nằm ngay trước **Điểm lấy mẫu (Sample Point)**.
@@ -377,25 +368,17 @@ Chu kỳ 1 bit CAN được chia làm 4 phân đoạn liên tiếp với nhiệm
    * **Nhiệm vụ:** Cắt ngắn bit khi xung nhịp bị sớm pha (Early Edge) trong quá trình tái đồng bộ.
 
 #### 4. Quy ước Gộp Của STM32 bxCAN: Khối BS1 và BS2
-Để tinh gọn các trường thanh ghi điều khiển `CAN_BTR`, hãng STMicroelectronics gộp 4 phân đoạn trên thành 2 khối:
+Để tinh gọn các trường thanh ghi điều khiển `CAN_BTR`, STMicroelectronics gộp 4 phân đoạn trên thành 2 khối:
 * **Khối `BS1` (Bit Segment 1):** Gộp chung `Prop_Seg` và `Phase_Seg1`:
-  ```text
-  BS1 = Prop_Seg + Phase_Seg1   (Cấu hình qua trường TS1[3:0], nhận giá trị từ 1 đến 16 tq)
-  ```
+  $$	ext{BS1} = 	ext{Prop\_Seg} + 	ext{Phase\_Seg1} \quad (	ext{Trường } 	ext{TS1[3:0]}, 	ext{nhận giá trị } 1 \dots 16\ t_q)$$
 * **Khối `BS2` (Bit Segment 2):** Chính là `Phase_Seg2`:
-  ```text
-  BS2 = Phase_Seg2              (Cấu hình qua trường TS2[2:0], nhận giá trị từ 1 đến 8 tq)
-  ```
-* Như vậy, tổng số Time Quanta trong 1 bit trên STM32 là:
-  ```text
-  N_q = Sync_Seg (1 tq) + BS1 + BS2
-  ```
+  $$	ext{BS2} = 	ext{Phase\_Seg2} \quad (	ext{Trường } 	ext{TS2[2:0]}, 	ext{nhận giá trị } 1 \dots 8\ t_q)$$
+* Tổng số Time Quanta trong 1 bit trên STM32:
+  $$N_q = 	ext{Sync\_Seg}\ (1\ t_q) + 	ext{BS1} + 	ext{BS2}$$
 
 #### 5. Khái Niệm Điểm Lấy Mẫu (Sample Point) & Rationale Tại Sao Chọn 87.5%?
 * **Điểm lấy mẫu (Sample Point):** Là thời điểm chính xác mà bộ điều khiển CAN đọc điện áp trên bus để chốt giá trị bit đó là mức 0 hay mức 1:
-  ```text
-  Sample Point (%) = ((Sync_Seg + BS1) / N_q) * 100% = ((1 + BS1) / N_q) * 100%
-  ```
+  $$	ext{Sample Point} = rac{	ext{Sync\_Seg} + 	ext{BS1}}{N_q} 	imes 100\% = rac{1 + 	ext{BS1}}{N_q} 	imes 100\% = rac{1 + 	ext{TS1}}{1 + 	ext{TS1} + 	ext{TS2}} 	imes 100\%$$
 * **Tại sao chuẩn CiA 301 / ISO 11898-1 quy định tối ưu là 87.5%?**
   * **Bản chất toán học:** `87.5% = 7/8 = 0.111 (nhị phân)`, là phân số nhị phân tối ưu cho mạch đếm trong vi mạch số.
   * **Cơ sở vật lý:** Điểm lấy mẫu giải quyết mâu thuẫn giữa 2 yêu cầu kỹ thuật:
@@ -421,42 +404,41 @@ Chu kỳ 1 bit CAN được chia làm 4 phân đoạn liên tiếp với nhiệm
 Để tốc độ truyền đạt độ chính xác tuyệt đối (Baudrate Error = 0.00%), bộ chia BRP bắt buộc phải là một **SỐ NGUYÊN DƯƠNG**.
 
 1. **Thiết lập phương trình:**
-   ```text
-   BRP = f_PCLK1 / (Baudrate * N_q) = 54,000,000 / (500,000 * N_q) = 108 / N_q
-   ```
+   $$\text{BRP} = \frac{f_{\text{PCLK1}}}{\text{Baudrate} \times N_q} = \frac{54{,}000{,}000}{500{,}000 \times N_q} = \frac{108}{N_q}$$
 2. **Ràng buộc:**
-   * Phần cứng quy định: `8 <= N_q <= 25`.
-   * BRP nguyên -> **N_q bắt buộc phải là ƯỚC SỐ của 108**.
+   * Phần cứng quy định: $8 \le N_q \le 25$.
+   * $\text{BRP}$ nguyên $\implies N_q$ bắt buộc phải là **ƯỚC SỐ của 108**.
 3. **Tìm các ước số của 108 trong đoạn [8, 25]:**
    Các ước số của 108 gồm: `1, 2, 3, 4, 6, 9, 12, 18, 27, 36, 54, 108`.  
-   Trong khoảng `[8, 25]`, ta có đúng **3 ứng viên**:
-   * Ứng viên 1: `N_q = 9`   $\implies BRP = 108 / 9 = 12`
-   * Ứng viên 2: `N_q = 12`  $\implies BRP = 108 / 12 = 9`
-   * Ứng viên 3: `N_q = 18`  $\implies BRP = 108 / 18 = 6`
+   Trong khoảng $[8, 25]$, ta có đúng **3 ứng viên**:
+   * **Ứng viên 1:** $N_q = 9 \implies \text{BRP} = \frac{108}{9} = 12$
+   * **Ứng viên 2:** $N_q = 12 \implies \text{BRP} = \frac{108}{12} = 9$
+   * **Ứng viên 3:** $N_q = 18 \implies \text{BRP} = \frac{108}{18} = 6$
 4. **So khớp Sample Point 87.5% để chọn ứng viên tối ưu:**
-   * **Nếu chọn N_q = 9:**
-     * `Sample Point 87.5% = 9 * 0.875 = 7.875` --> Chọn `1 + BS1 = 8 tq`.
-     * Phân đoạn còn lại: `BS2 = 9 - 8 = 1 tq`.
-     * *Rủi ro:* `BS2` chỉ có `1 tq`, biên độ co dãn bù pha quá hẹp (`SJW` tối đa chỉ là 1), rất dễ mất đồng bộ khi nhiệt độ môi trường làm trôi tần số thạch anh. *(Loại)*
-   * **Nếu chọn N_q = 12:**
-     * `Sample Point 87.5% = 12 * 0.875 = 10.5 tq`.
-     * Nếu chọn `1 + BS1 = 10` --> `Sample Point = 10 / 12 = 83.33%` (Lệch nhiều so với chuẩn 87.5%).
-     * Nếu chọn `1 + BS1 = 11` --> `Sample Point = 11 / 12 = 91.67%` (Quá sát đuôi bit, `BS2` chỉ còn 1 tq). *(Loại)*
-   * **Nếu chọn N_q = 18:**
-     * `Sample Point 87.5% = 18 * 0.875 = 15.75` --> Chọn `1 + BS1 = 16 tq` (tức `BS1 = 15 tq`).
-     * Phân đoạn còn lại: `BS2 = 18 - 16 = 2 tq`.
-     * `Điểm lấy mẫu thực tế = (1 + 15) / 18 = 16 / 18 = 88.89%` (Cực kỳ sát chuẩn quốc tế 87.5%).
-     * Đồng thời `BS2 = 2 tq` tạo khoảng đệm an toàn tuyệt đối cho phép cấu hình `SJW = 1 tq` hoặc `2 tq`.
-   * 👉 **KẾT LUẬN:** **`N_q = 18` là nghiệm số nguyên duy nhất thỏa mãn trọn vẹn cả 2 điều kiện!**
+   * **Nếu chọn $N_q = 9$:**
+     * $\text{Sample Point 87.5\%} = 9 \times 0.875 = 7.875 \implies$ Chọn $1 + \text{BS1} = 8\ t_q$.
+     * Phân đoạn còn lại: $\text{BS2} = 9 - 8 = 1\ t_q$.
+     * *Rủi ro:* $\text{BS2}$ chỉ có $1\ t_q$, biên độ co dãn bù pha quá hẹp ($\text{SJW}$ tối đa chỉ là 1), rất dễ mất đồng bộ khi nhiệt độ môi trường làm trôi tần số thạch anh. *(Loại)*
+   * **Nếu chọn $N_q = 12$:**
+     * $\text{Sample Point 87.5\%} = 12 \times 0.875 = 10.5\ t_q$.
+     * Nếu chọn $1 + \text{BS1} = 10 \implies \text{Sample Point} = \frac{10}{12} = 83.33\%$ (Lệch nhiều so với chuẩn 87.5%).
+     * Nếu chọn $1 + \text{BS1} = 11 \implies \text{Sample Point} = \frac{11}{12} = 91.67\%$ (Quá sát đuôi bit, $\text{BS2}$ chỉ còn $1\ t_q$). *(Loại)*
+   * **Nếu chọn $N_q = 18$:**
+     * $\text{Sample Point 87.5\%} = 18 \times 0.875 = 15.75 \implies$ Chọn $1 + \text{BS1} = 16\ t_q$ (tức $\text{BS1} = 15\ t_q$).
+     * Phân đoạn còn lại: $\text{BS2} = 18 - 16 = 2\ t_q$.
+     * Điểm lấy mẫu thực tế:
+       $$\text{Sample Point} = \frac{1 + 15}{18} \times 100\% = \frac{16}{18} \approx 88.89\% \quad (\text{Khớp sát chuẩn } 87.5\%)$$
+     * Đồng thời $\text{BS2} = 2\ t_q$ tạo khoảng đệm an toàn tuyệt đối cho phép cấu hình $\text{SJW} = 1\ t_q$ hoặc $2\ t_q$.
+   * 👉 **KẾT LUẬN:** **$N_q = 18$ là nghiệm số nguyên duy nhất thỏa mãn trọn vẹn cả 2 điều kiện!**
 
 #### ⏱️ Bước 3: Phân Bổ Chi Tiết Các Phân Đoạn
-* `tq = T_bit / 18 = 2000 ns / 18 = 111.11 ns`.
-* `BRP = 6`.
-* `Sync_Seg = 1 tq`.
-* `BS1 = 15 tq` (Bao gồm `Prop_Seg = 7 tq` và `Phase_Seg1 = 8 tq`).
-* `BS2 = Phase_Seg2 = 2 tq`.
-* `SJW = 1 tq` (hoặc `2 tq`).
-* Điểm lấy mẫu: `(1 + 15) / 18 = 16 / 18 = 88.89%`.
+* $$t_q = \frac{T_{\text{bit}}}{18} = \frac{2000\text{ ns}}{18} \approx 111.11\text{ ns}$$
+* $\text{BRP} = 6$.
+* $\text{Sync\_Seg} = 1\ t_q$.
+* $\text{BS1} = 15\ t_q$ (Ghi giá trị `14` vào trường `TS1[3:0]`, gồm $\text{Prop\_Seg} = 7\ t_q$ và $\text{Phase\_Seg1} = 8\ t_q$).
+* $\text{BS2} = \text{Phase\_Seg2} = 2\ t_q$ (Ghi giá trị `1` vào trường `TS2[2:0]`).
+* $\text{SJW} = 1\ t_q$ (Ghi giá trị `0` vào trường `SJW[1:0]`).
+* Điểm lấy mẫu: $$\text{Sample Point} = \frac{1 + 15}{18} \times 100\% = \frac{16}{18} \approx 88.89\%$$
 
 ---
 
@@ -1460,7 +1442,7 @@ int main(void)
 ---
 
 ### ❓ Câu 2: Tại sao khi tính toán Bit Timing cho CAN trên STM32F7, điểm lấy mẫu (Sample Point) lại được khuyến nghị đặt ở 87.5% thay vì 50%?
-* **Trả lời:** Chuẩn công nghiệp ô tô CiA 301 và ISO 11898-1 khuyến nghị Sample Point trong dải 75% sim 90%, tối ưu ở 87.5%. Lý do: Trong môi trường cáp dài và có độ trễ truyền dẫn (Propagation Delay) của linh kiện Transceiver và cách ly quang, xung điện áp cần thời gian lan truyền trên đường dây. Đặt điểm lấy mẫu muộn ở 87.5% cho phép tối đa hóa đoạn T_{Prop_Seg, đảm bảo tín hiệu điện áp vi sai đã phản hồi và ổn định hoàn toàn trước khi chip đo mẫu.
+* **Trả lời:** Chuẩn công nghiệp ô tô CiA 301 và ISO 11898-1 khuyến nghị Sample Point trong dải 75% sim 90%, tối ưu ở 87.5%. Lý do: Trong môi trường cáp dài và có độ trễ truyền dẫn (Propagation Delay) của linh kiện Transceiver và cách ly quang, xung điện áp cần thời gian lan truyền trên đường dây. Đặt điểm lấy mẫu muộn ở $87.5\%$ cho phép tối đa hóa đoạn $T_{	ext{Prop\_Seg}}$, đảm bảo tín hiệu điện áp vi sai đã phản hồi và ổn định hoàn toàn trước khi chip đo mẫu.
 
 ---
 
@@ -1507,4 +1489,4 @@ int main(void)
 
 ## 4.2. Kịch bản Trả lời Phỏng vấn 60 Giây (Elevator Pitch)
 
-> *"Trong thiết kế giao tiếp mạng ô tô trên STM32F746, em trực tiếp phát triển driver Bare-metal cho khối **bxCAN** với tốc độ **500 kbps** chuẩn CiA 301. Em tính toán chính xác f_{PCLK1=54MHz với BRP=6, TS1=15, TS2=2 để đạt điểm lấy mẫu **Sample Point 88.9%**, đảm bảo khả năng chống nhiễu tối đa trên bus vi sai. Em làm chủ cơ chế chia sẻ **28 Filter Banks** do CAN1 Master quản lý, cấu hình chế độ **Identifier Mask Mode 32-bit** để lọc phần cứng các gói tin mong muốn với 0% CPU Load. Em xây dựng trình phục vụ ngắt nhận **`CAN1_RX0_IRQHandler`** đọc dữ liệu từ FIFO 3 tầng và giải phóng mailbox bằng lệnh gán trực tiếp trên thanh ghi W1C `CAN_RF0R`. Đồng thời, em tích hợp cơ chế tự phục hồi **Automotive Bus-Off Recovery (ABOM)** để bảo vệ hệ thống không bị cô lập vĩnh viễn khi mạng CAN xảy ra sự cố."*
+> *"Trong thiết kế giao tiếp mạng ô tô trên STM32F746, em trực tiếp phát triển driver Bare-metal cho khối **bxCAN** với tốc độ **500 kbps** chuẩn CiA 301. Em tính toán chính xác $f_{	ext{PCLK1}} = 54	ext{ MHz}$ với $	ext{BRP} = 6$, $	ext{TS1} = 15$, $	ext{TS2} = 2$ để đạt điểm lấy mẫu **Sample Point $88.89\%$**, đảm bảo khả năng chống nhiễu tối đa trên bus vi sai. Em làm chủ cơ chế chia sẻ **28 Filter Banks** do CAN1 Master quản lý, cấu hình chế độ **Identifier Mask Mode 32-bit** để lọc phần cứng các gói tin mong muốn với 0% CPU Load. Em xây dựng trình phục vụ ngắt nhận **`CAN1_RX0_IRQHandler`** đọc dữ liệu từ FIFO 3 tầng và giải phóng mailbox bằng lệnh gán trực tiếp trên thanh ghi W1C `CAN_RF0R`. Đồng thời, em tích hợp cơ chế tự phục hồi **Automotive Bus-Off Recovery (ABOM)** để bảo vệ hệ thống không bị cô lập vĩnh viễn khi mạng CAN xảy ra sự cố."*

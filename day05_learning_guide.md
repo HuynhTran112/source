@@ -48,19 +48,19 @@ Trước khi đi vào các thanh ghi `DMA2D_CR`, `DMA2D_OOR` và thanh ghi phân
 | :--- | :--- | :--- |
 | **Đổ màu vùng nhớ (Color Fill)** | Dùng 2 vòng lặp `for` lồng nhau để gán giá trị từng pixel: Chiếm 100% CPU, mất hàng chục mili-giây. | **Chế độ R2M (Register-to-Memory)**: DMA2D tự động đổ màu toàn bộ vùng 480x272 chỉ trong chưa đầy 1 mili-giây, CPU hoàn toàn rảnh rỗi! |
 | **Sao chép hình ảnh (Bitmap Copy)** | Dùng hàm `memcpy()` trong thư viện C: Chậm chạp, chiếm dụng toàn bộ Bus Matrix. | **Chế độ M2M (Memory-to-Memory)**: DMA2D đọc từ Flash/RAM này bắn thẳng sang SDRAM với bus 64-bit nội bộ độc lập. |
-| **Hòa trộn độ trong suốt (Alpha Blending)** | Phải tính toán công thức số học phức tạp từng kênh màu R, G, B: `Pixel = (Src * A + Dst * (255 - A)) / 255`. Rất nặng cho CPU. | **Chế độ M2M_BLEND phần cứng**: Động cơ Chrom-ART tự tính toán hòa trộn điểm ảnh theo thời gian thực ở tốc độ xung nhịp 216 MHz. |
+| **Hòa trộn độ trong suốt (Alpha Blending)** | Phải tính toán công thức số học phức tạp từng kênh màu R, G, B: $\text{Pixel} = \frac{\text{Src} \times \alpha + \text{Dst} \times (255 - \alpha)}{255}$. Rất nặng cho CPU. | **Chế độ M2M_BLEND phần cứng**: Động cơ Chrom-ART tự tính toán hòa trộn điểm ảnh theo thời gian thực ở tốc độ xung nhịp 216 MHz. |
 | **Phân bổ Ưu tiên Ngắt (NVIC)** | Cài đặt độ ưu tiên ngắt lộn xộn, dẫn đến việc ngắt màn hình/vẽ đồ họa chặn đứng ngắt an toàn mạng CAN. | **Cấu hình Priority Grouping 4 (4 bit Preemption, 0 bit Subpriority)**: Phân tầng rõ ràng: Ngắt an toàn CAN (mức 0) > Ngắt UART (mức 1) > Ngắt đồ họa LTDC/DMA2D (mức 5). |
 | **Đối chiếu với Môi trường RTOS** | CPU vẽ đồ họa làm chậm trễ lịch trình của bộ định thời RTOS Scheduler. | Task đồ họa kích hoạt DMA2D rồi đi ngủ (`k_sem_take` hoặc `xSemaphoreTake`); ngắt DMA2D hoàn thành sẽ đánh thức Task dậy tiếp tục. |
 
 
 ## 1.1. Bản chất Phần cứng Khối Tăng Tốc Đồ Họa DMA2D (Chrom-ART Accelerator)
 
-Trong hệ thống nhúng hiển thị (GUI), việc CPU phải chạy vòng lặp `for` để tô màu hoặc sao chép từng pixel trên màn hình 480x272 (tổng cộng `130,560 pixels * 2 bytes = 261.12 KB` mỗi khung hình) sẽ chiếm dụng tới **85% - 95% thời gian xử lý của CPU**, làm gián đoạn việc nhận gói tin CAN Bus và xử lý giao tiếp thời gian thực.
+Trong hệ thống nhúng hiển thị (GUI), việc CPU phải chạy vòng lặp `for` để tô màu hoặc sao chép từng pixel trên màn hình 480x272 (tổng cộng $130{,}560	ext{ pixels} 	imes 2	ext{ bytes} = 261{,}120	ext{ bytes} pprox 255	ext{ KB}$ mỗi khung hình) sẽ chiếm dụng tới **85% - 95% thời gian xử lý của CPU**, làm gián đoạn việc nhận gói tin CAN Bus và xử lý giao tiếp thời gian thực.
 
 Khối **DMA2D (Chrom-ART Accelerator)** là một mạch phần cứng chuyên dụng độc lập nằm trên Bus Master AXI:
 * **Giao tiếp Bus:** Nối trực tiếp vào AXI Bus Matrix 64-bit, có khả năng phát các chuỗi đọc/ghi Burst liên tục với bộ nhớ SDRAM ngoài và SRAM nội.
 * **Tải CPU:** Hoàn toàn bằng **0%** trong suốt quá trình copy, fill màu hoặc hòa trộn Alpha (CPU chỉ cần nạp địa chỉ, kích hoạt bit `START`, và quay sang làm việc khác hoặc đi ngủ chờ ngắt).
-* **Hiệu năng:** Tốc độ đổ màu và copy đạt tối đa băng thông bộ nhớ FMC SDRAM (`108 MHz * 16 bits = 216 MB/s` lý thuyết), nhanh gấp **8 đến 12 lần** so với lệnh `memcpy()` hoặc vòng lặp C thuần của CPU.
+* **Hiệu năng:** Tốc độ đổ màu và copy đạt tối đa băng thông bộ nhớ FMC SDRAM ($108	ext{ MHz} 	imes 16	ext{ bits} = 216	ext{ MB/s}$ lý thuyết), nhanh gấp **8 đến 12 lần** so với lệnh `memcpy()` hoặc vòng lặp C thuần của CPU.
 
 ```text
                                   ┌──────────────────────────────────────────────────┐
@@ -111,7 +111,7 @@ Khối **DMA2D (Chrom-ART Accelerator)** là một mạch phần cứng chuyên 
 
 ## 1.3. Công Thức Toán Học Tính Line Offset Tránh Lỗi Xéo Hình (Skewed Image Bug)
 
-Khi vẽ một hình chữ nhật nhỏ có kích thước W_{box * H_{box vào bên trong một Framebuffer lớn có kích thước W_{screen * H_{screen:
+Khi vẽ một hình chữ nhật nhỏ có kích thước $W_{	ext{box}} 	imes H_{	ext{box}}$ vào bên trong một Framebuffer lớn có kích thước $W_{	ext{screen}} 	imes H_{	ext{screen}}$:
 
 ```text
    Vùng nhớ Framebuffer Đích trên SDRAM (Chiều rộng W_screen = 480)
@@ -130,13 +130,13 @@ Khi vẽ một hình chữ nhật nhỏ có kích thước W_{box * H_{box vào 
 ```
 
 1. **Địa chỉ Pixel khởi đầu (Output Memory Address - `OMAR`):**
-   `Start Address = Base Address + (Y_pos * W_screen + X_pos) * BytesPerPixel`
-   * Với định dạng **RGB565** (BytesPerPixel = 2):
-     `OMAR = 0xC0000000 + 2 * (Y_pos * 480 + X_pos)`
+   $$	ext{Start Address} = 	ext{Base Address} + (Y_{	ext{pos}} 	imes W_{	ext{screen}} + X_{	ext{pos}}) 	imes 	ext{BytesPerPixel}$$
+   * Với định dạng **RGB565** ($	ext{BytesPerPixel} = 2$):
+     $$	ext{OMAR} = 	ext{0xC0000000} + 2 	imes (Y_{	ext{pos}} 	imes 480 + X_{	ext{pos}})$$
 
 2. **Độ lệch dòng đích (Output Line Offset - `OOR`):**
-   Sau khi DMA2D vẽ xong W_{box pixels của một dòng, con trỏ phần cứng phải **nhảy cóc qua phần còn lại của màn hình** để xuống đúng đầu dòng tiếp theo:
-   `Line Offset (OOR) = W_screen - W_box = 480 - W_box`
+   Sau khi DMA2D vẽ xong $W_{	ext{box}}$ pixels của một dòng, con trỏ phần cứng phải **nhảy cóc qua phần còn lại của màn hình** để xuống đúng đầu dòng tiếp theo:
+   $$	ext{Line Offset (OOR)} = W_{	ext{screen}} - W_{	ext{box}} = 480 - W_{	ext{box}}$$
    * ⚠️ **Lưu ý sống còn:** Giá trị ghi vào `DMA2D_OOR` tính bằng **đơn vị số pixel**, KHÔNG PHẢI số byte! Nếu ghi sai thành byte, hình ảnh sẽ bị xé xéo thành các dải sọc chéo trên màn hình.
 
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Reference Manual (RM0385):**
@@ -378,7 +378,7 @@ Tra cứu RM0385 *Chapter 10: DMA2D controller -> Section 10.4: DMA2D registers*
 | **`DMA2D_IFCR`**| `0x08` | `0x0000 0000` | `CTCIF` (Bit 1)| `w` | **W1C:** Ghi `1` để xóa cờ `TCIF`. CẤM DÙNG `\|=`. |
 | | | | `CTEIF` (Bit 0)| `w` | **W1C:** Ghi `1` để xóa cờ `TEIF`. CẤM DÙNG `\|=`. |
 | **`DMA2D_OMAR`**| `0x3C` | `0x0000 0000` | `MA[31:0]` | `RW` | Địa chỉ vùng nhớ đích (Output Memory Address trong SDRAM). |
-| **`DMA2D_OOR`** | `0x40` | `0x0000 0000` | `LO[13:0]` | `RW` | Độ lệch dòng đích (Line Offset tính bằng số pixel: W_{screen - W_{box). |
+| **`DMA2D_OOR`** | `0x40` | `0x0000 0000` | `LO[13:0]` | `RW` | Độ lệch dòng đích (Line Offset tính bằng số pixel: $W_{	ext{screen}} - W_{	ext{box}}$). |
 | **`DMA2D_NLR`** | `0x44` | `0x0000 0000` | `NL[15:0]` (31:16)| `RW` | Số dòng cần truyền (Number of Lines = H_{box). |
 | | | | `PL[13:0]` (13:0) | `RW` | Số pixel trên mỗi dòng (Pixels per Line = W_{box). |
 | **`DMA2D_OCOLR`**| `0x48`| `0x0000 0000` | `COLOR[31:0]`| `RW` | Mã màu xuất (trong chế độ R2M: định dạng RGB565 hoặc ARGB8888). |

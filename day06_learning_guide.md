@@ -86,24 +86,31 @@ Khối **IWDG** là một mạch đếm lùi phần cứng 12-bit hoàn toàn đ
 >    * Đọc bảng **Table 123. Min/max IWDG timeout periods (at 32 kHz LSI)**: Xem các dải thời gian timeout tối thiểu và tối đa tùy theo hệ số chia Prescaler từ `/4` đến `/256`.
 
 ### Công thức Toán học Tính Thời Gian Timeout của IWDG:
-Thời gian đếm lùi tối đa trước khi Reset hệ thống được tính theo công thức:
-`T_timeout = ( 4 * 2^(PR[2:0]) * (RLR + 1) ) / f_LSI`
+Thời gian đếm lùi tối đa trước khi Reset hệ thống được tính theo công thức Reference Manual RM0385:
+$$T_{	ext{timeout}} = rac{4 	imes 2^{	ext{PR[2:0]}} 	imes (	ext{RLR} + 1)}{f_{	ext{LSI}}}$$
 
-Với tần số chuẩn f_{LSI = 32,000 Hz, ta chọn bộ chia **Prescaler = /64** (mã `PR[2:0] = 010`b -> 4 * 2^2 = 64):
-* Một chu kỳ đếm: t_{tick = {64{32,000 = 0.002 s = 2 ms.
-* Muốn thời gian Timeout an toàn là **2.0 giây**:
-  `RLR = (T_timeout / t_tick) - 1 = (2000 ms / 2 ms) - 1 = 999 (Mã Hex: 0x3E7)`
+Với tần số danh định $f_{	ext{LSI}} = 32{,}000	ext{ Hz}$, ta chọn bộ chia **Prescaler = /64** (mã `PR[2:0] = 100`b $\implies 4 	imes 2^4 = 64$):
+* Một chu kỳ đếm cơ sở ($t_{	ext{tick}}$):
+  $$t_{	ext{tick}} = rac{64}{f_{	ext{LSI}}} = rac{64}{32{,}000	ext{ Hz}} = 0.002	ext{ s} = 2.0	ext{ ms}$$
+* Muốn thời gian Timeout an toàn là **$2.0	ext{ giây}$** ($2000	ext{ ms}$):
+  $$	ext{RLR} = rac{T_{	ext{timeout}}}{t_{	ext{tick}}} - 1 = rac{2000	ext{ ms}}{2	ext{ ms}} - 1 = 999 \quad (	ext{Mã Hex: 0x03E7})$$
 
 ---
 
 ## 1.2. Bản chất Phần cứng của WWDG (Window Watchdog) & Lỗi "Refresh Quá Sớm"
 
 Khác với IWDG chỉ quan tâm xem phần mềm có bị "chết đứng" hay không, **WWDG** được sinh ra để phát hiện lỗi **"chạy loạn chu trình" (Program Flow Error)**:
-* **Nguồn xung:** Chạy bằng xung bus **APB1 (f_{PCLK1 = 54 MHz)** thông qua bộ chia nội.
+* **Nguồn xung:** Chạy bằng xung bus **APB1** ($f_{	ext{PCLK1}} = 54	ext{ MHz}$) thông qua bộ chia nội.
 * **Bộ đếm 7-bit (`T[6:0]`):** Đếm lùi từ một giá trị (ví dụ `0x7F` = 127) xuống `0x3F` (63).
+* **Công thức Định Thời Cửa Sổ WWDG (RM0385 Section 26.3):**
+  $$t_{\text{WWDG}} = t_{\text{PCLK1}} \times 4096 \times 2^{\text{WDGTB}} \times (T[5:0] + 1)$$
+  Trong đó chu kỳ xung APB1: $t_{\text{PCLK1}} = \frac{1}{f_{\text{PCLK1}}} = \frac{1}{54\text{ MHz}} \approx 18.52\text{ ns}$.
+  * Khoảng thời gian cho phép làm tươi hợp lệ (Valid Refresh Window):
+    $$t_{\text{window\_min}} = t_{\text{PCLK1}} \times 4096 \times 2^{\text{WDGTB}} \times (T[5:0] - W[5:0])$$
+    $$t_{\text{window\_max}} = t_{\text{PCLK1}} \times 4096 \times 2^{\text{WDGTB}} \times (T[5:0] + 1)$$
 * **Quy tắc Cửa Sổ 2 Đầu (Window Operation):**
-  1. **Quá muộn (Underflow):** Nếu để bộ đếm tụt xuống dưới `0x40` (tức là bit `T6` chuyển từ 1 rightarrow 0) -> Reset CPU!
-  2. **Quá sớm (Window Violation):** Nếu phần mềm nạp lại bộ đếm khi giá trị đếm **vẫn còn lớn hơn ngưỡng cửa sổ `W[6:0]`** -> Reset CPU ngay lập tức!
+  1. **Quá muộn (Underflow):** Nếu để bộ đếm tụt xuống dưới `0x40` (tức là bit `T6` chuyển từ $1 \rightarrow 0$) $\implies$ Reset CPU!
+  2. **Quá sớm (Window Violation):** Nếu phần mềm nạp lại bộ đếm khi giá trị đếm **vẫn còn lớn hơn ngưỡng cửa sổ `W[6:0]`** $\implies$ Reset CPU ngay lập tức!
 
 ```text
  Giá trị Counter

@@ -108,9 +108,9 @@ Trong kiến trúc giao tiếp nối tiếp UART, có hai cơ chế nhận dữ 
   - Phần cứng tự động nâng cờ `RXNE = 1` và kích hoạt tín hiệu ngắt gửi tới NVIC.
   - CPU buộc phải dừng chương trình chính, thực hiện **Context Switch** (lưu ngữ cảnh các thanh ghi `R0-R3`, `R12`, `LR`, `PC`, `xPSR` vào Stack), nhảy vào hàm `USART1_IRQHandler()`, đọc `USART_RDR` để lưu vào RAM, rồi khôi phục ngữ cảnh để quay về.
 * **Tác hại kỹ thuật (Interrupt Thrashing ở tốc độ cao):**
-  - Giả sử hệ thống chạy ở Baudrate 921,600 bps. Thời gian truyền 1 byte (10 bits) chỉ mất:
-    `T_byte = 10 / 921,600 ~ 10.85 us`
-  - Nếu nhận một gói dữ liệu 1000 bytes, CPU sẽ bị **ngắt 1000 lần liên tiếp**, mỗi lần cách nhau chỉ 10.85,mus!
+  - Giả sử hệ thống chạy ở Baudrate 921,600 bps. Thời gian truyền 1 byte (10 bits bao gồm 1 Start + 8 Data + 1 Stop) chỉ mất:
+    $$T_{	ext{byte}} = rac{10	ext{ bits}}{	ext{Baudrate}} = rac{10}{921{,}600	ext{ bps}} pprox 10.85\ \mu	ext{s}$$
+  - Nếu nhận một gói dữ liệu 1000 bytes, CPU sẽ bị **ngắt 1000 lần liên tiếp**, mỗi lần cách nhau chỉ $10.85\ \mu	ext{s}$!
   - Quá trình Stacking / Unstacking (tối thiểu 24-32 chu kỳ lệnh Cortex-M7) cùng việc hủy luồng lệnh Pipeline lặp lại 1000 lần sẽ **chiếm dụng từ 30% đến 50% thời gian tính toán của CPU**, làm trễ hoặc nghẽn nghiêm trọng các tác vụ thời gian thực khắt khe (Real-time Deadlines) như vòng lặp điều khiển Motor FOC (20 kHz) hoặc ngắt CAN-Bus.
 
 ---
@@ -131,8 +131,10 @@ Trong kiến trúc giao tiếp nối tiếp UART, có hai cơ chế nhận dữ 
 * **Quy trình xử lý trong hàm ngắt:**
   - CPU nhảy vào `USART1_IRQHandler()` đúng 1 lần:
     1. Đọc thanh ghi `DMA2_Stream2->NDTR` để tính toán chính xác số byte vừa nhận được:
+       $$	ext{Head} = 	ext{BUFFER\_SIZE} - 	ext{DMA2\_Stream2}ightarrow	ext{NDTR}$$
+       $$	ext{Bytes Received} = (	ext{Head} - 	ext{Tail}) \pmod{	ext{BUFFER\_SIZE}}$$
        ```c
-       uint16_t received_bytes = BUFFER_SIZE - DMA2_Stream2->NDTR;
+       uint16_t head = BUFFER_SIZE - DMA2_Stream2->NDTR;
        ```
     2. Xóa cờ `IDLE` bằng lệnh ghi trực tiếp: `USART1->ICR = USART_ICR_IDLECF;`.
     3. Chuyển toàn bộ gói tin sang cho Application layer hoặc Parser xử lý.
@@ -398,12 +400,14 @@ PB7  --> AFRL7[3:0]  = 0111b (AF7) -> USART1_RX
 
 ## 2.3. Công thức tính Baudrate chuẩn cho STM32F7 (`USART_BRR`)
 
-Nguồn xung cấp cho `USART1` thuộc Bus APB2 có tần số f_PCLK2 = 108 MHz.  
-Với Baudrate mục tiêu = 115200  bps, chế độ Oversampling by 16 (bit `OVER8 = 0` trong `USART_CR1`):
+Nguồn xung cấp cho `USART1` thuộc Bus APB2 có tần số $f_{	ext{PCLK2}} = 108	ext{ MHz}$.  
+Với Baudrate mục tiêu $= 115{,}200	ext{ bps}$, chế độ Oversampling by 16 (bit `OVER8 = 0` trong `USART_CR1`):
 
-`USARTDIV = f_PCLK2 / Baudrate = 108,000,000 / 115,200 = 937.5`
+$$	ext{USARTDIV} = rac{f_{	ext{PCLK2}}}{	ext{Baudrate}} = rac{108{,}000{,}000}{115{,}200} = 937.5$$
 
-Trong kiến trúc STM32F7, giá trị nạp vào thanh ghi `USART1->BRR`:
+Trong kiến trúc STM32F7, giá trị nạp vào thanh ghi `USART1->BRR` được làm tròn số nguyên gần nhất:
+$$	ext{BRR} = 	ext{round}(937.5) = 938 \quad (	ext{Mã Hex: 0x03AA})$$
+
 ```c
 USART1->BRR = 938U; /* 0x03AA (Làm tròn 937.5 -> 938) */
 ```
@@ -655,7 +659,7 @@ int main(void) {
 # 🚀 NGHỆM THU NGÀY 2
 
 - [ ] Hiểu rõ sơ đồ Dataflow & Bus Matrix từ UART -> DMA2 -> SRAM.
-- [ ] Tính toán đúng `BRR = 938` cho Baudrate 115200 at f_{PCLK2 = 108MHz.
+- [ ] Tính toán đúng `BRR = 938` cho Baudrate 115200 at $f_{	ext{PCLK2}} = 108	ext{ MHz}$.
 - [ ] Tự tay gõ cấu hình GPIO AF7 (`PA9`, `PB7`), `USART1` và `DMA2 Stream 2 Channel 4`.
 - [ ] Nắm vững cách xử lý D-Cache Coherency (`SCB_InvalidateDCache_by_Addr`).
 - [ ] Tự tin trả lời bộ 5 câu hỏi phỏng vấn về ORE error, W1C register, và False Sharing.

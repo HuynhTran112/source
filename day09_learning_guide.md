@@ -39,16 +39,16 @@
 
 # 🧠 BƯỚC 1: KIẾN TRÚC HỆ THỐNG & CƠ CHẾ HOẠT ĐỘNG (SO SÁNH FREERTOS)
 
-### 1.1. So Sánh Cơ Chế Hiển Thị Đồ Họa: FreeRTOS vs Zephyr Display Subsystem
+### 1.1. So Sánh Cơ Chế Hiển Thị Đồ Họa: FreeRTOS vs Zephyr Display Subsystem (Chi Tiết Ưu / Nhược Điểm)
 
 Khi tích hợp thư viện đồ họa LVGL trên vi điều khiển:
 
-| Khía cạnh | 1. FreeRTOS (Tự ghép thủ công) | 2. Zephyr Display Subsystem |
-| :--- | :--- | :--- |
-| **Khởi tạo SDRAM & LTDC** | Phải tự viết hàm khởi tạo FMC SDRAM (nạp lệnh JEDEC, timing) và cấu hình thanh ghi LTDC từng bước. | Zephyr tự động kích hoạt driver FMC và LTDC lúc boot thông qua Devicetree (`CONFIG_MEMC=y`, `CONFIG_STM32_LTDC=y`). |
-| **Hàm Flush màn hình (`flush_cb`)** | Phải tự viết hàm callback `disp_drv.flush_cb`, tự dùng DMA2D hoặc memcpy đẩy từng khối pixel ra Framebuffer. | **TỰ ĐỘNG 100%:** Zephyr cung cấp sẵn file keo `display_stm32_ltdc.c`. LVGL vẽ xong, Zephyr tự kích hoạt DMA2D copy ra SDRAM. |
-| **Bộ đếm nhịp thời gian (`lv_tick`)** | Phải tạo một Software Timer hoặc ngắt SysTick để gọi hàm `lv_tick_inc(x)` nuôi bộ đếm thời gian cho LVGL. | **TỰ ĐỘNG:** Nhân Zephyr tự động móc nhịp System Uptime vào LVGL, không cần tự cấu hình bất kỳ ngắt nào. |
-| **Độ phức tạp tích hợp** | Mất từ 2 đến 3 ngày để ghép nối phần cứng màn hình, SDRAM và thư viện đồ họa. | Chỉ cần bật `CONFIG_LVGL=y` trong `prj.conf`. Vào code là tạo widget vẽ giao diện ngay! |
+| Khía cạnh Kỹ thuật | 1. FreeRTOS (Tự ghép thủ công) | 2. Zephyr Display Subsystem | Đánh Giá Kỹ Thuật, Ưu / Nhược Điểm & Trade-off Chuyên Sâu |
+| :--- | :--- | :--- | :--- |
+| **1. Khởi tạo SDRAM & LTDC** | Phải tự viết hàm khởi tạo FMC SDRAM (nạp chuỗi 5 lệnh JEDEC, timing cấu hình) và cấu hình hàng chục thanh ghi LTDC từng bước. | Zephyr tự động kích hoạt driver FMC SDRAM và LTDC lúc boot thông qua Devicetree (`CONFIG_MEMC=y`, `CONFIG_STM32_LTDC=y`). | • **FreeRTOS (Thủ công):** Nắm rất sâu thanh ghi phần cứng, nhưng cực kỳ tốn công sức; nếu sai lệch $1\text{ chu kỳ}$ làm tươi (Refresh Rate) SDRAM sẽ gây lỗi sọc màn hình ngẫu nhiên.<br>• **Zephyr:** Chuẩn hóa hoàn toàn trong Devicetree. Các tham số timing chỉ cần khai báo một lần trong node DTS, nhân tự động kích hoạt tuần tự (FMC $\rightarrow$ SDRAM $\rightarrow$ LTDC) trước khi hàm `main()` khởi chạy. |
+| **2. Hàm Flush màn hình (`flush_cb`)** | Lập trình viên phải tự viết hàm callback `disp_drv.flush_cb`, tự lập trình DMA2D Chrom-ART hoặc `memcpy` đẩy từng khối pixel ra SDRAM. | **TỰ ĐỘNG HÓA 100%:** Zephyr cung cấp sẵn file liên kết `display_stm32_ltdc.c`. LVGL vừa render xong, Zephyr tự gọi DMA2D copy ra Framebuffer. | • **FreeRTOS:** Tự do tùy biến thuật toán copy, nhưng nếu quản lý con trỏ buffer không cẩn thận dễ gây rách hình (Tearing) hoặc Deadlock giữa ngắt DMA2D và luồng vẽ.<br>• **Zephyr:** Glue layer tối ưu hóa phần cứng sẵn có. Tự động kết nối với Chrom-ART DMA2D để giải phóng $100\%$ CPU trong quá trình chuyển khối pixel, tự động gọi `lv_disp_flush_ready()` khi phần cứng hoàn tất. |
+| **3. Bộ đếm nhịp thời gian (`lv_tick`)** | Phải tự tạo một FreeRTOS Software Timer hoặc móc vào ngắt SysTick để gọi hàm `lv_tick_inc(x)` nuôi bộ đếm thời gian cho LVGL. | **TỰ ĐỘNG TÍCH HỢP:** Nhân Zephyr tự động móc nhịp System Uptime vào LVGL, không cần lập trình viên tự cấu hình bất kỳ ngắt nào. | • **FreeRTOS:** Nếu quên tăng tick hoặc tần số ngắt SysTick bị chia sai, kim đồng hồ và hiệu ứng animation của LVGL sẽ bị đơ hoặc chạy sai tốc độ.<br>• **Zephyr:** Đồng bộ tuyệt đối với đồng hồ mili-giây của kernel thông qua `k_uptime_get_32()`, đảm bảo hiệu ứng kim quay đồng hồ táp-lô đạt độ mượt mà $60\text{ FPS}$ chuẩn xác. |
+| **4. Độ phức tạp tích hợp & Time-to-Market** | Mất từ $2\text{ đến }3\text{ ngày}$ để ghép nối phần cứng màn hình, chip SDRAM và thư viện đồ họa LVGL. | Chỉ cần bật `CONFIG_LVGL=y` trong `prj.conf`. Vào code là tạo widget vẽ giao diện ngay lập tức! | • **FreeRTOS:** Chi phí phát triển ban đầu rất cao, khó tái sử dụng khi đổi sang màn hình có độ phân giải khác hoặc chip STM32 dòng khác.<br>• **Zephyr:** Thời gian hoàn thành tính bằng phút. Tiết kiệm hơn $90\%$ thời gian tích hợp ban đầu, giúp kỹ sư tập trung toàn lực vào logic thiết kế giao diện táp-lô ô tô (UI/UX). |
 
 ---
 
@@ -94,17 +94,27 @@ Thay vì phải tự viết driver khởi tạo thanh ghi LTDC và tự quản l
 
 ### 1.3. Luồng Hoạt Động & Cơ Chế "Vùng Bẩn" (Dirty Area) Tối Ưu Bus
 
-Màn hình 480 x 272 có tổng cộng 130,560 pixel. Nếu mỗi khung hình đều vẽ lại toàn bộ:
-* Bus FMC SDRAM sẽ bị nghẽn vì phải chuyển hàng megabyte dữ liệu liên tục.
-* CPU STM32F7 sẽ bị quá tải, không còn thời gian xử lý gói tin CAN Bus.
+Màn hình táp-lô $480 \times 272$ có tổng số điểm ảnh:
+$$\text{Total Pixels} = 480 \times 272 = 130{,}560\text{ pixels}$$
 
-**Cơ chế tối ưu của LVGL:**
-1. **Virtual Display Buffer (VDB):** LVGL chỉ cần một mảng đệm nhỏ trong RAM nội SRAM (ví dụ 480 x 40 dòng quét = 38.4 KB). Không cần cấp phát cả màn hình đầy đủ trong RAM nội.
-2. **Vẽ lại vùng bẩn (Dirty Area):**
-   * Khi kim đồng hồ tốc độ di chuyển từ 80 lên 85 km/h, chỉ có một ô vuông nhỏ khoảng 60 x 30 pixel thay đổi.
-   * LVGL chỉ tính toán và vẽ lại đúng 1,800 pixel này vào buffer ảo VDB.
-   * Sau đó, Zephyr gọi DMA2D đẩy đúng ô 60 x 30 pixel này đè lên Framebuffer ngoài SDRAM.
-   * **Kết quả:** Giảm 90% lưu lượng chiếm dụng bus dữ liệu, giúp giao diện đạt 60 FPS cực mượt mà không làm trễ ngắt CAN!
+Dung lượng của một Framebuffer hoàn chỉnh ở định dạng màu 16-bit RGB565 ($2\text{ bytes/pixel}$):
+$$\text{Framebuffer Size} = 130{,}560 \times 2\text{ bytes} = 261{,}120\text{ bytes} \approx 255\text{ KB}$$
+
+Nếu mỗi khung hình đều render và ghi đè lại toàn bộ $255\text{ KB}$ này:
+* Bus FMC SDRAM sẽ bị nghẽn vì phải chuyển hàng chục megabyte dữ liệu mỗi giây:
+  $$\text{Bus Bandwidth (Full 60 FPS)} = 255\text{ KB} \times 60 \approx 15.3\text{ MB/s}$$
+* CPU STM32F7 sẽ bị quá tải, không còn thời gian xử lý gói tin CAN Bus và thuật toán an toàn.
+
+**Cơ chế tối ưu hóa đột phá của LVGL kết hợp Zephyr:**
+1. **Bộ đệm ảo Virtual Display Buffer (VDB):**
+   Thay vì cấp phát toàn bộ màn hình trong RAM nội SRAM, LVGL chỉ cần một mảng đệm nhỏ chiếm $20\%$ chiều cao màn hình ($54\text{ dòng}$):
+   $$\text{VDB Size} = 480 \times 54 \times 2\text{ bytes} = 51{,}840\text{ bytes} \approx 50.6\text{ KB}$$
+2. **Vẽ lại vùng bẩn (Dirty Area Invalidation):**
+   * Khi kim đồng hồ tốc độ di chuyển từ $80$ lên $85\text{ km/h}$, chỉ có một ô vuông nhỏ kích thước $\approx 60 \times 30\text{ pixels}$ bị thay đổi.
+   * LVGL chỉ tính toán và render đúng diện tích nhỏ này:
+     $$\text{Dirty Area Pixels} = 60 \times 30 = 1{,}800\text{ pixels} \implies 1{,}800 \times 2 = 3{,}600\text{ bytes} \approx 3.5\text{ KB}$$
+   * Sau đó, Zephyr kích hoạt mạch DMA2D Chrom-ART đẩy đúng khối $3.5\text{ KB}$ này đè trực tiếp lên Framebuffer ngoài SDRAM.
+   * **Kết quả:** Giảm hơn $98.6\%$ lưu lượng dữ liệu chiếm dụng trên bus FMC ($\frac{3.5\text{ KB}}{255\text{ KB}} \approx 1.4\%$), giúp giao diện đạt $60\text{ FPS}$ cực kỳ mượt mà mà ngắt CAN vẫn được đáp ứng tức thì!
 
 > 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Tài Liệu LVGL:**
 > 1. **Mở tài liệu LVGL Porting Guide:** Truy cập `https://docs.lvgl.io/master/porting/display.html`.
@@ -183,16 +193,16 @@ k_mutex_unlock(&gui_mutex);
 
 ## 2.2. Bảng Cấu Hình Tính Năng Kconfig (`prj.conf`)
 
-| Kconfig Symbol | Giá trị | Ý nghĩa Kỹ thuật trong Zephyr RTOS |
-| :--- | :---: | :--- |
-| **`CONFIG_DISPLAY`** | `y` | Bật hệ thống Display Subsystem của Zephyr. |
-| **`CONFIG_STM32_LTDC`** | `y` | Bật driver điều khiển LTDC trên dòng chip STM32F7. |
-| **`CONFIG_MEMC`** | `y` | Bật bộ điều khiển bộ nhớ ngoài (Memory Controller). |
-| **`CONFIG_MEMC_STM32_SDRAM`** | `y` | Kích hoạt driver FMC SDRAM tự động khởi tạo chip RAM lúc boot. |
-| **`CONFIG_LVGL`** | `y` | Tích hợp toàn bộ thư viện đồ họa LVGL vào dự án. |
-| **`CONFIG_LV_COLOR_DEPTH_16`**| `y` | Định dạng màu 16-bit RGB565 tương thích màn hình LCD. |
-| **`CONFIG_LV_Z_MEM_POOL_SIZE`**| `16384` | Cấp phát 16KB RAM cho LVGL Dynamic Object Pool. |
-| **`CONFIG_LV_Z_VDB_SIZE`** | `20` | Virtual Display Buffer chiếm 20% màn hình (khoảng 54 dòng). |
+| Kconfig Symbol | Giá trị | Ý nghĩa Kỹ thuật trong Zephyr RTOS | Đánh Giá Kỹ Thuật, Ưu / Nhược Điểm & Chi Phí Tài Nguyên |
+| :--- | :---: | :--- | :--- |
+| **`CONFIG_DISPLAY`** | `y` | Bật hệ thống Display Subsystem của Zephyr. | • **Ưu điểm:** Khung chuẩn hóa giao tiếp màn hình (API `display_write`, `display_get_capabilities`), độc lập với phần cứng LCD.<br>• **Chi phí:** Tăng khoảng $\approx 3.8\text{ KB}$ Flash ROM. |
+| **`CONFIG_STM32_LTDC`** | `y` | Bật driver điều khiển LTDC trên dòng chip STM32F7. | • **Ưu điểm:** Quét điểm ảnh trực tiếp bằng phần cứng ra bus RGB 24-bit với xung nhịp Pixel Clock $9.6\text{ MHz}$; hoàn toàn không tốn CPU lúc quét dòng.<br>• **Chi phí:** Tốn $\approx 6.2\text{ KB}$ Flash và chiếm dụng các chân GPIO Port I, J, K. |
+| **`CONFIG_MEMC`** | `y` | Bật bộ điều khiển bộ nhớ ngoài (Memory Controller). | • **Ưu điểm:** Khung quản lý chung cho các bộ nhớ ngoại vi (FMC, QSPI, OctoSPI). Bắt buộc phải có để điều khiển SDRAM ngoài.<br>• **Chi phí:** $\approx 1.5\text{ KB}$ Flash. |
+| **`CONFIG_MEMC_STM32_SDRAM`** | `y` | Kích hoạt driver FMC SDRAM tự động khởi tạo chip RAM lúc boot. | • **Ưu điểm Cốt tử:** Thay thế hoàn toàn hàng trăm dòng code Bare-metal Ngày 4; tự động cấu hình thanh ghi `FMC_SDCR` và `FMC_SDTR` theo Devicetree trước khi nhân chạy.<br>• **Tài nguyên:** Mở khóa toàn bộ không gian $8\text{ MB}$ SDRAM ngoài tại địa chỉ `0xC0000000`. |
+| **`CONFIG_LVGL`** | `y` | Tích hợp toàn bộ thư viện đồ họa LVGL vào dự án. | • **Ưu điểm:** Cung cấp kho widget ô tô phong phú (Arc kim đồng hồ, Meter, Canvas, Button, Label, Animation).<br>• **Chi phí:** Tiêu tốn khoảng $\approx 85\text{ KB}$ Flash ROM. |
+| **`CONFIG_LV_COLOR_DEPTH_16`**| `y` | Định dạng màu 16-bit RGB565 tương thích màn hình LCD. | • **Ưu điểm Tối ưu:** Tiết kiệm một nửa dung lượng RAM và băng thông bus so với chuẩn ARGB8888 ($2\text{ bytes}$ thay vì $4\text{ bytes}$/pixel), trong khi mắt thường vẫn nhìn thấy màu sắc mượt mà không phân biệt được.<br>• **Lưu ý:** Phải đồng bộ tuyệt đối với cấu hình Layer 1 LTDC trong Devicetree. |
+| **`CONFIG_LV_Z_MEM_POOL_SIZE`**| `16384` | Cấp phát 16KB RAM cho LVGL Dynamic Object Pool. | • **Đánh giá Trade-off:** $16\text{ KB}$ là mức an toàn cho cụm đồng hồ táp-lô gồm 2 kim quay Arc, 4 nhãn số Label và 1 biểu tượng cảnh báo. Nếu giao diện có nhiều màn hình chuyển đổi phức tạp, cần tăng lên $32\text{ KB}$ để tránh tràn Pool. |
+| **`CONFIG_LV_Z_VDB_SIZE`** | `20` | Virtual Display Buffer chiếm 20% màn hình (khoảng 54 dòng). | • **Ưu điểm Cốt lõi:** Cân bằng hoàn hảo giữa mức tiêu hao SRAM ($50.6\text{ KB}$) và hiệu năng render. Đủ diện tích để chứa mọi chuyển động kim đồng hồ ô tô trong 1 lượt render mà không phải chia nhỏ màn hình quá nhiều lần. |
 
 ---
 

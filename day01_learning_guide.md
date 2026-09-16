@@ -92,22 +92,31 @@ Lõi ARM Cortex-M7 trên STM32F746NG có thể chạy ở tần số tối đa 2
  └──────────────┘                 └──────────────┘
 ```
 
-### Giới hạn phần cứng bắt buộc (RM0385 Section 5.1.4):
-1. **`f_VCO_in = f_HSE / PLLM`**: Phải nằm trong khoảng [1.0 MHz ... 2.0 MHz] để mạch lọc so pha PFD hoạt động chính xác với độ rung pha (Jitter) thấp nhất. Chọn PLLM = 25 -> f_VCO_in = 1.0 MHz.
-2. **`f_VCO_out = f_VCO_in * PLLN`**: Phải nằm trong khoảng [100 MHz ... 432 MHz]. Chọn PLLN = 432 -> f_VCO_out = 432.0 MHz.
-3. **`f_SYSCLK = f_VCO_out / PLLP`**: Tối đa 216 MHz. Chọn PLLP = 2 (mã nhị phân `00b`) -> f_SYSCLK = 432 / 2 = 216.0 MHz.
-4. **`f_PLL48CLK = f_VCO_out / PLLQ`**: Bắt buộc đúng 48 MHz cho USB. Chọn PLLQ = 9 -> f_USB = 432 / 9 = 48.0 MHz.
+### Giới hạn phần cứng bắt buộc & Công thức Tính toán PLL (RM0385 Section 5.1.4):
+
+1. **Tần số đầu vào bộ so pha PFD ($f_{	ext{VCO\_in}}$):** Bắt buộc nằm trong khoảng $[1.0	ext{ MHz} \dots 2.0	ext{ MHz}]$ để mạch lọc vòng khóa pha hoạt động ổn định với độ rung pha (Jitter) thấp nhất:
+   $$f_{	ext{VCO\_in}} = rac{f_{	ext{HSE}}}{	ext{PLLM}} = rac{25	ext{ MHz}}{25} = 1.0	ext{ MHz} \quad (1.0	ext{ MHz} \le 1.0	ext{ MHz} \le 2.0	ext{ MHz} \implies 	ext{ĐẠT})$$
+
+2. **Tần số dao động nội bộ VCO ($f_{	ext{VCO\_out}}$):** Bắt buộc nằm trong dải $[100	ext{ MHz} \dots 432	ext{ MHz}]$:
+   $$f_{	ext{VCO\_out}} = f_{	ext{VCO\_in}} 	imes 	ext{PLLN} = 1.0	ext{ MHz} 	imes 432 = 432.0	ext{ MHz} \quad (100	ext{ MHz} \le 432	ext{ MHz} \le 432	ext{ MHz} \implies 	ext{ĐẠT})$$
+
+3. **Tần số hệ thống CPU ($f_{	ext{SYSCLK}}$):** Tối đa $216.0	ext{ MHz}$ trên STM32F746:
+   $$f_{	ext{SYSCLK}} = rac{f_{	ext{VCO\_out}}}{	ext{PLLP}} = rac{432.0	ext{ MHz}}{2} = 216.0	ext{ MHz} \quad (	ext{PLLP} = 2 	ext{ ứng với mã bit } 	ext{00b})$$
+
+4. **Tần số xung cấp ngoại vi USB OTG FS / SDMMC ($f_{	ext{PLL48CLK}}$):** Bắt buộc chuẩn xác $48.0	ext{ MHz}$:
+   $$f_{	ext{PLL48CLK}} = rac{f_{	ext{VCO\_out}}}{	ext{PLLQ}} = rac{432.0	ext{ MHz}}{9} = 48.0	ext{ MHz} \quad (	ext{Bắt buộc } 	ext{PLLQ} = 9)$$
 
 ---
 
 ## 1.2. Mối quan hệ Phần cứng giữa Tần số Lõi và Flash Access Latency (Wait States)
 
-Bộ nhớ Flash nhúng trên chip STM32F7 có giới hạn vật lý về thời gian truy cập (Access Time `t_ACC ~ 30 ns`):
-* Ở tần số 216 MHz, chu kỳ xung nhịp của CPU chỉ kéo dài:
-  `T_CPU = 1 / 216 MHz ~ 4.63 ns`
-* Vì 4.63 ns << 30 ns, nếu CPU truy cập đọc mã lệnh Flash ở tốc độ tối đa, tín hiệu dữ liệu chưa kịp ổn định trên bus -> CPU đọc trúng dữ liệu rác, gây ra lỗi **`HardFault`** hoặc **`BusFault`** ngay lập tức!
+Bộ nhớ Flash nhúng trên chip STM32F7 có giới hạn vật lý về thời gian truy cập (Access Time $t_{	ext{ACC}} pprox 30	ext{ ns}$):
+* Ở tần số $216	ext{ MHz}$, chu kỳ xung nhịp của CPU chỉ kéo dài:
+  $$T_{	ext{CPU}} = rac{1}{f_{	ext{SYSCLK}}} = rac{1}{216	ext{ MHz}} pprox 4.63	ext{ ns}$$
+* Vì $4.63	ext{ ns} \ll 30	ext{ ns}$, nếu CPU truy cập đọc mã lệnh Flash ở tốc độ tối đa, tín hiệu dữ liệu chưa kịp ổn định trên bus $\implies$ CPU đọc trúng dữ liệu rác, gây ra lỗi **`HardFault`** hoặc **`BusFault`** ngay lập tức!
 * **Giải pháp phần cứng:** Thanh ghi `FLASH_ACR` cho phép chèn thêm các chu kỳ chờ (**Wait States - WS**):
-  $SốSố chu kỳ chờ = 30 ns / 4.63 ns ~ 6.48 -> 7 chu kỳ CPU (tương ứng 6 Wait States - LATENCY = 6)
+  $$	ext{Số chu kỳ CPU yêu cầu} = \left\lceil rac{t_{	ext{ACC}}}{T_{	ext{CPU}}} ightceil = \left\lceil rac{30	ext{ ns}}{4.63	ext{ ns}} ightceil = \lceil 6.48 ceil = 7	ext{ chu kỳ CPU} \implies 	ext{LATENCY} = 7	ext{ WS}$$
+  *(Hoặc cấu hình $6	ext{ WS}$ khi kích hoạt bộ tăng tốc phần cứng ART Accelerator Prefetch Cache)*.
 
 ```text
 Tra cứu RM0385 Table 5: Number of wait states according to CPU clock (HCLK) frequency:
@@ -166,7 +175,11 @@ Wait States (WS)          | Tần số HCLK tối đa cho phép
 
 ## 1.4. Phân tầng Tần số Bus Matrix (AHB, APB1, APB2 Prescalers)
 
-Khi f_{SYSCLK = 216 MHz, xung nhịp được phân phối tới các bus thông qua các bộ chia (Prescalers) trong thanh ghi `RCC_CFGR`. Phải tuân thủ giới hạn phần cứng tuyệt đối trong Datasheet DS10610:
+Khi $f_{	ext{SYSCLK}} = 216	ext{ MHz}$, xung nhịp được phân phối tới các bus thông qua các bộ chia (Prescalers) trong thanh ghi `RCC_CFGR`. Phải tuân thủ giới hạn phần cứng tuyệt đối trong Datasheet DS10610:
+
+$$f_{	ext{HCLK}} = rac{f_{	ext{SYSCLK}}}{	ext{HPRE}} = rac{216	ext{ MHz}}{1} = 216	ext{ MHz} \quad (f_{	ext{HCLK}} \le 216	ext{ MHz})$$
+$$f_{	ext{PCLK1}} = rac{f_{	ext{HCLK}}}{	ext{PPRE1}} = rac{216	ext{ MHz}}{4} = 54	ext{ MHz} \quad (f_{	ext{PCLK1}} \le 54	ext{ MHz})$$
+$$f_{	ext{PCLK2}} = rac{f_{	ext{HCLK}}}{	ext{PPRE2}} = rac{216	ext{ MHz}}{2} = 108	ext{ MHz} \quad (f_{	ext{PCLK2}} \le 108	ext{ MHz})$$
 
 ```text
                                 SYSCLK = 216 MHz

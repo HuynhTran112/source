@@ -154,7 +154,23 @@ Thay vì phải cắm mạch nạp JTAG cồng kềnh để debug, Zephyr tích 
 
 # PHẦN 3: CÁCH SỬ DỤNG THỰC CHIẾN (MÃ NGUỒN MODULAR HOÀN CHỈNH TỪNG FILE)
 
-Để xây dựng hệ thống giao tiếp đa luồng an toàn và tích hợp công cụ chẩn đoán dòng lệnh Shell, mã nguồn được phân định thành **5 tệp thành phần hoàn chỉnh, có đầu có đuôi rõ ràng**:
+Để xây dựng hệ thống giao tiếp đa luồng an toàn và tích hợp công cụ chẩn đoán dòng lệnh Shell, mã nguồn được phân định thành **các tệp thành phần hoàn chỉnh, có đầu có đuôi rõ ràng**:
+
+---
+
+### 3.0. Tệp Điều Phối Biên Dịch [ File: `CMakeLists.txt` ]
+```cmake
+cmake_minimum_required(VERSION 3.20.0)
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(automotive_ipc_shell)
+
+# Khai báo liên kết cả luồng IPC, giao diện dòng lệnh Shell và main
+target_sources(app PRIVATE 
+    src/main.c 
+    src/telemetry_ipc.c
+    src/cli_shell.c
+)
+```
 
 ---
 

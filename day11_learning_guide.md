@@ -170,7 +170,22 @@ Xét tín hiệu nhiệt độ nước làm mát `CoolantTemp`: Chiều dài 8 b
 
 # PHẦN 3: CÁCH SỬ DỤNG THỰC CHIẾN (MÃ NGUỒN MODULAR HOÀN CHỈNH TỪNG FILE)
 
-Để tích hợp công cụ giải mã ma trận tín hiệu Vector DBC vào dự án nhúng ô tô, mã nguồn được cấu trúc thành **3 tệp thành phần hoàn chỉnh, có đầu có đuôi rõ ràng**:
+Để tích hợp công cụ giải mã ma trận tín hiệu Vector DBC vào dự án nhúng ô tô, mã nguồn được cấu trúc thành **các tệp thành phần hoàn chỉnh, có đầu có đuôi rõ ràng**:
+
+---
+
+### 3.0. Tệp Điều Phối Biên Dịch [ File: `CMakeLists.txt` ]
+```cmake
+cmake_minimum_required(VERSION 3.20.0)
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(automotive_dbc_engine)
+
+# Khai báo liên kết module giải mã DBC và hàm main
+target_sources(app PRIVATE 
+    src/main.c 
+    src/dbc_decoder.c
+)
+```
 
 ---
 

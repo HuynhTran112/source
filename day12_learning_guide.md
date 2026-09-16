@@ -135,7 +135,23 @@ stateDiagram-v2
 
 # PHẦN 3: CÁCH SỬ DỤNG THỰC CHIẾN (MÃ NGUỒN MODULAR HOÀN CHỈNH TỪNG FILE)
 
-Để hiện thực hóa 3 lớp bảo vệ AUTOSAR E2E và máy trạng thái phục hồi mạng Bus-Off, mã nguồn được phân định thành **4 tệp thành phần hoàn chỉnh, có đầu có đuôi rõ ràng**:
+Để hiện thực hóa 3 lớp bảo vệ AUTOSAR E2E và máy trạng thái phục hồi mạng Bus-Off, mã nguồn được phân định thành **các tệp thành phần hoàn chỉnh, có đầu có đuôi rõ ràng**:
+
+---
+
+### 3.0. Tệp Điều Phối Biên Dịch [ File: `CMakeLists.txt` ]
+```cmake
+cmake_minimum_required(VERSION 3.20.0)
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(automotive_safety_diagnostics)
+
+# Khai báo liên kết các module an toàn E2E, FSM Bus-Off và main
+target_sources(app PRIVATE 
+    src/main.c 
+    src/supervision.c
+    src/bus_off_fsm.c
+)
+```
 
 ---
 

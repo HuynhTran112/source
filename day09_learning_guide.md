@@ -142,7 +142,22 @@ void can_worker_entry(...) {
 
 # PHẦN 3: CÁCH SỬ DỤNG THỰC CHIẾN (MÃ NGUỒN MODULAR HOÀN CHỈNH TỪNG FILE)
 
-Để tích hợp thư viện đồ họa LVGL trên nền tảng phần cứng STM32F746-Discovery, mã nguồn được phân định thành **5 tệp thành phần hoàn chỉnh, có đầu có đuôi rõ ràng**:
+Để tích hợp thư viện đồ họa LVGL trên nền tảng phần cứng STM32F746-Discovery, mã nguồn được phân định thành **các tệp thành phần hoàn chỉnh, có đầu có đuôi rõ ràng**:
+
+---
+
+### 3.0. Tệp Điều Phối Biên Dịch [ File: `CMakeLists.txt` ]
+```cmake
+cmake_minimum_required(VERSION 3.20.0)
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(automotive_gui_cluster)
+
+# Khai báo liên kết file C logic hiển thị táp-lô và hàm main
+target_sources(app PRIVATE 
+    src/main.c 
+    src/gui_cluster.c
+)
+```
 
 ---
 

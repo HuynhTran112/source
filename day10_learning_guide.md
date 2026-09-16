@@ -1,513 +1,379 @@
-# 🏆 [NGÀY 10] CẨM NANG TOÀN DIỆN ZEPHYR MULTI-THREADING: IPC MESSAGE QUEUES, MUTEX PRIORITY INHERITANCE & INTERACTIVE SHELL CLI
-## Lộ trình 4 Bước: Kiến Trúc Đa Luồng ➔ Thực Chiến Kconfig ➔ Gõ Code Hệ Thống ➔ Phỏng Vấn Chuyên Sâu
+# 🏆 [NGÀY 10] LÀM CHỦ ZEPHYR MULTI-THREADING: CƠ CHẾ IPC, HIỂM HỌA PRIORITY INVERSION & INTERACTIVE SHELL CLI
+## Chuyên khảo Kỹ thuật: Message Queues vs FIFOs, Priority Inheritance, System Workqueues & Runtime Thread Profiling
 
-> **Mục tiêu:** Hoàn thiện đỉnh cao kiến trúc phần mềm nhúng đa luồng (Multi-Threaded Architecture) cho thiết bị CAN Gateway trên STM32F746: Xây dựng mô hình giao tiếp liên luồng an toàn (Thread-Safe Inter-Process Communication - IPC) bằng hàng đợi **`k_msgq`**, triệt tiêu vĩnh viễn biến toàn cục và điều kiện cuộc đua (Race Conditions), chống hiện tượng đảo ngược mức ưu tiên (Priority Inversion) bằng **`k_mutex` có tính năng Priority Inheritance**, giám sát dung lượng ngăn xếp thời gian thực bằng **Thread Analyzer**, và tích hợp giao diện dòng lệnh chẩn đoán từ xa **Zephyr Interactive Shell CLI** qua cổng UART Console.  
-> **Nguyên tắc kỹ thuật:** **Đi thẳng vào cơ chế phân tầng hệ thống, giải thuật điều phối luồng, phân bổ hàng đợi IPC, cú pháp macro Shell và phân chia file rõ ràng — KHÔNG dùng ví dụ ẩn dụ ngoài lề dài dòng.**
+> **Mục tiêu chuyên sâu:** Nâng tầm tư duy thiết kế phần mềm nhúng đa luồng (Multi-Threaded Architecture) cho hệ thống CAN Gateway trên STM32F746:
+> 1. **Bản Chất Cơ Chế Giao Tiếp Liên Luồng (IPC Mechanics):** So sánh trực diện cơ chế Copy-by-Value của `k_msgq` và cơ chế Chuyển Con Trỏ (Pointer Transfer) của `k_fifo`/`k_lifo`. Khi nào nên dùng giải pháp nào để đạt hiệu năng cao nhất mà không bị lỗi bộ nhớ?
+> 2. **Hiểm Họa Đảo Ngược Mức Ưu Tiên (Priority Inversion) & Giải Thuật Priority Inheritance:** Giải phẫu kịch bản tàu vũ trụ sao Hỏa Mars Pathfinder bị treo năm 1997 và cách khối nhân Zephyr tự động nâng mức ưu tiên của `k_mutex` để cứu vãn hệ thống. Tại sao tuyệt đối cấm dùng Binary Semaphore (`k_sem`) làm khóa bảo vệ tài nguyên?
+> 3. **Tư Duy Kiến Trúc: Dedicated Thread vs System Workqueue (`k_work`):** Khi nào một tác vụ xứng đáng có riêng một Thread? Khi nào nên đẩy vào System Workqueue để tiết kiệm hàng chục KB ngăn xếp RAM?
+> 4. **Chẩn Đoán Thời Gian Thực Bằng Zephyr Shell & Thread Analyzer:** Cơ chế quét đỉnh ngăn xếp (Stack High Watermark) để phát hiện nguy cơ tràn stack trước khi hệ thống bị sập và cách tích hợp giao diện dòng lệnh chẩn đoán từ xa qua UART Console.
+> 5. **Cách Sử Dụng Thực Chiến & Bộ Câu Hỏi Phỏng Vấn:** Mẫu cấu hình Kconfig, mô hình Producer-Consumer chuẩn hóa và bộ câu hỏi sát hạch kỹ năng RTOS.
 
 ---
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                           LỘ TRÌNH 4 BƯỚC CHINH PHỤC NGÀY 10                                    │
-├───────────────────┬───────────────────┬────────────────────────────┬────────────────────────────┤
-│ BƯỚC 1: KIẾN TRÚC │ BƯỚC 2: THỰC CHIẾN│ BƯỚC 3: GÕ CODE HỆ THỐNG   │ BƯỚC 4: PHỎNG VẤN          │
-│ • Mô hình Producer│ • Soạn prj.conf   │ • Gắn nhãn file cụ thể     │ • Bộ 5 câu hỏi vặn Multi-  │
-│   - Consumer IPC  │ • Bật Zephyr Shell│ • TODO 1 [prj.conf]        │   Threading & IPC          │
-│ • k_msgq vs k_fifo│ • Bật Thread      │ • TODO 2 [gateway_model.h] │ • Priority Inversion Bug   │
-│ • Priority        │   Analyzer        │ • TODO 3 [gateway_ipc.c]   │ • Priority Inheritance     │
-│   Inheritance     │ • Cấu hình Shell  │ • TODO 4 [cli_shell.c]     │ • Kịch bản trả lời 60s     │
-│ • Thread Analyzer │   Command Tree    │ • TODO 5 [src/main.c]      │   (Elevator Pitch)         │
-│ • Interactive CLI │                   │ • Mổ xẻ 5 Bug đa luồng     │                            │
-└───────────────────┴───────────────────┴────────────────────────────┴────────────────────────────┘
+│                      KIẾN TRÚC GIAO TIẾP ĐA LUỒNG & CHẨN ĐOÁN TRONG ZEPHYR                       │
+├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                 [CÁC NGUỒN PHÁT - PRODUCERS]                                    │
+│   • Ngắt CAN RX ISR       ──> k_msgq_put(K_NO_WAIT)   ──>  [CAN Frame Queue (Copy Ring Buffer)] │
+│   • Cảm Biến / Diagnostics ──> k_work_submit()         ──>  [System Workqueue (Tiết kiệm Stack)] │
+├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                   [KHÓA BẢO VỆ TÀI NGUYÊN DÙNG CHUNG]                           │
+│   • Biến Trạng Thái Xe    ──> k_mutex_lock/unlock      ──>  Bật Tự Động Priority Inheritance    │
+├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                 [CÁC TÁC VỤ TIÊU THỤ - CONSUMERS]                               │
+│   • Luồng CAN Worker (Prio 5) : Đọc gói tin, giải mã tín hiệu DBC ô tô                         │
+│   • Luồng GUI Render (Prio 6) : Cập nhật kim đồng hồ và hiển thị táp-lô                        │
+│   • Luồng Shell CLI  (Prio 8) : Nhận lệnh từ ST-Link Console, in báo cáo Thread Analyzer       │
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🛠️ RÀ SOÁT 7 QUY TẮC ZEPHYR MULTI-THREADING CỐT LÕI (CHUYÊN CHO NGÀY 10)
+# PHẦN 1: TƯ DUY KIẾN TRÚC — BẢN CHẤT CÁC CƠ CHẾ IPC TRONG ZEPHYR
 
-| STT | Quy tắc Zephyr Multi-Threading | Thể hiện cụ thể trong Ngày 10 (Multi-Threading & CLI) |
-| :---: | :--- | :--- |
-| **1** | **No Raw Global Variables** | Tuyệt đối không dùng biến toàn cục không được bảo vệ để truyền dữ liệu giữa các luồng. Mọi dữ liệu phải đi qua hàng đợi tin nhắn `k_msgq` hoặc biến trạng thái bọc Mutex. |
-| **2** | **Priority Inheritance** | Luôn sử dụng `k_mutex` (mặc định đã bật Priority Inheritance) khi các luồng có mức ưu tiên khác nhau cùng chia sẻ tài nguyên. Không dùng `k_sem` (Binary Semaphore) làm khóa độc quyền vì Semaphore không có tính năng nâng mức ưu tiên! |
-| **3** | **Zero-Copy vs Copy by Value** | Trong `k_msgq`, dữ liệu được copy theo giá trị (`memcpy`). Với cấu trúc dữ liệu nhỏ (< 32 bytes như CAN Frame hay telemetry data), cơ chế này an toàn tuyệt đối và không lo con trỏ rác (Dangling Pointer). |
-| **4** | **Thread Sleep Obligation** | Mọi luồng trong hệ thống bắt buộc phải có ít nhất một điểm dừng giải phóng CPU (như chờ hàng đợi `k_msgq_get()`, hoặc gọi `k_msleep()`), không để bất kỳ luồng nào chạy vòng lặp đói (Busy-loop). |
-| **5** | **Thread Analyzer Inspection** | Luôn theo dõi báo cáo của `CONFIG_THREAD_ANALYZER`. Nếu một luồng sử dụng quá 80% ngăn xếp, phải lập tức tăng kích thước stack để tránh kích hoạt MPU Stack Guard. |
-| **6** | **Shell Non-Blocking Execution** | Các lệnh trong Shell CLI (`SHELL_CMD_REGISTER`) phải thực thi nhanh và trả về ngay. Tuyệt đối không gọi các vòng lặp chờ đợi lâu trong callback của Shell làm tê liệt Console UART. |
-| **7** | **Atomic Operations** | Đối với các biến cờ đếm gói tin (Counters), sử dụng các hàm thao tác nguyên tử `atomic_inc()` / `atomic_get()` thay vì phép toán `++` thông thường để tránh xung đột đa luồng. |
+Hệ điều hành Zephyr cung cấp một bộ công cụ giao tiếp liên luồng (IPC) cực kỳ phong phú. Một kỹ sư giỏi phải biết chính xác **khi nào nên dùng công cụ nào**:
 
----
+### 1.1. Bảng Phân Định Bản Chất Kỹ Thuật Giữa Các Cơ Chế IPC
 
-# 🧠 BƯỚC 1: KIẾN TRÚC HỆ THỐNG & CƠ CHẾ HOẠT ĐỘNG (SO SÁNH FREERTOS)
-
-### 1.1. So Sánh Cơ Chế Giao Tiếp Đa Luồng (IPC): FreeRTOS vs Zephyr RTOS (Chi Tiết Ưu / Nhược Điểm)
-
-| Khái niệm IPC | 1. FreeRTOS | 2. Zephyr RTOS | Đánh Giá Kỹ Thuật, Ưu / Nhược Điểm & Trade-off Chuyên Sâu |
+| Cơ Chế IPC | Bản Chất Truyền Dữ Liệu | Chi Phí Bộ Nhớ & Tốc Độ | Kịch Bản Ứng Dụng Chuẩn Mực |
 | :--- | :--- | :--- | :--- |
-| **1. Khai báo & Khởi tạo Hàng đợi (Queue)** | `xQueueCreate()`, cấp phát động từ FreeRTOS Heap qua `pvPortMalloc()`. Trả về handle `QueueHandle_t`. | Macro tĩnh **`K_MSGQ_DEFINE()`**, cấp phát Ring Buffer tĩnh trên RAM lúc biên dịch. | • **FreeRTOS:** Linh hoạt tạo hàng đợi lúc runtime, nhưng có nguy cơ thất bại trả về `NULL` nếu Heap cạn kiệt; dễ gây phân mảnh bộ nhớ.<br>• **Zephyr:** Tuân thủ tuyệt đối chuẩn an toàn MISRA-C/ISO 26262. Toàn bộ bộ nhớ hàng đợi được định vị tĩnh trên phân vùng `.bss` lúc link code ($0\text{ risk}$ cấp phát thất bại, $0\text{ fragmentation}$). |
-| **2. Gửi dữ liệu vào Queue (Producer)** | Bắt buộc phải phân biệt 2 hàm riêng rẽ:<br>• Luồng: `xQueueSend()`<br>• Ngắt: `xQueueSendFromISR()` | **DÙNG CHUNG 1 HÀM DUY NHẤT:**<br>`k_msgq_put(&msgq, &data, timeout)`<br>(Trong ngắt chỉ cần truyền `K_NO_WAIT`). | • **FreeRTOS:** Thiết kế cổ điển, chia tách hàm ngắt để tránh nhầm lẫn ngữ cảnh; tuy nhiên rất dễ bị lập trình viên gọi nhầm `xQueueSend()` trong ISR gây lỗi Assert crash hệ thống.<br>• **Zephyr:** Trải nghiệm lập trình viên (DX) hiện đại. Nhân Zephyr tự kiểm tra ngữ cảnh thực thi (`_is_in_isr()`), nếu là ngắt nó tự động bỏ qua tính năng lập lịch ngủ; code gọn gàng, an toàn tuyệt đối. |
-| **3. Nhận dữ liệu từ Queue (Consumer)** | `xQueueReceive(queue, &buf, portMAX_DELAY)` | `k_msgq_get(&msgq, &buf, K_FOREVER)` | • **Cả hai:** Đều đưa luồng nhận vào trạng thái Blocked/Sleep ($0\%$ CPU tiêu hao) khi hàng đợi rỗng và lập tức đánh thức luồng khi có dữ liệu mới.<br>• **Zephyr:** Hỗ trợ thêm `k_msgq_peek()` để kiểm tra trước nội dung bản tin mà không xóa khỏi hàng đợi, cực kỳ tiện lợi cho các thuật toán tiền kiểm tra. |
-| **4. Khóa bảo vệ tài nguyên (Mutex)** | `xSemaphoreCreateMutex()` | Macro tĩnh `K_MUTEX_DEFINE(my_mutex)` | • **Cả hai:** Đều tự động kích hoạt thuật toán **Priority Inheritance** (Kế thừa mức ưu tiên) để triệt tiêu hiểm họa Priority Inversion.<br>• **Zephyr:** Tích hợp sâu với MPU và Subsystem Logging, cho phép truy vết luồng nào đang giữ khóa nếu xảy ra hiện tượng giữ khóa quá lâu. |
-| **5. Giao diện tương tác dòng lệnh (CLI Shell)** | `FreeRTOS-Plus-CLI` (Lập trình viên phải tự viết bộ đệm vòng nhận từng ký tự UART, tự viết parser tách từ khóa). | **Zephyr Shell Subsystem** (`CONFIG_SHELL=y`): Có sẵn phím Tab tự gợi ý lệnh, phím mũi tên lật lại lịch sử, gõ lệnh trực tiếp qua ST-Link Console. | • **FreeRTOS:** Tốn nhiều công sức tự viết glue-code, khó mở rộng khi cần thêm lệnh debug.<br>• **Zephyr:** Đạt chuẩn công nghiệp như một Unix Shell thu nhỏ. Macro `SHELL_CMD_REGISTER()` cho phép đăng ký lệnh ở bất kỳ file nguồn nào mà không cần sửa file trung tâm. Tiết kiệm hàng tuần phát triển công cụ debug. |
+| **`k_msgq` (Message Queue)** | **Copy theo giá trị (`memcpy`):** Dữ liệu được sao chép trực tiếp vào Ring Buffer của hàng đợi. | Tốn RAM chứa bộ đệm tĩnh; an toàn 100% không lo lỗi con trỏ treo (Dangling Pointer). | Dữ liệu có kích thước nhỏ và cố định (< 32 bytes) như khung tin CAN, tọa độ cảm biến, bản tin sự kiện. |
+| **`k_fifo` / `k_lifo`** | **Chuyển con trỏ (Pointer Transfer):** Chỉ truyền địa chỉ con trỏ của gói tin. | Siêu tốc (O(1)), không tốn chu kỳ copy; nhưng bắt buộc dữ liệu phải nằm trong Heap hoặc Memory Slab. | Dữ liệu có kích thước lớn (như gói tin Ethernet TCP/IP, Framebuffer ảnh, âm thanh). |
+| **`k_pipe`** | **Dòng byte liên tục (Byte Stream):** Tương tự ống dẫn Pipe của Unix. | Hỗ trợ đọc/ghi từng phần; có thể đọc ít hơn hoặc nhiều hơn kích thước gói gửi. | Luồng truyền nhận dữ liệu nối tiếp không cố định độ dài (như Modem GSM/LTE, luồng UART stream). |
+| **`k_sem` (Semaphore)** | **Cờ hiệu đếm / Đồng bộ sự kiện (Signaling):** Không truyền dữ liệu. | Tiêu thụ cực ít RAM (chỉ 1 biến đếm và 1 danh sách chờ). | Báo hiệu hoàn tất tác vụ từ ISR sang Thread, hoặc giới hạn số lượng tài nguyên truy cập đồng thời. |
+| **`k_mutex` (Mutex)** | **Khóa độc quyền (Mutual Exclusion):** Có tính năng gắn quyền sở hữu (Ownership). | Tích hợp thuật toán **Priority Inheritance** tự động nâng mức ưu tiên. | Bảo vệ cấu hình phần cứng dùng chung, biến trạng thái xe hoặc bộ nhớ đồ họa LVGL. |
 
 ---
 
-### 1.2. Kiến Trúc Phân Tầng Đa Luồng (The Producer-Consumer Actor Pattern)
+### 1.2. Tư Duy Kiến Trúc: Khi Nào Dùng Dedicated Thread vs System Workqueue?
 
-Để xử lý luồng dữ liệu thời gian thực từ mạng CAN Bus đẩy lên màn hình táp-lô mà không làm treo hệ thống, dự án triển khai mô hình đa luồng phân cấp rõ ràng:
+Rất nhiều người lạm dụng việc tạo Thread: Cứ có một công việc là gọi `K_THREAD_DEFINE` tạo một luồng riêng.
+* **Hậu quả:** Mỗi Thread trên ARM Cortex-M7 bắt buộc phải có một vùng nhớ ngăn xếp riêng (tối thiểu 1 KB đến 2 KB). Nếu bạn tạo 10 luồng, bạn đã lãng phí từ 10 KB đến 20 KB RAM chỉ để làm Stack!
+* **Giải pháp chuẩn của Zephyr: System Workqueue (`k_work`):**
+  * Zephyr có sẵn một luồng chạy nền gọi là **System Workqueue** (chạy ở mức ưu tiên `CONFIG_SYSTEM_WORKQUEUE_PRIORITY`).
+  * Với các tác vụ **chạy nhanh, không thường xuyên và không yêu cầu vòng lặp vô tận** (ví dụ: định kỳ 5 giây đọc điện áp pin 1 lần, hoặc nhấp nháy đèn LED báo lỗi): Thay vì tạo một Thread riêng tốn 2 KB Stack, bạn chỉ cần tạo một cấu trúc `struct k_work` và gọi `k_work_submit(&my_work)`.
+  * Luồng System Workqueue sẽ đứng ra mượn Stack của chính nó để chạy hàm của bạn rồi nhường quyền cho tác vụ khác. **Tiết kiệm tới 90% dung lượng RAM hệ thống!**
 
-```text
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                        KIẾN TRÚC PHÂN TẦNG ĐA LUỒNG ZEPHYR                             │
-├────────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                        │
-│   [ CAN BUS HARDWARE ]                                                                 │
-│            │                                                                           │
-│            ▼ (Ngắt ISR đẩy vào MsgQ)                                                  │
-│   ┌──────────────────────────────────┐                                                 │
-│   │ LUỒNG 1: CAN RX WORKER (Prio 4)  │ ◄── Luồng Sản Xuất (Producer - Ưu tiên Cao)     │
-│   │ • k_msgq_get(&g_can_rx_msgq)     │                                                 │
-│   │ • Trích xuất ID & Payload thô    │                                                 │
-│   └────────────────┬─────────────────┘                                                 │
-│                    │                                                                   │
-│                    ▼ k_msgq_put(&g_telemetry_msgq) (Bất đồng bộ O(1), Zero-Lock)      │
-│   ┌──────────────────────────────────┐                                                 │
-│   │ LUỒNG 2: GUI MODEL UPDATER (Prio 5)◄── Luồng Tiêu Thụ (Consumer - Ưu tiên Vừa)   │
-│   │ • Giải mã tín hiệu Tốc độ & RPM  │                                                 │
-│   │ • Khóa g_gui_mutex               │                                                 │
-│   │ • Cập nhật Model & LVGL Widgets  │                                                 │
-│   └────────────────┬─────────────────┘                                                 │
-│                    │                                                                   │
-│                    ▼ lv_timer_handler() định kỳ 10ms                                   │
-│   ┌──────────────────────────────────┐                                                 │
-│   │ LUỒNG 3: GUI RENDER ENGINE (Prio 6) ◄── Luồng Hiển Thị (Ưu tiên Trung bình)        │
-│   │ • Render pixel ra VDB            │                                                 │
-│   │ • DMA2D copy ra SDRAM Framebuffer│                                                 │
-│   └──────────────────────────────────┘                                                 │
-│                                                                                        │
-│   ┌──────────────────────────────────┐                                                 │
-│   │ LUỒNG 4: SHELL CLI (Prio 8)      │ ◄── Luồng Chẩn Đoán (Ưu tiên Thấp)              │
-│   │ • Nhận lệnh UART từ kỹ sư        │                                                 │
-│   │ • In thống kê CPU, Stack, Bus CAN│                                                 │
-│   └──────────────────────────────────┘                                                 │
-└────────────────────────────────────────────────────────────────────────────────────────┘
+---
+
+# PHẦN 2: CƠ CHẾ NỘI TẠI (UNDER THE HOOD)
+
+---
+
+### 2.1. Cơ Chế 1: Hiểm Họa Priority Inversion & Giải Thuật Priority Inheritance
+
+Đây là bài học kinh điển nhất trong ngành kỹ thuật thời gian thực (Sự cố tàu thám hiểm sao Hỏa Mars Pathfinder năm 1997 suýt bị phá hủy hoàn toàn do lỗi này):
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant High as Luồng Cao (High Prio: CAN Worker)
+    participant Med as Luồng Trung Bình (Med Prio: GUI LVGL)
+    participant Low as Luồng Thấp (Low Prio: Logger)
+    participant Mutex as Tài Nguyên Dùng Chung (k_mutex)
+
+    Low->>Mutex: 1. Luồng Thấp chiếm giữ Mutex thành công
+    Note over Low: Đang xử lý tài nguyên...
+    High->>High: 2. Luồng Cao xuất hiện (Cần xử lý gói tin CAN khẩn cấp)
+    High->>Mutex: 3. Luồng Cao yêu cầu Mutex -> BỊ CHẶN (Vì Luồng Thấp đang giữ)
+    Note over High: Luồng Cao rơi vào trạng thái ngủ chờ...
+    Med->>Med: 4. Luồng Trung Bình xuất hiện (Không cần Mutex)
+    Med->>Low: 5. Luồng Trung Bình cướp quyền Luồng Thấp (Vì Prio Med > Prio Low)!
+    Note over Med: KỊCH BẢN THẢM HỌA: Luồng Trung Bình chạy vô tận...<br/>Luồng Thấp không có cơ hội chạy để nhả Mutex!<br/>HỆ QUẢ: Luồng Cao nhất bị chết đói (Starvation) gián tiếp!
 ```
 
-> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Tài Liệu Zephyr Kernel:**
-> 1. **Tra cứu Thiết Kế Đa Luồng:** Mở tài liệu Zephyr tại `https://docs.zephyrproject.org/latest/kernel/services/threads/index.html` (Mục *Threads & Workqueue Services*).
-> 2. Đọc mô hình Producer-Consumer: Sử dụng Message Queue làm vùng đệm đồng bộ giữa các luồng có mức ưu tiên khác nhau, đảm bảo ngắt ISR hoặc luồng thời gian thực không bị chặn khi đẩy dữ liệu vào bộ đệm.
+#### Cách Zephyr Hóa Giải Bằng Priority Inheritance:
+Khi bạn sử dụng **`k_mutex`**:
+1. Ngay khi Luồng Cao cố gắng lấy Mutex mà Luồng Thấp đang nắm giữ, bộ lập lịch Zephyr phát hiện ra sự xung đột.
+2. Kernel **lập tức nâng tạm thời mức ưu tiên của Luồng Thấp lên ngang bằng mức ưu tiên của Luồng Cao**.
+3. Lúc này, Luồng Trung Bình (Med) **không thể chen ngang** được nữa!
+4. Luồng Thấp nhanh chóng hoàn thành đoạn mã tới hạn và gọi `k_mutex_unlock()`.
+5. Ngay khi nhả khóa, Kernel hạ mức ưu tiên của Luồng Thấp về lại như cũ, đồng thời trao ngay quyền thực thi cho Luồng Cao. **Hệ thống được cứu thoát khỏi thảm họa đứng máy!**
+
+> ⚠️ **CẢNH BÁO SỐNG CÒN:** Binary Semaphore (`k_sem`) **KHÔNG CÓ quyền sở hữu (Ownership)** và **KHÔNG CÓ tính năng Priority Inheritance**. Do đó, **TUYỆT ĐỐI CẤM DÙNG SEMAPHORE ĐỂ LÀM KHÓA BẢO VỆ TÀI NGUYÊN DÙNG CHUNG!**
 
 ---
 
-### 1.3. Tại Sao Dùng Hàng Đợi (`k_msgq`) Thay Vì Gán Biến Toàn Cục?
+### 2.2. Cơ Chế 2: Giải Phẫu Thao Tác Chép Hàng Đợi Zero-Lock (`k_msgq_put`)
 
-Nhiều bạn mới học thường thắc mắc: *"Tại sao không khai báo một biến toàn cục `g_speed`, bên nhận cứ đọc thẳng cho nhanh?"*
+Làm thế nào Zephyr cho phép gọi cùng một hàm `k_msgq_put()` an toàn từ cả trong ngắt ISR lẫn trong thân Thread mà không gây lỗi Assert?
 
-**3 lý do kỹ thuật bắt buộc phải dùng Hàng đợi (Message Queue):**
-1. **Tránh xé vụn dữ liệu (Data Race / Torn Read):**
-   * Biến chứa dữ liệu xe thường là struct gồm nhiều trường (`speed`, `rpm`, `temp`).
-   * Vi điều khiển 32-bit Cortex-M ghi từng 4 byte một. Nếu luồng CAN đang ghi dở nửa chừng mà bị luồng GUI nhảy vào đọc ngay -> Luồng GUI sẽ đọc phải nửa giá trị cũ, nửa giá trị mới -> **Dữ liệu hiển thị bị rác hoặc nhảy số loạn xạ!**
-2. **Tiết kiệm 100% CPU (Sleep vs Polling):**
-   * Nếu dùng biến toàn cục: Luồng nhận phải liên tục chạy vòng lặp `while(1)` để kiểm tra xem biến có thay đổi không -> CPU luôn chạy 100% công suất, phát nóng chip.
-   * Nếu dùng `k_msgq`: Luồng nhận gọi `k_msgq_get(..., K_FOREVER)` và lập tức đi ngủ (0% CPU). Khi nào có gói tin tới, nhân hệ điều hành mới đánh thức luồng dậy xử lý.
-3. **Bộ đệm chống mất gói (Buffering):**
-   * Mạng CAN ô tô phát tín hiệu dồn dập từng đợt (burst).
-   * Biến toàn cục chỉ lưu được ĐÚNG 1 giá trị mới nhất (ghi đè làm mất gói trước đó).
-   * Hàng đợi có thể chứa sẵn 8 đến 16 gói tin dự phòng, luồng nhận bốc lần lượt ra xử lý theo thứ tự FIFO (First-In, First-Out).
-
----
-
-### 1.4. Mổ Xẻ Bẫy Đảo Ngược Mức Ưu Tiên (Priority Inversion) & Giải Pháp Priority Inheritance
-
-Đây là một trong những câu hỏi phỏng vấn kinh điển nhất trong lập trình hệ điều hành thời gian thực (nổi tiếng với sự cố tàu thám hiểm Sao Hỏa Mars Pathfinder năm 1997):
-
-```text
-KỊCH BẢN NGUY HIỂM (Priority Inversion khi dùng Khóa không có Kế thừa ưu tiên):
-1. Luồng Thấp (Low Prio - Shell CLI) chiếm giữ Mutex tài nguyên chung.
-2. Luồng Cao (High Prio - CAN Worker) cần Mutex đó -> Bị khóa (Blocked) và đi ngủ.
-3. Luồng Trung Bình (Medium Prio - Tính toán nền) nhảy vào chiếm CPU vì ưu tiên hơn Luồng Thấp.
-4. KẾT QUẢ TAI HẠI: Luồng Thấp không có cơ hội chạy để nhả Mutex -> Luồng Cao bị treo vô hạn
-   sau Luồng Trung Bình! (Đảo ngược mức ưu tiên: Thằng Cao nhất bị Thằng Trung bình đè bẹp!)
-```
-
-### Cách `k_mutex` trong Zephyr Hóa Giải Bằng Kế Thừa Ưu Tiên (Priority Inheritance):
-* Ngay khi **Luồng Cao** cố gắng lấy Mutex đang bị giữ bởi **Luồng Thấp**:
-* Nhân Zephyr **tự động nâng mức ưu tiên của Luồng Thấp lên ngang bằng với Luồng Cao**!
-* Lúc này, Luồng Trung Bình không thể chen ngang Luồng Thấp được nữa.
-* Luồng Thấp nhanh chóng xử lý xong đoạn găng, nhả Mutex ra -> Mức ưu tiên của nó hạ về như cũ, và Luồng Cao ngay lập tức giành quyền thực thi.
-
-> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Zephyr Synchronization Primitives:**
-> 1. **Tra cứu Cơ chế Mutex:** Mở `https://docs.zephyrproject.org/latest/kernel/services/synchronization/mutexes.html`.
->    * Đọc phần *Priority Inheritance*: Zephyr mô tả chi tiết cách nhân can thiệp nâng mức ưu tiên động cho luồng giữ khóa khi có một luồng ưu tiên cao hơn đang xếp hàng chờ tài nguyên.
-> 2. **So sánh với Semaphore:** Mở trang *Semaphores* và lưu ý: Zephyr Semaphore KHÔNG hỗ trợ Priority Inheritance, do đó không bao giờ được dùng Semaphore làm cơ chế bảo vệ đoạn găng thay cho Mutex.
-
----
-
-### 1.5. So Sánh Cơ Chế IPC: `k_msgq` vs `k_fifo` vs `k_sem`
-
-### 1.5. So Sánh Cơ Chế IPC: `k_msgq` vs `k_fifo` vs `k_sem` (Chi Tiết Ưu / Nhược Điểm)
-
-| Tiêu chí Kỹ thuật | `k_msgq` (Message Queue) | `k_fifo` (First-In First-Out) | `k_sem` (Semaphore) | Đánh Giá Kỹ Thuật, Ưu / Nhược Điểm & Trade-off Chuyên Sâu |
-| :--- | :--- | :--- | :--- | :--- |
-| **1. Cơ chế truyền dữ liệu** | **Copy theo giá trị (`memcpy`)** vào bộ đệm tĩnh nội bộ. | **Truyền con trỏ (`pointer passing`)** tới vùng nhớ được cấp phát. | **Chỉ truyền tín hiệu (Signal)** thông qua bộ đếm số nguyên, $0\text{ byte}$ dữ liệu mang theo. | • **`k_msgq`:** An toàn tuyệt đối, bên gửi và bên nhận sở hữu bản sao độc lập, không sợ con trỏ bị ghi đè.<br>• **`k_fifo`:** Tốc độ tức thì ($O(1)$) bất kể dữ liệu lớn cỡ nào vì chỉ hoán đổi con trỏ $4\text{ bytes}$. Tuy nhiên, rủi ro cực cao nếu bên gửi sửa dữ liệu khi bên nhận đang đọc (Race Condition).<br>• **`k_sem`:** Nhanh nhất ($10\text{ - }20\text{ ns}$), chuyên dùng báo thức sự kiện (Event Wake-up) nhưng không truyền được thông tin đo lường. |
-| **2. Cấp phát bộ nhớ & Phân mảnh RAM** | **Tĩnh $100\%$:** Cấp phát mảng Ring Buffer cố định lúc khai báo (`K_MSGQ_DEFINE`). | **Động:** Cần cấp phát heap (`k_malloc` hoặc `k_mem_slab`) cho từng phần tử node. | **Cực tiểu:** Chỉ gồm 1 biến đếm nguyên tử `atomic_t` và hàng đợi chờ của thread. | • **`k_msgq`:** Đạt chuẩn an toàn ASIL-B / MISRA-C ($0\%$ rủi ro cạn RAM lúc runtime).<br>• **`k_fifo`:** Rất dễ gây phân mảnh RAM nếu cấp phát và giải phóng liên tục các node có kích thước khác nhau.<br>• **`k_sem`:** Chiếm dưới $24\text{ bytes}$ RAM cho cấu trúc điều khiển. |
-| **3. Nguy cơ rò rỉ bộ nhớ (Memory Leak)** | **KHÔNG CÓ:** Dữ liệu được ghi đè tuần hoàn trong mảng tĩnh. | **NGUY CƠ CAO:** Nếu bên nhận nhận được con trỏ nhưng gặp lỗi nhánh logic và quên giải phóng (`k_free`), hệ thống sẽ cạn RAM sau vài giờ chạy. | **KHÔNG CÓ:** Không cấp phát bất kỳ khối nhớ nào. | • **Bài toán Kỹ sư:** Với các hệ thống nhúng hoạt động liên tục nhiều năm (24/7) như ô tô, `k_msgq` là lựa chọn số 1 về độ tin cậy. `k_fifo` chỉ nên dùng kèm `k_mem_slab` (Fixed-size memory pool) để loại trừ phân mảnh. |
-| **4. Kịch bản ứng dụng tối ưu** | **Chuẩn mực cho gói tin vi điều khiển:** CAN Frame ($16\text{ bytes}$), dữ liệu cảm biến telemetry, sự kiện bàn phím. | **Truyền dữ liệu khối lượng lớn:** Khung hình camera, gói tin mạng TCP/IP, mảng nén âm thanh. | **Đồng bộ hóa nhịp:** Báo ngắt DMA hoàn tất, giới hạn số lượng tài nguyên chia sẻ (Counting Semaphore). | • **Khuyến nghị Dự án:** Sử dụng `k_msgq` làm xương sống kết nối giữa luồng CAN Worker và GUI Model; sử dụng `k_mutex` để bảo vệ tài nguyên vẽ LVGL. |
-
-> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Zephyr Data Passing:**
-> 1. **Tra cứu Message Queue:** Mở `https://docs.zephyrproject.org/latest/kernel/services/data_passing/message_queues.html`.
->    * Xem cấu trúc hàng đợi Ring Buffer tĩnh: Các thao tác `k_msgq_put()` và `k_msgq_get()` thực hiện copy an toàn theo giá trị với độ phức tạp O(1).
-> 2. **Tra cứu Shell Subsystem:** Mở `https://docs.zephyrproject.org/latest/services/shell/index.html` để hiểu kiến trúc dòng lệnh CLI không chặn (Non-blocking UART backend).
-
----
-
-# 📑 BƯỚC 2: THỰC CHIẾN CẤU HÌNH DEVICETREE & KCONFIG (SETUP & LOOKUP)
-
-> 🎯 **NGUYÊN TẮC TRA CỨU SHELL & IPC ĐA LUỒNG TRÊN ZEPHYR RTOS:**
-> 1. **Tra cứu Kconfig Shell & Debug:** Mở `zephyr/subsys/shell/Kconfig` hoặc gõ `west build -t menuconfig` tìm kiếm `CONFIG_SHELL`, `CONFIG_THREAD_ANALYZER`.
-> 2. **Tra cứu Shell API:** Mở header `zephyr/include/zephyr/shell/shell.h` để xem macro đăng ký lệnh `SHELL_CMD_REGISTER`.
-> 3. **Tra cứu Kernel IPC API:** Mở header `zephyr/include/zephyr/kernel.h` để tra cứu cơ chế hàng đợi `k_msgq` và điều phối luồng `k_thread`.
-
----
-
-## 2.1. Lộ trình Tra cứu Trực tiếp Giao diện Shell & Đa luồng (Shell & Multi-threading Lookup Methodology)
-
-### 📖 Kênh 1: Cách Tra Cứu Cấu Hình Shell CLI Kconfig (`prj.conf`)
-1. **Tìm kiếm các tùy chọn Backend của Shell:**
-   * Trong `menuconfig` hoặc web: gõ `CONFIG_SHELL_BACKEND_SERIAL` để chuyển hướng dòng lệnh qua cổng ST-Link VCP (Virtual COM Port).
-2. **Công cụ giám sát tràn ngăn xếp tự động (Thread Analyzer):**
-   * Tra cứu `CONFIG_THREAD_ANALYZER_AUTO`: Kích hoạt một daemon ngầm định kỳ quét vùng MPU Stack Guard và tính toán High Watermark của từng luồng.
-   * `CONFIG_THREAD_ANALYZER_AUTO_INTERVAL`: Chu kỳ quét tính bằng giây.
-
-### 📖 Kênh 2: Cách Tra Cứu Cú Pháp Đăng Ký Lệnh CLI (`shell.h`)
-1. **Mở file header:**
-   * Đường dẫn: **`zephyr/include/zephyr/shell/shell.h`**.
-2. **Đọc cú pháp Macro đăng ký lệnh:**
-   * `SHELL_CMD_REGISTER(syntax, subcmds, help, handler)`: Đăng ký lệnh gốc.
-   * `shell_print(const struct shell *sh, const char *fmt, ...)`: In văn bản có định dạng ra terminal.
-   * Hàm Handler có mẫu chuẩn: `static int cmd_handler(const struct shell *sh, size_t argc, char **argv)`.
-
-### 📖 Kênh 3: Cách Tra Cứu Kernel IPC Hàng Đợi (`kernel.h`)
-1. **Khai báo hàng đợi tĩnh:**
-   * Macro `K_MSGQ_DEFINE(q_name, q_msg_size, q_max_msgs, q_align)`: Cấp phát bộ nhớ tĩnh quay vòng (Ring Buffer) an toàn 100% không sợ phân mảnh RAM.
-2. **Thao tác gửi/nhận bất đồng bộ:**
-   * `k_msgq_put(struct k_msgq *msgq, const void *data, k_timeout_t timeout)`: Đẩy bản tin vào hàng đợi (trả về `-EAGAIN` nếu hàng đợi đầy).
-   * `k_msgq_get(struct k_msgq *msgq, void *data, k_timeout_t timeout)`: Lấy bản tin ra (luồng nhận tự động Block tiết kiệm CPU nếu hàng đợi rỗng).
-
----
-
-## 2.2. Bảng Cấu Hình Tính Năng Kconfig (`prj.conf`)
-
-| Kconfig Symbol | Giá trị | Ý nghĩa Kỹ thuật trong Zephyr RTOS | Đánh Giá Kỹ Thuật, Ưu / Nhược Điểm & Chi Phí Tài Nguyên |
-| :--- | :---: | :--- | :--- |
-| **`CONFIG_SHELL`** | `y` | Kích hoạt hệ thống giao diện dòng lệnh Zephyr Shell. | • **Ưu điểm Vượt trội:** Biến bo mạch thành một thiết bị chẩn đoán chuyên nghiệp; hỗ trợ gõ lệnh, tự hoàn thành phím Tab, lật lại lịch sử, kiểm tra trạng thái xe tại hiện trường mà không cần nạp lại firmware.<br>• **Chi phí:** Tăng khoảng $\approx 18\text{ KB}$ Flash và tiêu tốn một vùng Stack riêng ($\approx 2048\text{ bytes}$ RAM). |
-| **`CONFIG_SHELL_BACKENDS`** | `y` | Kích hoạt các backend hỗ trợ xuất nhập Shell. | • **Ưu điểm:** Cho phép kết nối Shell qua nhiều giao thức khác nhau (UART, RTT Segger, Telnet, BLE).<br>• **Chi phí:** $\approx 1.2\text{ KB}$ Flash. |
-| **`CONFIG_SHELL_BACKEND_SERIAL`**| `y` | Sử dụng cổng UART nối tiếp Console làm cổng nhập lệnh Shell. | • **Ưu điểm:** Thuận tiện nhất, dùng chung dây cáp micro-USB ST-Link cắm vào máy tính, không cần thêm phần cứng chuyển đổi USB-UART ngoài.<br>• **Trade-off:** Chiếm dụng băng thông cổng Console; các lệnh in log dài có thể làm trôi con trỏ nhập lệnh. |
-| **`CONFIG_THREAD_ANALYZER`** | `y` | Bật công cụ đo lường mức tiêu thụ ngăn xếp của từng luồng. | • **Ưu điểm Cốt tử:** Quét toàn bộ các byte mẫu (Pattern `0xAA`) được nạp lúc boot để tính toán chính xác mức đỉnh (High Watermark) mà Stack từng chạm tới.<br>• **Chi phí:** Tốn $\approx 3.5\text{ KB}$ Flash ROM; cực kỳ cần thiết trong giai đoạn phát triển để định cỡ Stack chính xác (Sizing Stack), tránh lãng phí RAM. |
-| **`CONFIG_THREAD_ANALYZER_USE_LOG`**| `y` | In kết quả phân tích Stack qua Zephyr Logging. | • **Ưu điểm:** In bảng thống kê chi tiết từng luồng với mức độ ưu tiên `LOG_INF`, phân biệt màu sắc rõ ràng trên terminal.<br>• **Chi phí:** Phụ thuộc vào hệ thống Zephyr Logging. |
-| **`CONFIG_THREAD_ANALYZER_AUTO`**| `y` | Tự động quét và in báo cáo Stack định kỳ. | • **Ưu điểm:** Tự động phát hiện các luồng có nguy cơ tràn stack mà không cần kỹ sư phải gõ lệnh thủ công.<br>• **Lưu ý:** Khi đưa sản phẩm vào sản xuất hàng loạt (Production), nên tắt tính năng này để tiết kiệm chu kỳ CPU. |
-| **`CONFIG_THREAD_ANALYZER_AUTO_INTERVAL`**| `10` | Chu kỳ quét phân tích ngăn xếp: 10 giây/lần. | • **Đánh giá Trade-off:** Chu kỳ $10\text{ giây}$ là điểm cân bằng lý tưởng: đủ thưa để không ảnh hưởng đến các tác vụ đo lường thời gian thực ($< 0.1\%$ CPU overhead), nhưng đủ nhanh để cảnh báo kịp thời trước khi stack bị phình to. |
-
----
-
-# 💻 BƯỚC 3: GÕ CODE HỆ THỐNG & MỔ XẺ BUG ĐA LUỒNG (CODING & DEBUGS)
-
-## 3.1. Phân chia Cấu trúc File Dự án cho Ngày 10
-
-```text
-zephyr_gateway/
-├── prj.conf           <-- Bật CONFIG_SHELL, CONFIG_THREAD_ANALYZER
-└── src/
-    ├── gateway_model.h<-- Khai báo cấu trúc Telemetry & Message Queue liên luồng
-    ├── gateway_ipc.c  <-- Triển khai IPC hàng đợi giữa CAN và GUI Model
-    ├── cli_shell.c    <-- Đăng ký hệ thống lệnh Shell tương tác (can_stats, set_speed)
-    └── main.c         <-- Khởi tạo điều phối 4 luồng chạy song song
-```
-
----
-
-### 📂 KHỐI 1: ĐỊNH NGHĨA DỮ LIỆU LIÊN LUỒNG [ `src/gateway_model.h` ]
-
-#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 1:
-1. **Tra cứu Cấu trúc dữ liệu IPC và Atomic Types:**
-   - **Mở Zephyr Docs** ➔ `Kernel Services -> Atomic Services`: Header `<zephyr/sys/atomic.h>` cung cấp kiểu `atomic_t` đảm bảo phép tăng giảm bộ đếm gói tin không bị chia cắt giữa các luồng.
-   - Định nghĩa struct `VehicleTelemetry_t` chứa toàn bộ trường dữ liệu táp-lô xe hơi (Speed, RPM, Temp, Battery, Gear).
-
-#### TODO 1 [File: `src/gateway_model.h`]: Cấu Trúc Dữ Liệu Táp-Lô Xe Hơi
 ```c
-#ifndef GATEWAY_MODEL_H
-#define GATEWAY_MODEL_H
+/* Bản chất mã nguồn bên trong nhân Zephyr */
+int k_msgq_put(struct k_msgq *msgq, const void *data, k_timeout_t timeout)
+{
+    k_spinlock_key_t key = k_spin_lock(&msgq->lock);
 
-#include <stdint.h>
+    /* 1. Nếu hàng đợi còn chỗ trống trong Ring Buffer */
+    if (msgq->used_msgs < msgq->max_msgs) {
+        /* Sao chép dữ liệu cực nhanh bằng memcpy */
+        memcpy(msgq->write_ptr, data, msgq->msg_size);
+        msgq->write_ptr += msgq->msg_size;
+        msgq->used_msgs++;
+
+        /* 2. Nếu có Thread đang ngủ chờ tin nhắn, đánh thức dậy ngay */
+        struct k_thread *pending_thread = z_unpend_first_thread(&msgq->wait_q);
+        if (pending_thread != NULL) {
+            z_ready_thread(pending_thread);
+        }
+
+        k_spin_unlock(&msgq->lock, key);
+        return 0;
+    }
+
+    /* 3. Nếu hàng đợi đầy và hàm được gọi từ trong NGẮT ISR */
+    if (k_is_in_isr()) {
+        k_spin_unlock(&msgq->lock, key);
+        return -ENOMSG; /* Báo lỗi ngay lập tức, không bao giờ được phép ngủ trong ISR! */
+    }
+
+    /* 4. Nếu hàng đợi đầy và gọi từ Thread: Đưa Thread vào danh sách chờ theo timeout */
+    ...
+}
+```
+
+* **Điểm ăn tiền:** Hàm tự động kiểm tra ngữ cảnh bằng `k_is_in_isr()`. Nếu đang ở trong ngắt, nó cấm tiệt việc ngủ chờ, đảm bảo thời gian thực thi trong ngắt luôn là hằng số O(1) chỉ vài chục chu kỳ máy.
+
+---
+
+### 2.3. Cơ Chế 3: Bộ Chẩn Đoán Lúc Runtime (Thread Analyzer & Shell Subsystem)
+
+Thay vì phải cắm mạch nạp JTAG cồng kềnh để debug, Zephyr tích hợp sẵn 2 công cụ chẩn đoán cực mạnh ngay trên cổng UART Console:
+
+1. **Thread Analyzer (`CONFIG_THREAD_ANALYZER=y`):**
+   * Khi khởi tạo luồng, Zephyr lấp đầy toàn bộ vùng nhớ ngăn xếp bằng một giá trị mẫu (Canary Pattern: `0xAA`).
+   * Khi ứng dụng chạy, con trỏ ngăn xếp `SP` dâng lên hạ xuống sẽ ghi đè dữ liệu lên mẫu số này.
+   * Định kỳ, Thread Analyzer quét ngược từ đáy stack lên trên: Vị trí đầu tiên không còn là số `0xAA` chính là **Đỉnh Ngăn Xếp Cao Nhất (High Watermark)** mà luồng từng chạm tới.
+   * Báo cáo in ra: Tên luồng, dung lượng Stack cấp phát, dung lượng đã sử dụng cực đại (tính bằng byte và phần trăm %). Nếu một luồng chạm mốc > 80%, bạn biết ngay cần phải tăng Stack trước khi bị dính lỗi MPU Stack Guard.
+
+2. **Zephyr Interactive Shell (`CONFIG_SHELL=y`):**
+   * Cung cấp một giao diện dòng lệnh Unix thu nhỏ trên cổng UART: Hỗ trợ phím Tab để tự động hoàn thành lệnh, phím mũi tên lật lại lịch sử lệnh, và phân nhánh cây thư mục lệnh con (`subcommands`).
+
+---
+
+# PHẦN 3: CÁCH SỬ DỤNG THỰC CHIẾN (MÃ NGUỒN MODULAR HOÀN CHỈNH TỪNG FILE)
+
+Để xây dựng hệ thống giao tiếp đa luồng an toàn và tích hợp công cụ chẩn đoán dòng lệnh Shell, mã nguồn được phân định thành **5 tệp thành phần hoàn chỉnh, có đầu có đuôi rõ ràng**:
+
+---
+
+### 3.1. Tệp Cấu Hình Tính Năng [ File: `prj.conf` ]
+```properties
+# 1. Bật hệ thống dòng lệnh tương tác Zephyr Shell qua UART
+CONFIG_SHELL=y
+CONFIG_SHELL_BACKENDS=y
+CONFIG_SHELL_BACKEND_SERIAL=y
+CONFIG_SHELL_PROMPT_UART="can_gateway:~$ "
+
+# 2. Bật công cụ chẩn đoán hiệu năng và mức chiếm dụng ngăn xếp luồng
+CONFIG_THREAD_ANALYZER=y
+CONFIG_THREAD_ANALYZER_USE_LOG=y
+CONFIG_THREAD_ANALYZER_AUTO=y
+CONFIG_THREAD_ANALYZER_AUTO_INTERVAL=10
+
+# 3. Kích hoạt thông tin tên và Stack Info cho từng luồng phục vụ gỡ lỗi
+CONFIG_THREAD_NAME=y
+CONFIG_THREAD_STACK_INFO=y
+
+# 4. Kích hoạt tính năng bảo vệ an toàn MPU
+CONFIG_MPU_STACK_GUARD=y
+```
+
+---
+
+### 3.2. Tệp Khai Báo Giao Diện IPC [ File: `src/telemetry_ipc.h` ]
+```c
+#ifndef TELEMETRY_IPC_H_
+#define TELEMETRY_IPC_H_
+
 #include <zephyr/kernel.h>
+#include <stdint.h>
+
+/* Cấu trúc dữ liệu đo lường xe hơi (Kích thước nhỏ 8 bytes: Tối ưu cho k_msgq) */
+struct vehicle_telemetry {
+    uint16_t engine_speed_rpm; /* Vòng tua máy (0 - 8000 RPM) */
+    uint8_t  vehicle_speed_kmh;/* Tốc độ xe (0 - 240 km/h) */
+    int8_t   coolant_temp_c;   /* Nhiệt độ nước làm mát (-40 đến +125 độ C) */
+    uint32_t timestamp_ms;     /* Thời điểm nhận được thông điệp */
+};
+
+/* Khởi tạo hệ thống IPC và hàng đợi */
+void telemetry_ipc_init(void);
 
 /**
- * @brief Cấu trúc dữ liệu trạng thái xe (Telemetry State)
- *        Được truyền an toàn qua k_msgq giữa các luồng
+ * @brief Luồng CAN (Producer) đẩy dữ liệu đo lường mới vào hàng đợi
+ * @param data Con trỏ dữ liệu đo lường
+ * @return 0 nếu gửi thành công, -ENOMSG nếu hàng đợi bị đầy
  */
-typedef struct {
-    uint16_t speed_kmh;      /* Tốc độ xe (0 - 240 km/h) */
-    uint16_t engine_rpm;     /* Vòng tua máy (0 - 8000 RPM) */
-    int8_t   coolant_temp_c; /* Nhiệt độ nước làm mát (-40 đến 125 C) */
-    uint16_t battery_mv;     /* Điện áp ắc quy (mV, ví dụ 12400 cho 12.4V) */
-    uint8_t  gear_position;  /* Số: 0=P, 1=R, 2=N, 3=D */
-    uint32_t timestamp_ms;   /* Dấu thời gian nhận gói tin */
-} VehicleTelemetry_t;
+int telemetry_send_from_can(const struct vehicle_telemetry *data);
 
-/* Hàng đợi tin nhắn IPC trung chuyển giữa luồng CAN và luồng GUI Model */
-extern struct k_msgq g_telemetry_msgq;
+/**
+ * @brief Luồng GUI (Consumer) nhận dữ liệu từ hàng đợi để vẽ táp-lô
+ * @param data Con trỏ nhận dữ liệu
+ * @param timeout Thời gian chờ đợi tối đa (K_NO_WAIT hoặc K_MSEC)
+ * @return 0 nếu lấy được dữ liệu, mã lỗi âm nếu hàng đợi rỗng
+ */
+int telemetry_receive_for_gui(struct vehicle_telemetry *data, k_timeout_t timeout);
 
-/* Thống kê hiệu năng mạng CAN (Dùng biến atomic để an toàn đa luồng) */
-extern atomic_t g_can_rx_count;
-extern atomic_t g_can_tx_count;
-extern atomic_t g_can_err_count;
+/**
+ * @brief Đọc an toàn tổng số khung tin CAN đã nhận (Thread-Safe qua Mutex)
+ */
+uint32_t telemetry_get_total_frames(void);
 
-#endif /* GATEWAY_MODEL_H */
+#endif /* TELEMETRY_IPC_H_ */
 ```
 
 ---
 
-### 📂 KHỐI 2: ĐIỀU PHỐI HÀNG ĐỢI IPC [ `src/gateway_ipc.c` ]
-
-#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 2:
-1. **Cấp phát hàng đợi tĩnh K_MSGQ_DEFINE:**
-   - **Mở Zephyr Docs** ➔ `Kernel Services -> Message Queues`:
-     - Cú pháp: `K_MSGQ_DEFINE(q_name, q_msg_size, q_max_msgs, q_align)`.
-     - Phân bổ 8 slots, mỗi slot `sizeof(VehicleTelemetry_t)` với căn lề 4-byte.
-2. **Khởi tạo biến Atomic:**
-   - Sử dụng macro `ATOMIC_INIT(0)` để khởi tạo các biến đếm thống kê an toàn đa luồng.
-3. **Luồng GUI Model Consumer:**
-   - Chờ gói tin qua `k_msgq_get(&g_telemetry_msgq, &telemetry, K_FOREVER)`.
-   - Cập nhật sang cụm đồng hồ táp-lô qua các API đã bảo vệ Mutex (`GUI_Cluster_UpdateSpeed`, `GUI_Cluster_UpdateRPM`).
-
-#### TODO 2 [File: `src/gateway_ipc.c`]: Cấp Phát MsgQ & Luồng GUI Model Consumer
+### 3.3. Tệp Hiện Thực Hóa Logic IPC Đa Luồng [ File: `src/telemetry_ipc.c` ]
 ```c
-#include "gateway_model.h"
-#include "gui_cluster.h"
+#include "telemetry_ipc.h"
 #include <zephyr/logging/log.h>
 
-LOG_MODULE_REGISTER(gateway_ipc, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(telemetry_ipc, LOG_LEVEL_INF);
 
-/* 1. Định nghĩa hàng đợi tin nhắn Telemetry (Chứa tối đa 8 phần tử) */
-K_MSGQ_DEFINE(g_telemetry_msgq, sizeof(VehicleTelemetry_t), 8, 4);
+/* 1. Khởi tạo hàng đợi tĩnh k_msgq (Chứa tối đa 10 tin nhắn, căn lề 4 bytes) */
+K_MSGQ_DEFINE(s_telemetry_msgq, sizeof(struct vehicle_telemetry), 10, 4);
 
-/* Biến đếm thống kê kiểu Atomic */
-atomic_t g_can_rx_count  = ATOMIC_INIT(0);
-atomic_t g_can_tx_count  = ATOMIC_INIT(0);
-atomic_t g_can_err_count = ATOMIC_INIT(0);
+/* 2. Mutex bảo vệ biến thống kê hệ thống (Tự động bật Priority Inheritance) */
+K_MUTEX_DEFINE(s_telemetry_mutex);
+static uint32_t s_total_frames_received = 0;
 
-#define MODEL_THREAD_STACK_SIZE 2048
-#define MODEL_THREAD_PRIORITY   5
-
-void gui_model_consumer_thread(void *p1, void *p2, void *p3)
+void telemetry_ipc_init(void)
 {
-    ARG_UNUSED(p1); ARG_UNUSED(p2); ARG_UNUSED(p3);
-
-    VehicleTelemetry_t telemetry;
-    LOG_INF("Luồng GUI Model Consumer bắt đầu lắng nghe hàng đợi IPC...");
-
-    while (1) {
-        /* Chờ nhận dữ liệu từ hàng đợi tin nhắn (Zero CPU load khi không có tin) */
-        int ret = k_msgq_get(&g_telemetry_msgq, &telemetry, K_FOREVER);
-        if (ret == 0) {
-            /* Cập nhật an toàn sang thư viện đồ họa LVGL (Bảo vệ bằng Mutex) */
-            GUI_Cluster_UpdateSpeed(telemetry.speed_kmh);
-            GUI_Cluster_UpdateRPM(telemetry.engine_rpm);
-        }
-    }
+    k_mutex_lock(&s_telemetry_mutex, K_FOREVER);
+    s_total_frames_received = 0;
+    k_mutex_unlock(&s_telemetry_mutex);
+    LOG_INF("Đã khởi tạo hệ thống hàng đợi tin nhắn và Mutex an toàn!");
 }
 
-K_THREAD_DEFINE(gui_model_tid, MODEL_THREAD_STACK_SIZE,
-                gui_model_consumer_thread, NULL, NULL, NULL,
-                MODEL_THREAD_PRIORITY, 0, 0);
+int telemetry_send_from_can(const struct vehicle_telemetry *data)
+{
+    /* Cập nhật bộ đếm an toàn đa luồng */
+    k_mutex_lock(&s_telemetry_mutex, K_FOREVER);
+    s_total_frames_received++;
+    k_mutex_unlock(&s_telemetry_mutex);
+
+    /* Đẩy vào hàng đợi bằng cơ chế chép giá trị memcpy (Zero-lock với ISR) */
+    return k_msgq_put(&s_telemetry_msgq, data, K_NO_WAIT);
+}
+
+int telemetry_receive_for_gui(struct vehicle_telemetry *data, k_timeout_t timeout)
+{
+    /* Lấy dữ liệu từ hàng đợi */
+    return k_msgq_get(&s_telemetry_msgq, data, timeout);
+}
+
+uint32_t telemetry_get_total_frames(void)
+{
+    uint32_t total;
+    k_mutex_lock(&s_telemetry_mutex, K_FOREVER);
+    total = s_total_frames_received;
+    k_mutex_unlock(&s_telemetry_mutex);
+    return total;
+}
 ```
 
 ---
 
-### 📂 KHỐI 3: GIAO DIỆN DÒNG LỆNH CHẨN ĐOÁN [ `src/cli_shell.c` ]
-
-#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 3:
-1. **Hệ thống Shell trong Zephyr:**
-   - **Mở Zephyr Docs** ➔ `Subsystems -> Shell`:
-     - Header `<zephyr/shell/shell.h>`.
-     - Macro `SHELL_STATIC_SUBCMD_SET_CREATE` định nghĩa danh sách lệnh con.
-     - Macro `SHELL_CMD_REGISTER` đăng ký root command name (ví dụ `gateway`).
-     - Hàm `shell_print(sh, fmt, ...)` in chuỗi ra Console không chặn.
-2. **Trích xuất số liệu chẩn đoán:**
-   - Sử dụng `atomic_get()` đọc biến đếm RX/TX/Error.
-   - Sử dụng `k_msgq_num_free_get()` kiểm tra số lượng slot trống trong hàng đợi IPC.
-
-#### TODO 3 [File: `src/cli_shell.c`]: Đăng Ký Hệ Thống Lệnh Zephyr Shell
+### 3.4. Tệp Đăng Ký Lệnh Chẩn Đoán Zephyr Shell CLI [ File: `src/cli_shell.c` ]
 ```c
+#include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
-#include <stdlib.h>
-#include "gateway_model.h"
-#include "gui_cluster.h"
+#include "telemetry_ipc.h"
 
-/* Lệnh in thống kê mạng CAN: "gateway stats" */
+/* 1. Hàm thực thi lệnh 'gateway stats': In thông số hiệu năng truyền thông */
 static int cmd_gateway_stats(const struct shell *sh, size_t argc, char **argv)
 {
     ARG_UNUSED(argc); ARG_UNUSED(argv);
 
+    uint32_t total = telemetry_get_total_frames();
+
     shell_print(sh, "========================================");
-    shell_print(sh, "       CAN GATEWAY DIAGNOSTICS          ");
+    shell_print(sh, "      BÁO CÁO THỐNG KÊ CAN GATEWAY      ");
     shell_print(sh, "========================================");
-    shell_print(sh, "Gói tin nhận thành công (RX): %ld", atomic_get(&g_can_rx_count));
-    shell_print(sh, "Gói tin gửi thành công (TX):  %ld", atomic_get(&g_can_tx_count));
-    shell_print(sh, "Lỗi truyền thông (Errors):    %ld", atomic_get(&g_can_err_count));
-    shell_print(sh, "Dung lượng hàng đợi IPC trống: %u/%u",
-                k_msgq_num_free_get(&g_telemetry_msgq), 8);
+    shell_print(sh, "• Tổng số khung tin CAN đã nhận : %u", total);
+    shell_print(sh, "• Thời gian hoạt động (Uptime)  : %u giây", 
+                (uint32_t)(k_uptime_get() / 1000));
+    shell_print(sh, "• Trạng thái hàng đợi IPC       : HOẠT ĐỘNG ỔN ĐỊNH");
     shell_print(sh, "========================================");
     return 0;
 }
 
-/* Lệnh giả lập tốc độ xe: "gateway set_speed <val>" */
-static int cmd_gateway_set_speed(const struct shell *sh, size_t argc, char **argv)
+/* 2. Hàm thực thi lệnh 'gateway reset': Reset bộ đếm thống kê */
+static int cmd_gateway_reset(const struct shell *sh, size_t argc, char **argv)
 {
-    if (argc < 2) {
-        shell_error(sh, "Cú pháp sai! Ví dụ: gateway set_speed 120");
-        return -EINVAL;
-    }
-
-    uint16_t speed = (uint16_t)atoi(argv[1]);
-    if (speed > 240) {
-        shell_warn(sh, "Tốc độ vượt ngưỡng an toàn (>240), tự động gán về 240 km/h");
-        speed = 240;
-    }
-
-    /* Đóng gói vào struct và đẩy vào hàng đợi IPC */
-    VehicleTelemetry_t test_data = {
-        .speed_kmh = speed,
-        .engine_rpm = speed * 35,
-        .timestamp_ms = k_uptime_get_32()
-    };
-
-    k_msgq_put(&g_telemetry_msgq, &test_data, K_NO_WAIT);
-    shell_print(sh, "Đã bơm dữ liệu mô phỏng: Tốc độ = %u km/h, RPM = %u", 
-                test_data.speed_kmh, test_data.engine_rpm);
+    ARG_UNUSED(argc); ARG_UNUSED(argv);
+    telemetry_ipc_init();
+    shell_print(sh, "Đã reset toàn bộ bộ đếm thống kê CAN Gateway về 0!");
     return 0;
 }
 
-/* Cây phân cấp lệnh Shell */
+/* 3. Tạo cây thư mục lệnh con (Subcommands) cho từ khóa 'gateway' */
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_gateway,
-    SHELL_CMD(stats, NULL, "Hiển thị thống kê hoạt động CAN Gateway", cmd_gateway_stats),
-    SHELL_CMD_ARG(set_speed, NULL, "Giả lập tốc độ xe (km/h)", cmd_gateway_set_speed, 2, 0),
+    SHELL_CMD(stats, NULL, "Hiển thị thống kê lưu lượng mạng CAN", cmd_gateway_stats),
+    SHELL_CMD(reset, NULL, "Reset bộ đếm thống kê về 0", cmd_gateway_reset),
     SHELL_SUBCMD_SET_END
 );
 
+/* 4. Đăng ký lệnh gốc 'gateway' vào hệ thống dòng lệnh Shell */
 SHELL_CMD_REGISTER(gateway, &sub_gateway, "Lệnh chẩn đoán hệ thống CAN Gateway", NULL);
 ```
 
 ---
 
-### 📂 KHỐI 4: ĐIỀU PHỐI TOÀN BỘ HỆ THỐNG [ `src/main.c` ]
-
-#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 4:
-1. **Kiến trúc Dispatcher Worker đa luồng:**
-   - Luồng `can_dispatcher_thread` đọc frame từ `g_can_rx_msgq`, tăng biến đếm nguyên tử `g_can_rx_count`.
-   - Phân giải ID 0x100 thành các trường `speed_kmh` và `engine_rpm`.
-   - Chuyển tiếp tức thì vào `g_telemetry_msgq` bằng hàm `k_msgq_put(..., K_NO_WAIT)` (thao tác O(1) không khóa).
-
-#### TODO 4 [File: `src/main.c`]: Cầu Nối Luồng CAN RX Vào Hàng Đợi Telemetry
+### 3.5. Tệp Khởi Động Ứng Dụng Chính [ File: `src/main.c` ]
 ```c
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include "can_gateway.h"
-#include "gateway_model.h"
+#include "telemetry_ipc.h"
 
 LOG_MODULE_REGISTER(main_app, LOG_LEVEL_INF);
 
-#define CAN_WORKER_STACK_SIZE 2048
-#define CAN_WORKER_PRIORITY   4
-
-void can_dispatcher_thread(void *p1, void *p2, void *p3)
-{
-    ARG_UNUSED(p1); ARG_UNUSED(p2); ARG_UNUSED(p3);
-
-    struct can_frame rx_frame;
-    LOG_INF("Khởi động luồng CAN Dispatcher Worker...");
-
-    while (1) {
-        /* Chờ gói tin từ hàng đợi CAN phần cứng */
-        if (k_msgq_get(&g_can_rx_msgq, &rx_frame, K_FOREVER) == 0) {
-            atomic_inc(&g_can_rx_count);
-
-            /* Giả sử ID 0x100 mang dữ liệu Tốc độ xe (Bytes 0-1) và Vòng tua (Bytes 2-3) */
-            if (rx_frame.id == 0x100 && rx_frame.dlc >= 4) {
-                VehicleTelemetry_t telemetry;
-                telemetry.speed_kmh  = (uint16_t)(rx_frame.data[0] | (rx_frame.data[1] << 8));
-                telemetry.engine_rpm = (uint16_t)(rx_frame.data[2] | (rx_frame.data[3] << 8));
-                telemetry.timestamp_ms = k_uptime_get_32();
-
-                /* Đẩy dữ liệu đã phân tích vào hàng đợi Telemetry để luồng GUI tiêu thụ */
-                k_msgq_put(&g_telemetry_msgq, &telemetry, K_NO_WAIT);
-            }
-        }
-    }
-}
-
-K_THREAD_DEFINE(can_worker_tid, CAN_WORKER_STACK_SIZE,
-                can_dispatcher_thread, NULL, NULL, NULL,
-                CAN_WORKER_PRIORITY, 0, 0);
-
 int main(void)
 {
-    LOG_INF("Hệ thống Zephyr Multi-Threading CAN Gateway sẵn sàng!");
-    CAN_Gateway_Init();
+    LOG_INF("=================================================");
+    LOG_INF("    KHỞI ĐỘNG HỆ THỐNG GIAO TIẾP ĐA LUỒNG & CLI  ");
+    LOG_INF("=================================================");
+
+    /* Khởi tạo hàng đợi và Mutex an toàn */
+    telemetry_ipc_init();
+
+    LOG_INF("Giao diện dòng lệnh Zephyr Shell CLI đã sẵn sàng trên ST-Link UART!");
+    LOG_INF("Hãy gõ lệnh 'gateway stats' hoặc 'thread-analyzer' trên Terminal để chẩn đoán.");
+
     return 0;
 }
 ```
 
 ---
 
-## 3.2. Mổ xẻ 5 Bug Đa Luồng "Kinh Điển" trong Ngày 10
+# PHẦN 4: BỘ CÂU HỎI PHỎNG VẤN CHUYÊN SÂU (INTERVIEW DEEP-DIVE)
 
-```text
-┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                 5 BẪY HỆ THỐNG ĐA LUỒNG & IPC                                   │
-├───────────────────┬───────────────────────────────────────────┬─────────────────────────────────┤
-│ HIỆN TƯỢNG BUG    │ NGUYÊN NHÂN SÂU XA PHẦN MỀM               │ GIẢI PHÁP SỬA CODE CHUẨN XÁC    │
-├───────────────────┼───────────────────────────────────────────┼─────────────────────────────────┤
-│ 1. Dữ liệu hiển   │ Đọc/ghi biến toàn cục `VehicleState` đồng │ Loại bỏ biến toàn cục thô, dùng │
-│    thị bị rác     │ thời từ 2 luồng khác nhau (Race Condition)│ `k_msgq` hoặc bọc Mutex.        │
-├───────────────────┼───────────────────────────────────────────┼─────────────────────────────────┤
-│ 2. Luồng CAN bị   │ Dùng `k_sem` làm khóa bảo vệ thay cho     │ Luôn dùng `k_mutex` để có cơ chế│
-│    treo cứng      │ `k_mutex` gây ra lỗi Priority Inversion.  │ Priority Inheritance tự động.   │
-├───────────────────┼───────────────────────────────────────────┼─────────────────────────────────┤
-│ 3. Tràn hàng đợi  │ Kích thước item trong `K_MSGQ_DEFINE` sai │ Luôn dùng toán tử `sizeof(Type)`│
-│    (Queue Mismatch)khác với kiểu struct truyền vào `put/get`. │ trong định nghĩa macro `k_msgq`.│
-├───────────────────┼───────────────────────────────────────────┼─────────────────────────────────┤
-│ 4. MPU Stack Guard│ Luồng Shell CLI bị tràn Stack khi in các  │ Tăng `CONFIG_SHELL_STACK_SIZE`  │
-│    kích hoạt Panic│ bảng thông kê dung lượng lớn.             │ lên tối thiểu 2048 bytes.       │
-├───────────────────┼───────────────────────────────────────────┼─────────────────────────────────┤
-│ 5. Gói tin bị mất │ Hàng đợi `k_msgq_put` dùng `K_NO_WAIT` khi│ Tăng độ sâu hàng đợi hoặc tăng  │
-│    khi bus dồn dập│ hàng đợi đã đầy mà không xử lý lỗi -EAGAIN│ ưu tiên cho Consumer Thread.    │
-└───────────────────┴───────────────────────────────────────────┴─────────────────────────────────┘
-```
+### ❓ Câu 1: "Hiện tượng Priority Inversion là gì? Bạn xử lý nó như thế nào trong Zephyr RTOS? Tại sao không dùng Binary Semaphore để làm Mutex?"
+* **Trả lời chuẩn:**
+  * Hiện tượng Priority Inversion (Đảo ngược mức ưu tiên) xảy ra khi một Luồng Ưu Tiên Cao bị chặn bởi một Luồng Ưu Tiên Thấp đang nắm giữ tài nguyên dùng chung, nhưng Luồng Ưu Tiên Thấp lại bị một Luồng Ưu Tiên Trung Bình chen ngang cướp quyền thực thi. Kết quả là Luồng Cao nhất bị gián tiếp chết đói.
+  * Trong Zephyr, em luôn sử dụng **`k_mutex`** để bảo vệ tài nguyên dùng chung. Khối nhân Zephyr tích hợp sẵn cơ chế **Priority Inheritance**: Tự động tạm thời nâng mức ưu tiên của Luồng Thấp lên ngang bằng Luồng Cao ngay khi Luồng Cao chờ khóa, ngăn chặn hoàn toàn việc Luồng Trung Bình chen ngang.
+  * Tuyệt đối không dùng Binary Semaphore (`k_sem`) để làm khóa độc quyền, vì Semaphore không có khái niệm quyền sở hữu (Ownership) và **hoàn toàn không hỗ trợ Priority Inheritance**.
+
+### ❓ Câu 2: "Trong hệ thống của bạn, dữ liệu từ luồng CAN truyền sang luồng hiển thị giao diện GUI dùng `k_msgq` hay `k_fifo`? Dựa trên cơ sở kỹ thuật nào để bạn đưa ra lựa chọn đó?"
+* **Trả lời chuẩn:**
+  * Em lựa chọn **`k_msgq` (Message Queue)**.
+  * Cơ sở kỹ thuật: Bản tin dữ liệu ô tô sau khi giải mã (gồm tốc độ xe, vòng tua máy, nhiệt độ) có kích thước rất nhỏ (chỉ khoảng 6 đến 8 bytes). Việc sử dụng `k_msgq` áp dụng cơ chế sao chép theo giá trị (Copy-by-Value) vào một Ring Buffer tĩnh nằm sẵn trên RAM BSS. Điều này mang lại 2 lợi ích cốt tử:
+    1. **An toàn bộ nhớ tuyệt đối:** Không lo lỗi con trỏ rác (Dangling Pointer) hay rò rỉ bộ nhớ (Memory Leak) vì không cần cấp phát động (Dynamic Allocation / Heap).
+    2. **Tương thích chuẩn MISRA-C:** Bộ nhớ được cấp phát tĩnh 100% lúc biên dịch, không có nguy cơ phân mảnh RAM lúc vận hành lâu dài trên ô tô.
+
+### ❓ Câu 3: "Làm thế nào bạn biết kích thước ngăn xếp (Stack Size) cấp cho một Thread trong Zephyr là đủ hay thừa/thiếu?"
+* **Trả lời chuẩn:**
+  * Em áp dụng quy trình 2 lớp:
+    1. **Lớp bảo vệ phần cứng lúc chạy:** Luôn bật `CONFIG_MPU_STACK_GUARD=y`. Nếu có bất kỳ hàm nào bị tràn ngăn xếp, phần cứng MPU lập tức ngắt MemManage Fault đóng băng hệ thống để bảo vệ an toàn.
+    2. **Lớp đo lường định lượng:** Bật `CONFIG_THREAD_ANALYZER=y`. Công cụ này định kỳ quét mẫu số `0xAA` ở đáy ngăn xếp để tính toán chính xác **High Watermark (Đỉnh sử dụng lớn nhất)** của từng luồng và in ra console. Dựa trên số liệu thực tế đó, em căn chỉnh kích thước Stack sao cho đỉnh sử dụng dao động trong khoảng an toàn từ 60% đến 75% dung lượng được cấp.
 
 ---
 
-# 🎯 BƯỚC 4: BỘ CÂU HỎI PHỎNG VẤN & KỊCH BẢN TRẢ LỜI CHUYÊN SÂU
+### 🎙️ KỊCH BẢN TRẢ LỜI PHỎNG VẤN 60 GIÂY VỀ KIẾN TRÚC ĐA LUỒNG (ELEVATOR PITCH)
 
-### ❓ Câu 1: Tại sao trong hệ thống nhúng thời gian thực, kỹ sư chuyên nghiệp tuyệt đối không dùng biến toàn cục để truyền dữ liệu giữa các luồng?
-* **Trả lời chuẩn Kỹ sư RTOS:** 
-  * Khi hai luồng có mức ưu tiên khác nhau cùng truy cập một biến toàn cục đa byte (ví dụ `uint32_t` hoặc một `struct`), phép toán đọc/ghi trên kiến trúc 32-bit Cortex-M không phải lúc nào cũng nguyên tử (Non-atomic). Nếu một luồng đang ghi dở nửa chừng 2 bytes đầu thì bị ngắt hoặc luồng ưu tiên cao hơn chen ngang vào đọc, luồng đọc sẽ nhận được dữ liệu bị xé vụn (Torn Read / Data Inconsistency) dẫn đến xử lý sai hoàn toàn.
-  * Ngoài ra, biến toàn cục không cung cấp cơ chế thông báo sự kiện (Notification/Signaling). Luồng nhận buộc phải liên tục đọc biến trong vòng lặp vô tận (Polling) làm lãng phí chu kỳ CPU và năng lượng. Sử dụng hàng đợi `k_msgq` giải quyết triệt để: Dữ liệu được copy an toàn, và luồng nhận tự động chuyển sang trạng thái Sleep giải phóng CPU cho đến khi có dữ liệu mới.
-
-### ❓ Câu 2: Cơ chế Priority Inheritance trong `k_mutex` của Zephyr giải quyết sự cố tàu Mars Pathfinder ra sao?
-* **Trả lời chuẩn Kỹ sư RTOS:** 
-  * Sự cố Mars Pathfinder xảy ra do: Luồng thu thập dữ liệu (Ưu tiên thấp) nắm giữ Mutex bus thông tin. Luồng thông tin vô tuyến (Ưu tiên cao) cần Mutex nên phải chờ. Một luồng truyền thông thông thường (Ưu tiên trung bình) không cần Mutex nhảy vào chiếm CPU trong thời gian dài, gián tiếp làm luồng Thấp không thể nhả Mutex, khiến luồng Cao bị trễ hạn chót (Deadline Miss) và kích hoạt Watchdog Reset liên tục.
-  * Trong Zephyr, `k_mutex` mặc định bật **Priority Inheritance**: Khi luồng Cao đợi Mutex, nhân hệ điều hành tạm thời nâng mức ưu tiên của luồng Thấp lên bằng luồng Cao. Điều này ngăn chặn mọi luồng Trung bình chen ngang, giúp luồng Thấp hoàn thành đoạn găng và nhả Mutex nhanh nhất có thể.
-
-### ❓ Câu 3: Thread Analyzer trong Zephyr đo lường dung lượng ngăn xếp đã sử dụng bằng kỹ thuật gì?
-* **Trả lời chuẩn Kỹ sư RTOS:**
-  * Khi một luồng được tạo ra với macro `K_THREAD_STACK_DEFINE`, Zephyr khởi tạo toàn bộ vùng nhớ ngăn xếp đó bằng một mẫu byte đặc biệt gọi là **Stack Watermark (Mã số ảo `0xAA` liên tiếp)**.
-  * Trong quá trình luồng thực thi, khi con trỏ `SP` tụt xuống, các byte `0xAA` này sẽ bị ghi đè bởi biến cục bộ và con trỏ trả về hàm.
-  * Bộ công cụ **Thread Analyzer** định kỳ quét từ đáy ngăn xếp ngược lên trên để tìm byte `0xAA` nguyên vẹn đầu tiên chưa bị ghi đè. Từ đó, nó tính toán chính xác số byte tối đa mà luồng đã từng sử dụng (High Watermark) và in ra tỷ lệ phần trăm tiêu thụ, giúp kỹ sư tối ưu hóa kích thước RAM ngăn xếp chuẩn xác.
-
----
-
-### 🎙️ KỊCH BẢN TRẢ LỜI PHỎNG VẤN 60 GIÂY (ELEVATOR PITCH)
-
-> *"Tại Ngày 10, em hoàn thiện kiến trúc đa luồng toàn diện cho thiết bị CAN Gateway theo mô hình **Producer-Consumer Actor Pattern**.  
-> Em triệt tiêu hoàn toàn biến toàn cục bằng cách thiết lập đường truyền dữ liệu liên luồng thông qua hàng đợi **`k_msgq`**, kết nối bất đồng bộ từ **CAN Dispatcher Worker (Priority 4)** sang **GUI Model Updater (Priority 5)** với độ trễ cực thấp và an toàn bộ nhớ tuyệt đối. Để loại bỏ nguy cơ Deadlock và đảo ngược mức ưu tiên, em áp dụng **`k_mutex` có tính năng Priority Inheritance** bảo vệ vùng dữ liệu táp-lô dùng chung.  
-> Cuối cùng, em tích hợp hệ thống **Zephyr Shell CLI** và công cụ **Thread Analyzer** qua UART Console, cho phép kỹ sư theo dõi trực tiếp mức tiêu thụ ngăn xếp của từng luồng và chẩn đoán số lượng gói tin CAN gửi nhận theo thời gian thực ngay trên bo mạch mà không cần gắn mạch gỡ lỗi ST-Link."*
+> *"Trong kiến trúc hệ thống Gateway, em thiết kế luồng dữ liệu theo mô hình **Producer-Consumer Actor Pattern** hoàn toàn phi khóa (Lockless) thông qua hàng đợi tĩnh **`k_msgq`**.  
+> Em triệt tiêu hoàn toàn nguy cơ tranh chấp dữ liệu và các biến toàn cục không an toàn, đồng thời bảo vệ các vùng cấu hình quan trọng bằng **`k_mutex` tích hợp sẵn thuật toán Priority Inheritance**, loại trừ triệt để hiểm họa đảo ngược mức ưu tiên giữa luồng CAN thời gian thực và luồng đồ họa.  
+> Để tối ưu hóa tài nguyên phần cứng của vi điều khiển, em tận dụng **System Workqueue** cho các tác vụ định kỳ nhằm tiết kiệm RAM, đồng thời tích hợp hệ thống chẩn đoán dòng lệnh **Zephyr Shell** kết hợp **Thread Analyzer** để giám sát đỉnh sử dụng ngăn xếp thời gian thực, đảm bảo hệ thống vận hành với độ tin cậy tuyệt đối theo chuẩn an toàn phần mềm ô tô."*

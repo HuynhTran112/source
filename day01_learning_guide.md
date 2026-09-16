@@ -94,29 +94,41 @@ Lõi ARM Cortex-M7 trên STM32F746NG có thể chạy ở tần số tối đa 2
 
 ### Giới hạn phần cứng bắt buộc & Công thức Tính toán PLL (RM0385 Section 5.1.4):
 
-1. **Tần số đầu vào bộ so pha PFD ($f_{	ext{VCO\_in}}$):** Bắt buộc nằm trong khoảng $[1.0	ext{ MHz} \dots 2.0	ext{ MHz}]$ để mạch lọc vòng khóa pha hoạt động ổn định với độ rung pha (Jitter) thấp nhất:
-   $$f_{	ext{VCO\_in}} = rac{f_{	ext{HSE}}}{	ext{PLLM}} = rac{25	ext{ MHz}}{25} = 1.0	ext{ MHz} \quad (1.0	ext{ MHz} \le 1.0	ext{ MHz} \le 2.0	ext{ MHz} \implies 	ext{ĐẠT})$$
+1. **Tần số đầu vào bộ so pha PFD (f_VCO_in):** Bắt buộc nằm trong khoảng `[1.0 MHz ... 2.0 MHz]` để mạch lọc vòng khóa pha hoạt động ổn định với độ rung pha (Jitter) thấp nhất:
+   ```text
+   f_VCO_in = f_HSE / PLLM = 25 MHz / 25 = 1.0 MHz (1.0 MHz <= 1.0 MHz <= 2.0 MHz -> ĐẠT)
+   ```
 
-2. **Tần số dao động nội bộ VCO ($f_{	ext{VCO\_out}}$):** Bắt buộc nằm trong dải $[100	ext{ MHz} \dots 432	ext{ MHz}]$:
-   $$f_{	ext{VCO\_out}} = f_{	ext{VCO\_in}} 	imes 	ext{PLLN} = 1.0	ext{ MHz} 	imes 432 = 432.0	ext{ MHz} \quad (100	ext{ MHz} \le 432	ext{ MHz} \le 432	ext{ MHz} \implies 	ext{ĐẠT})$$
+2. **Tần số dao động nội bộ VCO (f_VCO_out):** Bắt buộc nằm trong dải `[100 MHz ... 432 MHz]`:
+   ```text
+   f_VCO_out = f_VCO_in * PLLN = 1.0 MHz * 432 = 432.0 MHz (100 MHz <= 432 MHz <= 432 MHz -> ĐẠT)
+   ```
 
-3. **Tần số hệ thống CPU ($f_{	ext{SYSCLK}}$):** Tối đa $216.0	ext{ MHz}$ trên STM32F746:
-   $$f_{	ext{SYSCLK}} = rac{f_{	ext{VCO\_out}}}{	ext{PLLP}} = rac{432.0	ext{ MHz}}{2} = 216.0	ext{ MHz} \quad (	ext{PLLP} = 2 	ext{ ứng với mã bit } 	ext{00b})$$
+3. **Tần số hệ thống CPU (f_SYSCLK):** Tối đa `216.0 MHz` trên STM32F746:
+   ```text
+   f_SYSCLK = f_VCO_out / PLLP = 432.0 MHz / 2 = 216.0 MHz (PLLP = 2 ứng với mã bit 00b)
+   ```
 
-4. **Tần số xung cấp ngoại vi USB OTG FS / SDMMC ($f_{	ext{PLL48CLK}}$):** Bắt buộc chuẩn xác $48.0	ext{ MHz}$:
-   $$f_{	ext{PLL48CLK}} = rac{f_{	ext{VCO\_out}}}{	ext{PLLQ}} = rac{432.0	ext{ MHz}}{9} = 48.0	ext{ MHz} \quad (	ext{Bắt buộc } 	ext{PLLQ} = 9)$$
+4. **Tần số xung cấp ngoại vi USB OTG FS / SDMMC (f_PLL48CLK):** Bắt buộc chuẩn xác `48.0 MHz`:
+   ```text
+   f_PLL48CLK = f_VCO_out / PLLQ = 432.0 MHz / 9 = 48.0 MHz (Bắt buộc PLLQ = 9)
+   ```
 
 ---
 
 ## 1.2. Mối quan hệ Phần cứng giữa Tần số Lõi và Flash Access Latency (Wait States)
 
-Bộ nhớ Flash nhúng trên chip STM32F7 có giới hạn vật lý về thời gian truy cập (Access Time $t_{	ext{ACC}} pprox 30	ext{ ns}$):
-* Ở tần số $216	ext{ MHz}$, chu kỳ xung nhịp của CPU chỉ kéo dài:
-  $$T_{	ext{CPU}} = rac{1}{f_{	ext{SYSCLK}}} = rac{1}{216	ext{ MHz}} pprox 4.63	ext{ ns}$$
-* Vì $4.63	ext{ ns} \ll 30	ext{ ns}$, nếu CPU truy cập đọc mã lệnh Flash ở tốc độ tối đa, tín hiệu dữ liệu chưa kịp ổn định trên bus $\implies$ CPU đọc trúng dữ liệu rác, gây ra lỗi **`HardFault`** hoặc **`BusFault`** ngay lập tức!
+Bộ nhớ Flash nhúng trên chip STM32F7 có giới hạn vật lý về thời gian truy cập (Access Time `t_ACC approx 30 ns`):
+* Ở tần số `216 MHz`, chu kỳ xung nhịp của CPU chỉ kéo dài:
+  ```text
+  T_CPU = 1 / f_SYSCLK = 1 / 216 MHz approx 4.63 ns
+  ```
+* Vì `4.63 ns << 30 ns`, nếu CPU truy cập đọc mã lệnh Flash ở tốc độ tối đa, tín hiệu dữ liệu chưa kịp ổn định trên bus -> CPU đọc trúng dữ liệu rác, gây ra lỗi **`HardFault`** hoặc **`BusFault`** ngay lập tức!
 * **Giải pháp phần cứng:** Thanh ghi `FLASH_ACR` cho phép chèn thêm các chu kỳ chờ (**Wait States - WS**):
-  $$	ext{Số chu kỳ CPU yêu cầu} = \left\lceil rac{t_{	ext{ACC}}}{T_{	ext{CPU}}} ightceil = \left\lceil rac{30	ext{ ns}}{4.63	ext{ ns}} ightceil = \lceil 6.48 ceil = 7	ext{ chu kỳ CPU} \implies 	ext{LATENCY} = 7	ext{ WS}$$
-  *(Hoặc cấu hình $6	ext{ WS}$ khi kích hoạt bộ tăng tốc phần cứng ART Accelerator Prefetch Cache)*.
+  ```text
+  Số chu kỳ CPU yêu cầu = ceil(t_ACC / T_CPU) = ceil(30 ns / 4.63 ns) = ceil(6.48) = 7 chu kỳ CPU -> LATENCY = 7 WS
+  ```
+  *(Hoặc cấu hình `6 WS` khi kích hoạt bộ tăng tốc phần cứng ART Accelerator Prefetch Cache)*.
 
 ```text
 Tra cứu RM0385 Table 5: Number of wait states according to CPU clock (HCLK) frequency:
@@ -168,18 +180,24 @@ Wait States (WS)          | Tần số HCLK tối đa cho phép
                     ▼
  ┌──────────────────────────────────────┐
  │ Polling cờ ODSWRDY = 1               │ while (!(PWR->CSR1 & PWR_CSR1_ODSWRDY));
- └──────────────────────────────────────┘ (Hệ thống sẵn sàng chạy ở 216MHz!)
+ └──────────────────┬───────────────────┘
+                    ▼
+ ┌──────────────────────────────────────┐
+ │ Hệ thống sẵn sàng chạy ở 216MHz!     │
+ └──────────────────────────────────────┘
 ```
 
 ---
 
 ## 1.4. Phân tầng Tần số Bus Matrix (AHB, APB1, APB2 Prescalers)
 
-Khi $f_{	ext{SYSCLK}} = 216	ext{ MHz}$, xung nhịp được phân phối tới các bus thông qua các bộ chia (Prescalers) trong thanh ghi `RCC_CFGR`. Phải tuân thủ giới hạn phần cứng tuyệt đối trong Datasheet DS10610:
+Khi `f_SYSCLK = 216 MHz`, xung nhịp được phân phối tới các bus thông qua các bộ chia (Prescalers) trong thanh ghi `RCC_CFGR`. Phải tuân thủ giới hạn phần cứng tuyệt đối trong Datasheet DS10610:
 
-$$f_{	ext{HCLK}} = rac{f_{	ext{SYSCLK}}}{	ext{HPRE}} = rac{216	ext{ MHz}}{1} = 216	ext{ MHz} \quad (f_{	ext{HCLK}} \le 216	ext{ MHz})$$
-$$f_{	ext{PCLK1}} = rac{f_{	ext{HCLK}}}{	ext{PPRE1}} = rac{216	ext{ MHz}}{4} = 54	ext{ MHz} \quad (f_{	ext{PCLK1}} \le 54	ext{ MHz})$$
-$$f_{	ext{PCLK2}} = rac{f_{	ext{HCLK}}}{	ext{PPRE2}} = rac{216	ext{ MHz}}{2} = 108	ext{ MHz} \quad (f_{	ext{PCLK2}} \le 108	ext{ MHz})$$
+```text
+f_HCLK  = f_SYSCLK / HPRE  = 216 MHz / 1 = 216 MHz (Giới hạn: f_HCLK <= 216 MHz)
+f_PCLK1 = f_HCLK / PPRE1   = 216 MHz / 4 = 54 MHz  (Giới hạn: f_PCLK1 <= 54 MHz)
+f_PCLK2 = f_HCLK / PPRE2   = 216 MHz / 2 = 108 MHz (Giới hạn: f_PCLK2 <= 108 MHz)
+```
 
 ```text
                                 SYSCLK = 216 MHz
@@ -438,154 +456,226 @@ src/
 
 ### 📂 KHỐI 1: FILE HEADER GIAO DIỆN [ `drivers/inc/Sys_Clock.h` ]
 
-#### TODO 1 [File: `drivers/inc/Sys_Clock.h`]: Khai báo Enum Reset Reason & Hàm Prototypes
 ```c
-#ifndef SYS_CLOCK_H
-#define SYS_CLOCK_H
+#ifndef SYSTEM_CLOCK_H
+#define SYSTEM_CLOCK_H
 
 #include <stdint.h>
+#include "Reg.h"
 
 /**
- * @brief Định danh nguyên nhân gây ra lần Reset gần nhất
+ * @brief Định danh nguyên nhân gây ra lần Reset gần nhất (Đọc từ RCC_CSR)
  */
 typedef enum {
     RESET_REASON_UNKNOWN = 0,
-    RESET_REASON_POR,       /* Power-on / Power-down Reset */
-    RESET_REASON_PIN,       /* Chân NRST bên ngoài (Nút bấm B1) */
-    RESET_REASON_SOFTWARE,  /* Lệnh phần mềm NVIC_SystemReset() */
-    RESET_REASON_IWDG,      /* Independent Watchdog Timeout */
-    RESET_REASON_WWDG,      /* Window Watchdog Timeout */
-    RESET_REASON_BOR        /* Brown-out Reset (Sụt áp nguồn) */
+    RESET_REASON_POR,          /**< Power-on / Power-down Reset (Cắm nguồn / Mất nguồn) */
+    RESET_REASON_PIN,          /**< External Pin Reset (Nhấn nút cứng B1 NRST) */
+    RESET_REASON_SOFTWARE,     /**< Software Reset (Lệnh NVIC_SystemReset) */
+    RESET_REASON_IWDG,         /**< Independent Watchdog Reset (Chó canh độc lập can thiệp) */
+    RESET_REASON_WWDG,         /**< Window Watchdog Reset (Chó canh cửa sổ) */
+    RESET_REASON_LOW_POWER,    /**< Low-Power Management Reset */
+    RESET_REASON_BOR           /**< Brown-out Reset (Sụt áp nguồn VDD) */
 } SystemResetReason_t;
 
-/* Khởi tạo xung nhịp hệ thống đạt 216MHz với Over-drive mode */
-void System_Clock_Init(void);
+/* --- Khai báo nguyên mẫu API công khai (Public Function Prototypes) --- */
 
-/* Đọc nguyên nhân reset và xóa cờ RMVF */
+/**
+ * @brief Cấu hình hệ thống xung nhịp đạt 216MHz Over-Drive từ thạch anh ngoài HSE 25MHz
+ * @note  Tuân thủ quy trình 7 bước: PWR -> VOS Scale 1 -> HSE -> Flash 7WS -> PLL -> Over-drive -> SW PLL
+ */
+void SystemClock_Config_216MHz(void);
+
+/**
+ * @brief Chụp trạng thái (snapshot) thanh ghi RCC_CSR để giải mã nguyên nhân reset
+ * @return SystemResetReason_t Mã định danh nguyên nhân reset
+ */
 SystemResetReason_t System_GetResetReason(void);
+
+/**
+ * @brief Chuyển đổi mã nguyên nhân reset thành chuỗi văn bản chẩn đoán
+ * @param  reason Mã enum SystemResetReason_t
+ * @return const char* Chuỗi mô tả nguyên nhân phục vụ in UART Log
+ */
 const char* System_GetResetReasonString(SystemResetReason_t reason);
 
-#endif /* SYS_CLOCK_H */
+/**
+ * @brief Xóa toàn bộ cờ trạng thái reset trong RCC_CSR thông qua bit RMVF (W1C Handshake)
+ */
+void System_ClearResetFlags(void);
+
+#endif /* SYSTEM_CLOCK_H */
 ```
 
 ---
 
 ### 📂 KHỐI 2: FILE SOURCE DRIVER [ `drivers/src/Sys_Clock.c` ]
 
-#### TODO 2 [File: `drivers/src/Sys_Clock.c`]: Chuỗi khởi tạo 7 Bước Clock 216MHz Over-Drive
 ```c
 #include "Sys_Clock.h"
-#include "Reg.h"
 
-void System_Clock_Init(void)
+/**
+ * @brief Cấu hình toàn bộ chuỗi xung nhịp 216MHz Over-Drive (7 Bước Bare-metal chuẩn mực)
+ */
+void SystemClock_Config_216MHz(void)
 {
-    /* BƯỚC 1: Bật Clock cho Power Controller (PWR) */
+    /* ------------------------------------------------------------------------
+     * BƯỚC 1: Cấp Clock cho Power Controller (PWR) qua Bus APB1
+     * ------------------------------------------------------------------------ */
     RCC->APB1ENR |= RCC_APB1ENR_PWREN;
 
-    /* BƯỚC 2: Cài đặt điện áp lõi VOS = Scale 1 (11b) */
-    PWR->CR1 &= ~(3U << 14);
-    PWR->CR1 |=  (3U << 14);
+    /* ------------------------------------------------------------------------
+     * BƯỚC 2: Cài đặt điện áp lõi VOS = Scale 1 (11b) để hỗ trợ f > 180 MHz
+     * Áp dụng quy tắc Clear-then-Set cho trường 2-bit VOS[1:0]
+     * ------------------------------------------------------------------------ */
+    PWR->CR1 &= ~(PWR_CR1_VOS_Msk);
+    PWR->CR1 |=  PWR_CR1_VOS_SCALE1;
 
-    /* BƯỚC 3: Bật thạch anh ngoài HSE 25MHz & Chờ ổn định */
+    /* ------------------------------------------------------------------------
+     * BƯỚC 3: Bật thạch anh ngoài HSE 25MHz & Polling chờ dao động ổn định
+     * ------------------------------------------------------------------------ */
     RCC->CR |= RCC_CR_HSEON;
-    while (!(RCC->CR & RCC_CR_HSERDY));
-
-    /* BƯỚC 4: TĂNG FLASH WAIT STATES LÊN 7 WS (HOẶC 6 WS + ART) */
-    FLASH->ACR &= ~(0xFU << 0);
-    FLASH->ACR |=  (0x7U << 0);                     /* 7 Wait States */
-    FLASH->ACR |=  (FLASH_ACR_PRFTEN | FLASH_ACR_ARTEN); /* Bật Prefetch & ART */
-
-    /* BƯỚC 5: Thiết lập bộ chia Bus Prescalers & Tham số PLL */
-    /* HCLK = SYSCLK / 1 (216MHz), PCLK1 = HCLK / 4 (54MHz), PCLK2 = HCLK / 2 (108MHz) */
-    RCC->CFGR &= ~((0xFU << 4) | (0x7U << 10) | (0x7U << 13));
-    RCC->CFGR |=  ((0x0U << 4) | (0x5U << 10) | (0x4U << 13));
-
-    /* Cấu hình PLL: M=25, N=432, P=2 (00b), Q=9, Nguồn = HSE */
-    RCC->PLLCFGR = (25U  << 0)  |   /* PLLM = 25 */
-                   (432U << 6)  |   /* PLLN = 432 */
-                   (0U   << 16) |   /* PLLP = 2 (/2) */
-                   (1U   << 22) |   /* PLLSRC = HSE */
-                   (9U   << 24);    /* PLLQ = 9 */
-
-    /* Bật PLL và chờ khóa pha */
-    RCC->CR |= RCC_CR_PLLON;
-    while (!(RCC->CR & RCC_CR_PLLRDY));
-
-    /* BƯỚC 6: Bật Over-drive Mode (Handshake 4 bước) */
-    PWR->CR1 |= (1U << 16);                 /* Bật bit ODEN */
-    while (!(PWR->CSR1 & (1U << 16)));      /* Chờ cờ ODRDY = 1 */
-
-    PWR->CR1 |= (1U << 17);                 /* Bật bit ODSWEN */
-    while (!(PWR->CSR1 & (1U << 17)));      /* Chờ cờ ODSWRDY = 1 */
-
-    /* BƯỚC 7: Chuyển SYSCLK sang nguồn Main PLL */
-    RCC->CFGR &= ~(0x3U << 0);
-    RCC->CFGR |=  (0x2U << 0);              /* SW = 10b (PLL) */
-    while ((RCC->CFGR & (0x3U << 2)) != (0x2U << 2)); /* Chờ SWS = 10b */
-}
-```
-
-#### TODO 3 [File: `drivers/src/Sys_Clock.c`]: Đọc Lý do Reset & Xóa Cờ W1C
-```c
-SystemResetReason_t System_GetResetReason(void)
-{
-    SystemResetReason_t reason = RESET_REASON_UNKNOWN;
-    uint32_t csr = RCC->CSR;
-
-    if (csr & (1U << 27)) {
-        reason = RESET_REASON_POR;
-    } else if (csr & (1U << 26)) {
-        reason = RESET_REASON_PIN;
-    } else if (csr & (1U << 28)) {
-        reason = RESET_REASON_SOFTWARE;
-    } else if (csr & (1U << 29)) {
-        reason = RESET_REASON_IWDG;
-    } else if (csr & (1U << 30)) {
-        reason = RESET_REASON_WWDG;
-    } else if (csr & (1U << 25)) {
-        reason = RESET_REASON_BOR;
+    while (!(RCC->CR & RCC_CR_HSERDY)) {
+        /* Chờ phần cứng rung ổn định và kéo cờ HSERDY lên 1 */
     }
 
-    /* Xóa cờ reset sau khi đọc xong (W1C register qua bit RMVF) */
-    RCC->CSR |= (1U << 24);
+    /* ------------------------------------------------------------------------
+     * BƯỚC 4: TĂNG FLASH WAIT STATES LÊN 7 WS (HOẶC 6 WS + ART) TRƯỚC KHI TĂNG XUNG!
+     * Ngăn ngừa CPU đọc rác gây HardFault do chu kỳ 4.63ns nhanh hơn t_ACC 30ns.
+     * ------------------------------------------------------------------------ */
+    FLASH->ACR &= ~(FLASH_ACR_LATENCY_Msk);
+    FLASH->ACR |= (FLASH_ACR_LATENCY_6WS | FLASH_ACR_PRFTEN | FLASH_ACR_ARTEN);
 
-    return reason;
+    /* ------------------------------------------------------------------------
+     * BƯỚC 5: Cấu hình bộ nhân Main PLL (M=25, N=432, P=2, Q=9, Nguồn = HSE)
+     * Clear-then-Set đồng bộ các trường trong thanh ghi RCC_PLLCFGR
+     * ------------------------------------------------------------------------ */
+    RCC->PLLCFGR &= ~(RCC_PLLCFGR_PLLM_Msk   | 
+                      RCC_PLLCFGR_PLLN_Msk   | 
+                      RCC_PLLCFGR_PLLP_Msk   | 
+                      RCC_PLLCFGR_PLLSRC_Msk | 
+                      RCC_PLLCFGR_PLLQ_Msk);
+
+    RCC->PLLCFGR |= ((25U  << RCC_PLLCFGR_PLLM_Pos)   |   /* f_VCO_in = 25M / 25 = 1 MHz */
+                     (432U << RCC_PLLCFGR_PLLN_Pos)   |   /* f_VCO_out = 1M * 432 = 432 MHz */
+                     RCC_PLLCFGR_PLLP_DIV2            |   /* f_SYSCLK = 432M / 2 = 216 MHz (00b) */
+                     RCC_PLLCFGR_PLLSRC_HSE           |   /* Nguồn cấp = HSE (Bit 22 = 1) */
+                     (9U   << RCC_PLLCFGR_PLLQ_Pos));     /* f_48M = 432M / 9 = 48 MHz cho USB */
+
+    /* Bật PLL và Polling chờ vòng khóa pha chốt tần số */
+    RCC->CR |= RCC_CR_PLLON;
+    while (!(RCC->CR & RCC_CR_PLLRDY)) {
+        /* Chờ mạch lọc PFD/VCO khóa đồng pha, bật cờ PLLRDY = 1 */
+    }
+
+    /* ------------------------------------------------------------------------
+     * BƯỚC 6: Bắt tay Over-Drive Mode 2 bước (Bơm áp logic số cho 216MHz)
+     * ------------------------------------------------------------------------ */
+    /* Bước 6a: Kích hoạt bơm áp Over-drive */
+    PWR->CR1 |= PWR_CR1_ODEN;
+    while (!(PWR->CSR1 & PWR_CSR1_ODRDY));
+
+    /* Bước 6b: Chuyển mạch nguồn cấp Over-drive sang lõi CPU */
+    PWR->CR1 |= PWR_CR1_ODSWEN;
+    while (!(PWR->CSR1 & PWR_CSR1_ODSWRDY));
+
+    /* ------------------------------------------------------------------------
+     * BƯỚC 7: Cài đặt bộ chia Bus Prescalers & Chuyển nguồn SYSCLK sang PLL
+     * AHB = 216 MHz (/1), APB1 = 54 MHz (/4), APB2 = 108 MHz (/2)
+     * ------------------------------------------------------------------------ */
+    RCC->CFGR &= ~(RCC_CFGR_HPRE_Msk | RCC_CFGR_PPRE1_Msk | RCC_CFGR_PPRE2_Msk);
+    RCC->CFGR |=  (RCC_CFGR_HPRE_DIV1 | RCC_CFGR_PPRE1_DIV4 | RCC_CFGR_PPRE2_DIV2);
+
+    /* Yêu cầu chuyển nguồn SYSCLK sang PLL (SW = 10b) */
+    RCC->CFGR &= ~(RCC_CFGR_SW_Msk);
+    RCC->CFGR |=  RCC_CFGR_SW_PLL;
+
+    /* Polling chờ phần cứng xác nhận chuyển mạch thành công (SWS = 10b) */
+    while ((RCC->CFGR & RCC_CFGR_SWS_Msk) != RCC_CFGR_SWS_PLL) {
+        /* Bắt tay hoàn tất: Toàn hệ thống chính thức hoạt động tại 216MHz! */
+    }
 }
 
+/**
+ * @brief Đọc nguyên nhân Reset gần nhất từ thanh ghi RCC_CSR
+ */
+SystemResetReason_t System_GetResetReason(void)
+{
+    uint32_t csr = RCC->CSR; /* Snapshot bất biến giá trị thanh ghi */
+
+    if (csr & RCC_CSR_LPWRRSTF)       return RESET_REASON_LOW_POWER;
+    else if (csr & RCC_CSR_WWDGRSTF)  return RESET_REASON_WWDG;
+    else if (csr & RCC_CSR_IWDGRSTF)  return RESET_REASON_IWDG;
+    else if (csr & RCC_CSR_SFTRSTF)   return RESET_REASON_SOFTWARE;
+    else if (csr & RCC_CSR_PORRSTF)   return RESET_REASON_POR;
+    else if (csr & RCC_CSR_BORRSTF)   return RESET_REASON_BOR;
+    else if (csr & RCC_CSR_PINRSTF)   return RESET_REASON_PIN;
+
+    return RESET_REASON_UNKNOWN;
+}
+
+/**
+ * @brief Chuyển đổi mã nguyên nhân Reset thành chuỗi ký tự hiển thị
+ */
 const char* System_GetResetReasonString(SystemResetReason_t reason)
 {
     switch (reason) {
-        case RESET_REASON_POR:      return "Power-on Reset (POR)";
-        case RESET_REASON_PIN:      return "External Pin Reset (NRST button)";
-        case RESET_REASON_SOFTWARE: return "Software Reset (NVIC_SystemReset)";
-        case RESET_REASON_IWDG:     return "Independent Watchdog Reset (IWDG)";
-        case RESET_REASON_WWDG:     return "Window Watchdog Reset (WWDG)";
-        case RESET_REASON_BOR:      return "Brown-out Reset (BOR)";
-        default:                    return "Unknown Reset Reason";
+        case RESET_REASON_POR:        return "Power-on / Power-down Reset (POR/PDR)";
+        case RESET_REASON_PIN:        return "External Reset Pin (NRST Button B1)";
+        case RESET_REASON_SOFTWARE:   return "Software Reset (NVIC_SystemReset)";
+        case RESET_REASON_IWDG:       return "Independent Watchdog Reset (IWDG)";
+        case RESET_REASON_WWDG:       return "Window Watchdog Reset (WWDG)";
+        case RESET_REASON_LOW_POWER:  return "Low-Power Management Reset";
+        case RESET_REASON_BOR:        return "Brown-Out Reset (BOR - Sụt áp nguồn)";
+        default:                      return "Unknown Reset Reason";
     }
+}
+
+/**
+ * @brief Xóa toàn bộ cờ Reset bằng bit RMVF (Chuẩn Write-1-to-Clear)
+ */
+void System_ClearResetFlags(void)
+{
+    /* Bit RMVF (Bit 24): Ghi 1 để xóa sạch các cờ reset về 0 */
+    RCC->CSR |= RCC_CSR_RMVF;
 }
 ```
 
 ---
 
-### 📂 KHỐI 3: FILE MAIN CHÍNH [ `src/main.c` ]
+### 📂 KHỐI 3: FILE ỨNG DỤNG CHÍNH [ `src/main.c` ]
 
-#### TODO 4 [File: `src/main.c`]: Khởi chạy System Clock & Log Reset Reason
 ```c
 #include "Sys_Clock.h"
 
 int main(void)
 {
-    /* 1. Đọc nguyên nhân reset từ chu kỳ chạy trước */
+    /* ------------------------------------------------------------------------
+     * GIAI ĐOẠN 1: Đọc & Lưu trữ Lý do Reset từ chu kỳ boot trước
+     * BẮT BUỘC thực hiện TRƯỚC KHI xóa cờ để tránh mất dấu vết chẩn đoán!
+     * ------------------------------------------------------------------------ */
     SystemResetReason_t reset_reason = System_GetResetReason();
+    const char *reason_str = System_GetResetReasonString(reset_reason);
 
-    /* 2. Khởi tạo xung nhịp hệ thống đạt 216MHz Over-drive */
-    System_Clock_Init();
+    /* ------------------------------------------------------------------------
+     * GIAI ĐOẠN 2: Xóa cờ Reset bằng bit RMVF
+     * Đảm bảo thanh ghi RCC_CSR sạch sẽ cho chu kỳ khởi động kế tiếp
+     * ------------------------------------------------------------------------ */
+    System_ClearResetFlags();
 
-    /* 3. Vòng lặp chính */
+    /* ------------------------------------------------------------------------
+     * GIAI ĐOẠN 3: Khởi tạo xung nhịp 216MHz Over-Drive đỉnh cao
+     * ------------------------------------------------------------------------ */
+    SystemClock_Config_216MHz();
+
+    /* ------------------------------------------------------------------------
+     * GIAI ĐOẠN 4: Vòng lặp chính của ứng dụng
+     * ------------------------------------------------------------------------ */
     while (1) {
-        /* Ứng dụng thực thi tại tần số 216MHz ổn định */
+        /* Tại đây, hệ thống chạy mượt mà ở 216 MHz với độ trễ Flash 7WS */
+        /* Biến reason_str có thể được truyền ra UART console hoặc CAN telemetry */
     }
+
+    return 0;
 }
 ```
 

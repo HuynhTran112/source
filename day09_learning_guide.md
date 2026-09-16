@@ -1,537 +1,421 @@
-# 🏆 [NGÀY 9] CẨM NANG TOÀN DIỆN ZEPHYR DISPLAY & LVGL: FMC SDRAM BINDING & GIAO DIỆN TÁP-LÔ ĐỒ HỌA
-## Lộ trình 4 Bước: Kiến Trúc Subsystem ➔ Thực Chiến Devicetree/Kconfig ➔ Gõ Code Giao Diện ➔ Phỏng Vấn Chuyên Sâu
+# 🏆 [NGÀY 9] LÀM CHỦ ZEPHYR DISPLAY & LVGL: KIẾN TRÚC BỘ NHỚ ĐỒ HỌA, D-CACHE COHERENCY & ĐA LUỒNG AN TOÀN
+## Chuyên khảo Kỹ thuật: FMC SDRAM Binding, Zero-Copy Display Pipeline, Dirty Area Invalidation & Thread-Safety
 
-> **Mục tiêu:** Làm chủ hệ thống hiển thị đồ họa chuyên nghiệp trên STM32F746 thông qua **Zephyr Display Subsystem & Thư viện đồ họa LVGL (Light and Versatile Graphics Library)**: Ràng buộc phần cứng bộ nhớ ngoài FMC SDRAM và bộ quét màn hình LTDC trên Devicetree (`zephyr,display = &ltdc;`), cấu hình hệ thống cấp phát bộ nhớ đối tượng đồ họa **LVGL Memory Pool**, xây dựng giao diện táp-lô ô tô (Digital Instrument Cluster: Đồng hồ tốc độ Arc, Thanh nhiệt độ, Cảnh báo đèn báo nguy hiểm), và kiểm soát nguyên tắc **Thread-Safety** khi cập nhật dữ liệu từ mạng CAN Bus.  
-> **Nguyên tắc kỹ thuật:** **Đi thẳng vào cơ chế phân tầng hệ thống, cấu trúc Devicetree node, Kconfig symbols, kiến trúc render đồ họa và phân chia file rõ ràng — KHÔNG dùng ví dụ ẩn dụ ngoài lề dài dòng.**
+> **Mục tiêu chuyên sâu:** Nâng tầm từ việc vẽ đồ họa đơn giản sang làm chủ **KIẾN TRÚC HIỂN THỊ ĐỒ HỌA NÂNG CAO** của Zephyr Display Subsystem và thư viện đồ họa LVGL (Light and Versatile Graphics Library) trên STM32F746:
+> 1. **Chuỗi Ràng Buộc Phần Cứng Devicetree:** Cách Zephyr tự động kết nối chuỗi mắt xích ngoại vi lúc boot: Bộ điều khiển bộ nhớ ngoài FMC -> Chip SDRAM 8MB -> Bộ quét màn hình LTDC -> Thư viện đồ họa LVGL thông qua `chosen { zephyr,display = &ltdc; };`.
+> 2. **Vấn Nạn Tính Nhất Quán Bộ Nhớ D-Cache (D-Cache Coherency):** Tại sao Cortex-M7 thường xuyên bị sọc màn hình hoặc vỡ hình khi dùng DMA2D/LTDC đọc RAM ngoài? Cách cấu hình MPU Non-cacheable và xả Cache đúng kỹ thuật.
+> 3. **Cơ Chế Render Cục Bộ (Dirty Area Invalidation):** Cách LVGL tối ưu hóa băng thông bus AXI bằng việc chỉ vẽ lại các pixel có sự thay đổi thay vì quét lại toàn bộ khung hình 480x272.
+> 4. **Nguyên Tắc Sống Còn Thread-Safety:** Giải phẫu lý do LVGL không an toàn đa luồng (Non-thread-safe) và cách thiết kế mô hình Actor Pattern / Mutex bảo vệ an toàn khi luồng CAN cập nhật tốc độ động cơ lên táp-lô.
+> 5. **Cách Sử Dụng Thực Chiến & Bộ Câu Hỏi Phỏng Vấn:** Mẫu cấu hình Kconfig/Overlay chuẩn, mẫu luồng render tối ưu và bộ câu hỏi tuyển dụng kỹ sư đồ họa nhúng.
 
 ---
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                           LỘ TRÌNH 4 BƯỚC CHINH PHỤC NGÀY 9                                     │
-├───────────────────┬───────────────────┬────────────────────────────┬────────────────────────────┤
-│ BƯỚC 1: KIẾN TRÚC │ BƯỚC 2: THỰC CHIẾN│ BƯỚC 3: GÕ CODE ỨNG DỤNG   │ BƯỚC 4: PHỎNG VẤN          │
-│ • Zephyr Display  │ • Soạn prj.conf   │ • Gắn nhãn file cụ thể     │ • Bộ 5 câu hỏi vặn LVGL    │
-│   Architecture    │ • Viết overlay    │ • TODO 1 [prj.conf]        │   & Zephyr Display Driver  │
-│ • LVGL Pipeline & │   FMC & LTDC Node │ • TODO 2 [app.overlay]     │ • LVGL Thread-Safety Bug   │
-│   Flush Callback  │ • Cấu hình chosen │ • TODO 3 [gui_cluster.h]   │ • Partial vs Full Buffer   │
-│ • Dirty Area Redraw│  zephyr,display  │ • TODO 4 [gui_cluster.c]   │ • Kịch bản trả lời 60s     │
-│ • Mutex Bảo Vệ GUI│ • Cấp phát VDB    │ • TODO 5 [src/main.c]      │   (Elevator Pitch)         │
-│                   │   trong Kconfig   │ • Mổ xẻ 5 Bug đồ họa       │                            │
-└───────────────────┴───────────────────┴────────────────────────────┴────────────────────────────┘
+│                    CHUỖI TRUYỀN DẪN ĐỒ HỌA (GRAPHICS PIPELINE) TRONG ZEPHYR                     │
+├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ [CAN Worker Thread] ──>  k_msgq_put() ──>  [GUI Model Queue]                                     │
+│                                                   │                                             │
+│                                                   ▼                                             │
+│ [GUI Thread]        ──>  k_msgq_get() ──>  Cập nhật giá trị LVGL (Ví dụ: lv_arc_set_value)      │
+│                                                   │                                             │
+│                                                   ▼ (Đánh dấu Dirty Rectangle)                  │
+│ [LVGL Engine]       ──>  Render pixel mới vào Virtual Display Buffer (VDB trong Internal SRAM)   │
+│                                                   │                                             │
+│                                                   ▼ (Tự động kích hoạt Flush Callback)          │
+│ [Zephyr Display]    ──>  Kích hoạt Chrom-ART DMA2D (Chuyển khối bộ nhớ siêu tốc 0% CPU)         │
+│                                                   │                                             │
+│                                                   ▼                                             │
+│ [FMC SDRAM]         ──>  Ghi đè vào Framebuffer trên chip SDRAM ngoài (0xC0000000)              │
+│                                                   │ (Cấu hình MPU Non-cacheable chống sọc hình) │
+│                                                   ▼                                             │
+│ [Phần Cứng LTDC]    ──>  Quét tín hiệu Parallel RGB (HSYNC, VSYNC, DOTCLK) ra kính LCD 480x272  │
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🛠️ RÀ SOÁT 7 QUY TẮC ZEPHYR DISPLAY & LVGL CỐT LÕI (CHUYÊN CHO NGÀY 9)
+# PHẦN 1: TƯ DUY KIẾN TRÚC — ZEPHYR DISPLAY SUBSYSTEM
 
-| STT | Quy tắc Zephyr Display / LVGL | Thể hiện cụ thể trong Ngày 9 (Display & LVGL) |
-| :---: | :--- | :--- |
-| **1** | **Chosen Display Node** | Trong Devicetree, bắt buộc phải có node `chosen { zephyr,display = &ltdc; };` để Zephyr biết màn hình chính được điều khiển bởi ngoại vi nào. |
-| **2** | **FMC SDRAM Dependency** | LTDC Framebuffer nằm trên SDRAM ngoài. Bắt buộc phải bật `CONFIG_MEMC=y` và `CONFIG_MEMC_STM32_SDRAM=y` trong `prj.conf` để Zephyr khởi tạo chip SDRAM trước khi LTDC quét màn hình. |
-| **3** | **LVGL Non-Thread-Safe** | **QUY TẮC SỐNG CÒN:** Thư viện LVGL **KHÔNG thread-safe**. Tuyệt đối không gọi các hàm vẽ `lv_obj_set_...()` trực tiếp từ luồng CAN Worker. Bắt buộc phải bảo vệ hàm gọi bằng Mutex (`k_mutex_lock/unlock`) hoặc cơ chế truyền thông điệp Message Queue. |
-| **4** | **Dedicated LVGL Loop** | Luồng quản lý đồ họa phải gọi `lv_timer_handler()` (hoặc `lv_task_handler()`) định kỳ mỗi 5ms - 10ms kèm lệnh ngủ `k_msleep()`. Không để luồng này chạy vòng lặp đói không ngủ (Busy-loop). |
-| **5** | **Pixel Format Uniformity** | Khớp định dạng màu tuyệt đối giữa LTDC (RGB565) và LVGL: `CONFIG_LV_COLOR_DEPTH_16=y`. Nếu lệch hệ màu (ví dụ LVGL chạy 32-bit nhưng LTDC nhận 16-bit), màn hình sẽ bị nhiễu màu hoàn toàn. |
-| **6** | **Memory Pool Sizing** | Cấp phát đủ `CONFIG_LV_Z_MEM_POOL_SIZE` (tối thiểu 16KB). Nếu tạo nhiều đối tượng đồ họa phức tạp (Arc, Meter, Chart) mà pool bị tràn, hàm `lv_..._create()` sẽ trả về `NULL`. |
-| **7** | **Dirty Area Optimization** | Tận dụng cơ chế Invalidation của LVGL: Chỉ vẽ lại vùng có giá trị thay đổi (Dirty Rectangle), không vẽ lại toàn bộ màn hình để tiết kiệm băng thông bus AXI. |
+### 1.1. Bảng Đối Chiếu: Tự Tích Hợp Đồ Họa Truyền Thống vs Zephyr Display Subsystem
 
----
-
-# 🧠 BƯỚC 1: KIẾN TRÚC HỆ THỐNG & CƠ CHẾ HOẠT ĐỘNG (SO SÁNH FREERTOS)
-
-### 1.1. So Sánh Cơ Chế Hiển Thị Đồ Họa: FreeRTOS vs Zephyr Display Subsystem (Chi Tiết Ưu / Nhược Điểm)
-
-Khi tích hợp thư viện đồ họa LVGL trên vi điều khiển:
-
-| Khía cạnh Kỹ thuật | 1. FreeRTOS (Tự ghép thủ công) | 2. Zephyr Display Subsystem | Đánh Giá Kỹ Thuật, Ưu / Nhược Điểm & Trade-off Chuyên Sâu |
-| :--- | :--- | :--- | :--- |
-| **1. Khởi tạo SDRAM & LTDC** | Phải tự viết hàm khởi tạo FMC SDRAM (nạp chuỗi 5 lệnh JEDEC, timing cấu hình) và cấu hình hàng chục thanh ghi LTDC từng bước. | Zephyr tự động kích hoạt driver FMC SDRAM và LTDC lúc boot thông qua Devicetree (`CONFIG_MEMC=y`, `CONFIG_STM32_LTDC=y`). | • **FreeRTOS (Thủ công):** Nắm rất sâu thanh ghi phần cứng, nhưng cực kỳ tốn công sức; nếu sai lệch $1\text{ chu kỳ}$ làm tươi (Refresh Rate) SDRAM sẽ gây lỗi sọc màn hình ngẫu nhiên.<br>• **Zephyr:** Chuẩn hóa hoàn toàn trong Devicetree. Các tham số timing chỉ cần khai báo một lần trong node DTS, nhân tự động kích hoạt tuần tự (FMC $\rightarrow$ SDRAM $\rightarrow$ LTDC) trước khi hàm `main()` khởi chạy. |
-| **2. Hàm Flush màn hình (`flush_cb`)** | Lập trình viên phải tự viết hàm callback `disp_drv.flush_cb`, tự lập trình DMA2D Chrom-ART hoặc `memcpy` đẩy từng khối pixel ra SDRAM. | **TỰ ĐỘNG HÓA 100%:** Zephyr cung cấp sẵn file liên kết `display_stm32_ltdc.c`. LVGL vừa render xong, Zephyr tự gọi DMA2D copy ra Framebuffer. | • **FreeRTOS:** Tự do tùy biến thuật toán copy, nhưng nếu quản lý con trỏ buffer không cẩn thận dễ gây rách hình (Tearing) hoặc Deadlock giữa ngắt DMA2D và luồng vẽ.<br>• **Zephyr:** Glue layer tối ưu hóa phần cứng sẵn có. Tự động kết nối với Chrom-ART DMA2D để giải phóng $100\%$ CPU trong quá trình chuyển khối pixel, tự động gọi `lv_disp_flush_ready()` khi phần cứng hoàn tất. |
-| **3. Bộ đếm nhịp thời gian (`lv_tick`)** | Phải tự tạo một FreeRTOS Software Timer hoặc móc vào ngắt SysTick để gọi hàm `lv_tick_inc(x)` nuôi bộ đếm thời gian cho LVGL. | **TỰ ĐỘNG TÍCH HỢP:** Nhân Zephyr tự động móc nhịp System Uptime vào LVGL, không cần lập trình viên tự cấu hình bất kỳ ngắt nào. | • **FreeRTOS:** Nếu quên tăng tick hoặc tần số ngắt SysTick bị chia sai, kim đồng hồ và hiệu ứng animation của LVGL sẽ bị đơ hoặc chạy sai tốc độ.<br>• **Zephyr:** Đồng bộ tuyệt đối với đồng hồ mili-giây của kernel thông qua `k_uptime_get_32()`, đảm bảo hiệu ứng kim quay đồng hồ táp-lô đạt độ mượt mà $60\text{ FPS}$ chuẩn xác. |
-| **4. Độ phức tạp tích hợp & Time-to-Market** | Mất từ $2\text{ đến }3\text{ ngày}$ để ghép nối phần cứng màn hình, chip SDRAM và thư viện đồ họa LVGL. | Chỉ cần bật `CONFIG_LVGL=y` trong `prj.conf`. Vào code là tạo widget vẽ giao diện ngay lập tức! | • **FreeRTOS:** Chi phí phát triển ban đầu rất cao, khó tái sử dụng khi đổi sang màn hình có độ phân giải khác hoặc chip STM32 dòng khác.<br>• **Zephyr:** Thời gian hoàn thành tính bằng phút. Tiết kiệm hơn $90\%$ thời gian tích hợp ban đầu, giúp kỹ sư tập trung toàn lực vào logic thiết kế giao diện táp-lô ô tô (UI/UX). |
+| Khía Cạnh Kỹ Thuật | 1. Tự Ghép Đồ Họa Thủ Công (Bare-Metal / FreeRTOS) | 2. Zephyr Display Subsystem |
+| :--- | :--- | :--- |
+| **Khởi tạo SDRAM & LTDC** | Phải tự viết hàm nạp chuỗi lệnh JEDEC cho SDRAM, tự tính toán chu kỳ làm tươi (Refresh Rate), tự ghi hàng chục thanh ghi LTDC. | Zephyr tự động kích hoạt tuần tự: Driver FMC -> SDRAM -> LTDC ngay trước khi hàm `main()` chạy qua cờ Kconfig. |
+| **Hàm Flush màn hình** | Phải tự viết hàm callback `disp_drv.flush_cb`, tự lập trình thanh ghi DMA2D Chrom-ART hoặc dùng `memcpy` nghẽn CPU. | **Tự động 100%:** Zephyr cung cấp sẵn driver keo liên kết (Glue Layer). LVGL vừa vẽ xong, Zephyr tự gọi DMA2D đẩy pixel ra Framebuffer. |
+| **Bộ đếm thời gian (lv_tick)** | Phải tự cấu hình 1 Software Timer hoặc móc ngắt SysTick để gọi hàm `lv_tick_inc()`. Quên là màn hình bị đơ animation. | **Tự động tích hợp:** Zephyr tự động móc nhịp System Uptime vào LVGL, đảm bảo chuyển động kim đồng hồ mượt mà 60 FPS chuẩn xác. |
+| **Thời gian tích hợp (Time-to-Market)**| Mất từ 2 đến 3 ngày để ghép nối chạy thử các tầng phần cứng. | Chỉ cần bật `CONFIG_LVGL=y` trong `prj.conf`. Vào code là tạo đối tượng đồ họa giao diện được ngay! |
 
 ---
 
-### 1.2. Kiến Trúc Phân Tầng Giữa Zephyr Display Driver & Thư Viện LVGL
+# PHẦN 2: CƠ CHẾ NỘI TẠI (UNDER THE HOOD)
 
-Thay vì phải tự viết driver khởi tạo thanh ghi LTDC và tự quản lý buffer như ở Ngày 4, **Zephyr RTOS tích hợp sẵn một tầng keo liên kết (Glue Layer) hoàn hảo giữa thư viện đồ họa LVGL và phần cứng STM32:**
+---
 
-```text
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                         ỨNG DỤNG TÁP-LÔ Ô TÔ (DASHBOARD UI)                            │
-│   • lv_arc_set_value(speed_arc, 85)       <-- Cập nhật góc quay đồng hồ tốc độ        │
-│   • lv_label_set_text(speed_label, "85")  <-- Cập nhật số hiển thị km/h                │
-└───────────────────────────────────────────▲────────────────────────────────────────────┘
-                                            │ (Gọi hàm API đồ họa)
-┌───────────────────────────────────────────┴────────────────────────────────────────────┐
-│                        THƯ VIỆN ĐỒ HỌA LVGL CORE (lvgl/)                               │
-│   • Quản lý cây đối tượng (Screen -> Arc -> Label -> Container)                        │
-│   • Khối Invalidation: Đánh dấu các vùng chữ nhật bị bẩn (Dirty Regions)              │
-│   • Khối Render: Chuyển đổi lệnh vẽ thành mảng pixel (RGB565) trong Virtual Buffer     │
-└───────────────────────────────────────────▲────────────────────────────────────────────┘
-                                            │ (Kích hoạt flush_cb)
-┌───────────────────────────────────────────┴────────────────────────────────────────────┐
-│                  ZEPHYR DISPLAY SUBSYSTEM GLUE (display_stm32_ltdc.c)                  │
-│   • Nhận mảng pixel từ LVGL qua display_write(dev, x, y, &desc, buf)                   │
-│   • Sử dụng DMA2D Chrom-ART tăng tốc copy vào Framebuffer SDRAM                        │
-└───────────────────────────────────────────▲────────────────────────────────────────────┘
-                                            │ (Quét dòng liên tục 60 FPS)
-┌───────────────────────────────────────────┴────────────────────────────────────────────┐
-│                             PHẦN CỨNG BÁN DẪN (HARDWARE)                               │
-│   • LTDC Controller (Pixel Clock 9.6MHz) ──► Chân RGB 24-bit (PI14, PK7...)            │
-│   • FMC SDRAM IS42S32400F 108MHz (Địa chỉ 0xC000 0000) ──► Chứa Framebuffer            │
-│   • Màn hình Rocktech LCD 480x272                                                      │
-└────────────────────────────────────────────────────────────────────────────────────────┘
+### 2.1. Cơ Chế 1: Chuỗi Ràng Buộc Phần Cứng (Hardware Dependency Chain)
+
+Để một hệ thống đồ họa hiển thị được lên kính LCD của bo mạch STM32F746-Discovery, Zephyr quản lý một chuỗi phụ thuộc phần cứng nghiêm ngặt:
+
+```mermaid
+graph TD
+    A["Devicetree: chosen { zephyr,display = &ltdc; };"] --> B["Ngoại vi LTDC: Điều khiển quét kính LCD 480x272"]
+    B --> C["Bộ điều khiển nhớ FMC: fmc-controller"]
+    C --> D["Chip SDRAM ngoài: is42s32800j (8MB tại 0xC0000000)"]
+    D --> E["Tạo phân vùng Framebuffer: Kích thước 480 x 272 x 2 bytes = 255 KB"]
+    E --> F["LVGL Subsystem: Tự động đăng ký làm Display Driver chính"]
 ```
 
-> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Zephyr Display Driver & LVGL:**
-> 1. **Tra cứu Zephyr Display API:** Mở tài liệu Zephyr tại `https://docs.zephyrproject.org/latest/hardware/peripherals/display/index.html` (Mục *Display Interface*).
->    * Xem cấu trúc `struct display_driver_api`: các hàm callback `write()`, `read()`, `get_capabilities()`.
-> 2. **Tra cứu Driver LTDC Zephyr:** Mở file nguồn `zephyr/drivers/display/display_stm32_ltdc.c`:
->    * Xem cách Zephyr kết nối ngắt dòng quét LTDC, quản lý Framebuffer trong SDRAM, và chuyển tiếp các vùng chữ nhật pixel từ hàm `display_stm32_ltdc_write()`.
+* **Ý nghĩa của thuộc tính `chosen`:**
+  * Trong tệp cấu hình Devicetree, câu lệnh `zephyr,display = &ltdc;` đóng vai trò là "con trỏ định tuyến". Nó thông báo cho toàn bộ hệ điều hành Zephyr và thư viện LVGL biết rằng: Mọi thao tác xuất hình ảnh của ứng dụng sẽ được chuyển tới bộ điều khiển LTDC của STM32F7.
 
 ---
 
-### 1.3. Luồng Hoạt Động & Cơ Chế "Vùng Bẩn" (Dirty Area) Tối Ưu Bus
+### 2.2. Cơ Chế 2: Vấn Nạn D-Cache Coherency Trên ARM Cortex-M7
 
-Màn hình táp-lô $480 \times 272$ có tổng số điểm ảnh:
-$$\text{Total Pixels} = 480 \times 272 = 130{,}560\text{ pixels}$$
+Đây là lỗi kinh điển nhất trên dòng vi điều khiển hiệu năng cao Cortex-M7 có trang bị bộ nhớ đệm L1 Cache:
+* **Hiện tượng:** Giao diện táp-lô hiển thị các vệt sọc ngang, các khối màu bị vỡ hoặc nhấp nháy ngẫu nhiên khi kim đồng hồ chuyển động.
+* **Nguyên nhân sâu xa:**
+  1. ARM Cortex-M7 sử dụng bộ nhớ đệm dữ liệu **D-Cache** với chính sách ghi trễ (Write-Back Policy).
+  2. Khi CPU (luồng vẽ giao diện) tính toán và vẽ các pixel màu, các pixel này **mới chỉ nằm trong L1 D-Cache mà chưa kịp xả xuống thanh RAM SDRAM vật lý**.
+  3. Trong khi đó, phần cứng LTDC và DMA2D lại truy cập trực tiếp vào SDRAM thông qua Bus Matrix để quét tín hiệu ra màn hình. Kết quả là LTDC đọc phải dữ liệu cũ hoặc dữ liệu rác trong SDRAM, dẫn đến việc màn hình bị vỡ hình!
 
-Dung lượng của một Framebuffer hoàn chỉnh ở định dạng màu 16-bit RGB565 ($2\text{ bytes/pixel}$):
-$$\text{Framebuffer Size} = 130{,}560 \times 2\text{ bytes} = 261{,}120\text{ bytes} \approx 255\text{ KB}$$
+```mermaid
+flowchart TD
+    CPU["CPU Core (Luồng GUI)"] -->|"1. Vẽ pixel mới"| DCACHE["L1 D-Cache (Cortex-M7)"]
+    DCACHE -.->|"Chưa kịp xả xuống RAM (Write-Back)"| SDRAM["Thanh RAM Ngoài (SDRAM)"]
+    LTDC["Bộ Điều Khiển LTDC / DMA2D"] -->|"2. Đọc trực tiếp từ Bus AXI"| SDRAM
+    SDRAM -->|"Dữ liệu rác / cũ"| LCD["Màn Hình LCD: BỊ SỌC VÀ VỠ HÌNH!"]
 
-Nếu mỗi khung hình đều render và ghi đè lại toàn bộ $255\text{ KB}$ này:
-* Bus FMC SDRAM sẽ bị nghẽn vì phải chuyển hàng chục megabyte dữ liệu mỗi giây:
-  $$\text{Bus Bandwidth (Full 60 FPS)} = 255\text{ KB} \times 60 \approx 15.3\text{ MB/s}$$
-* CPU STM32F7 sẽ bị quá tải, không còn thời gian xử lý gói tin CAN Bus và thuật toán an toàn.
-
-**Cơ chế tối ưu hóa đột phá của LVGL kết hợp Zephyr:**
-1. **Bộ đệm ảo Virtual Display Buffer (VDB):**
-   Thay vì cấp phát toàn bộ màn hình trong RAM nội SRAM, LVGL chỉ cần một mảng đệm nhỏ chiếm $20\%$ chiều cao màn hình ($54\text{ dòng}$):
-   $$\text{VDB Size} = 480 \times 54 \times 2\text{ bytes} = 51{,}840\text{ bytes} \approx 50.6\text{ KB}$$
-2. **Vẽ lại vùng bẩn (Dirty Area Invalidation):**
-   * Khi kim đồng hồ tốc độ di chuyển từ $80$ lên $85\text{ km/h}$, chỉ có một ô vuông nhỏ kích thước $\approx 60 \times 30\text{ pixels}$ bị thay đổi.
-   * LVGL chỉ tính toán và render đúng diện tích nhỏ này:
-     $$\text{Dirty Area Pixels} = 60 \times 30 = 1{,}800\text{ pixels} \implies 1{,}800 \times 2 = 3{,}600\text{ bytes} \approx 3.5\text{ KB}$$
-   * Sau đó, Zephyr kích hoạt mạch DMA2D Chrom-ART đẩy đúng khối $3.5\text{ KB}$ này đè trực tiếp lên Framebuffer ngoài SDRAM.
-   * **Kết quả:** Giảm hơn $98.6\%$ lưu lượng dữ liệu chiếm dụng trên bus FMC ($\frac{3.5\text{ KB}}{255\text{ KB}} \approx 1.4\%$), giúp giao diện đạt $60\text{ FPS}$ cực kỳ mượt mà mà ngắt CAN vẫn được đáp ứng tức thì!
-
-> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Tài Liệu LVGL:**
-> 1. **Mở tài liệu LVGL Porting Guide:** Truy cập `https://docs.lvgl.io/master/porting/display.html`.
->    * Đọc phần *Draw buffer*: Phân biệt 3 chế độ đệm: 1 buffer (One buffer), 2 buffers (Double buffer), và kích thước đệm tối ưu (1/10 màn hình).
->    * Xem giải thích cơ chế `disp_drv.flush_cb`: Sau khi vẽ xong một vùng bẩn (Dirty Area `[x1, y1, x2, y2]`), LVGL gọi callback này để đưa con trỏ mảng pixel sang cho hardware driver xuất ra màn hình, và driver phải gọi `lv_disp_flush_ready()` khi hoàn tất.
-
----
-
-### 1.4. Quy Tắc Sống Còn: Bảo Vệ An Toàn Luồng (Thread-Safety)
-
-* **Bản chất vấn đề:** Thư viện LVGL **KHÔNG** an toàn khi chạy đa luồng (Non-Thread-Safe). Tất cả các đối tượng đồ họa (nút bấm, kim đồng hồ, chữ số) được liên kết với nhau bằng con trỏ danh sách liên kết.
-* **Nguy cơ lỗi:**
-  * Nếu Luồng CAN Worker nhận được tốc độ xe và lập tức gọi hàm cập nhật chữ số: `lv_label_set_text()`.
-  * Đúng lúc đó, Luồng GUI đang chạy `lv_timer_handler()` để tính toán tọa độ vẽ màn hình.
-  * Hai luồng cùng đọc/ghi vào một con trỏ -> Con trỏ bị gãy -> **Vi điều khiển văng lỗi HardFault ngay lập tức!**
-* 👉 **Giải pháp kỹ thuật:** Bắt buộc phải dùng **`k_mutex`** (tương đương `SemaphoreHandle_t` Mutex bên FreeRTOS) bọc quanh mọi thao tác với LVGL:
-
-```text
-Luồng CAN Worker:    k_mutex_lock(&gui_mutex) ──► lv_label_set_text() ──► k_mutex_unlock(&gui_mutex)
-Luồng GUI Render:    k_mutex_lock(&gui_mutex) ──► lv_timer_handler()  ──► k_mutex_unlock(&gui_mutex)
+    MPU["Giải pháp chuẩn: Cấu hình MPU<br/>Đặt vùng nhớ Framebuffer thành NON-CACHEABLE"] ==> SDRAM
 ```
+
+#### Giải pháp kỹ thuật chuẩn mực:
+1. **Cách 1 (Tối ưu nhất):** Cấu hình khối bảo vệ bộ nhớ **MPU (Memory Protection Unit)**, chỉ định rõ ràng vùng nhớ chứa Framebuffer (từ địa chỉ `0xC0000000`, kích thước 1MB) là vùng nhớ **`Non-cacheable`** hoặc **`Write-Through`**. Khi đó, CPU ghi pixel nào là dữ liệu được đẩy thẳng xuống SDRAM ngay tức thì.
+2. **Cách 2:** Trong hàm flush callback, gọi lệnh xả bộ nhớ đệm: `SCB_CleanDCache_by_Addr((uint32_t *)buf, size)` trước khi khởi động DMA2D.
+
+---
+
+### 2.3. Cơ Chế 3: Dirty Area Invalidation & Double Buffering
+
+Màn hình táp-lô có độ phân giải 480x272 pixel, định dạng màu RGB565 (16-bit = 2 bytes/pixel):
+* Toàn bộ 1 khung hình tiêu tốn: `480 * 272 * 2 = 261,120 bytes` (khoảng 255 KB).
+* Nếu mỗi lần kim đồng hồ nhích 1 độ mà CPU phải vẽ lại toàn bộ 255 KB dữ liệu rồi truyền qua bus FMC, băng thông của bus sẽ bị nghẽn 100%, làm sụt giảm tốc độ khung hình và khiến các tác vụ khác (như nhận gói tin CAN) bị trễ nhịp.
+
+#### Giải thuật tối ưu hóa của LVGL:
+1. **Dirty Rectangle Tracking:** LVGL theo dõi tọa độ các đối tượng đồ họa. Khi bạn gọi `lv_arc_set_value(speed_arc, 80)`, LVGL tính toán chính xác hình chữ nhật nhỏ nhất bao quanh phần kim vừa thay đổi (ví dụ một ô nhỏ 30 x 40 pixel), gọi là **Dirty Area**.
+2. **Virtual Display Buffer (VDB):** LVGL chỉ tính toán và render vùng Dirty Area này vào một bộ đệm nhỏ nằm trong bộ nhớ RAM nội (SRAM1) của vi điều khiển.
+3. **Hardware Blitting (DMA2D):** Zephyr Display Driver kích hoạt bộ tăng tốc đồ họa Chrom-ART (DMA2D) để copy đúng khối chữ nhật nhỏ này dán đè lên Framebuffer chính trên SDRAM. **Tiết kiệm đến 90% băng thông bus hệ thống!**
+
+---
+
+### 2.4. Cơ Chế 4: Nguyên Tắc Sống Còn — LVGL Non-Thread-Safe
+
+Rất nhiều kỹ sư mới làm quen với RTOS thường mắc sai lầm nghiêm trọng sau: **Nhận được gói tin CAN trong luồng `can_worker` là lập tức gọi hàm `lv_arc_set_value()` để cập nhật táp-lô!**
 
 ```c
-/* Luồng CAN Worker nhận dữ liệu từ xe: */
-k_mutex_lock(&gui_mutex, K_FOREVER);
-lv_label_set_text(speed_label, "85");
-k_mutex_unlock(&gui_mutex);
-
-/* Luồng GUI quét màn hình định kỳ: */
-k_mutex_lock(&gui_mutex, K_FOREVER);
-lv_timer_handler();
-k_mutex_unlock(&gui_mutex);
+/* SAI LẦM CHẾT NGƯỜI: GÂY CRASH HOẶC HARDFAULT NGẪU NHIÊN! */
+void can_worker_entry(...) {
+    while(1) {
+        k_msgq_get(&can_rx_msgq, &frame, K_FOREVER);
+        uint16_t speed = decode_speed(&frame);
+        
+        /* NGUY HIỂM: Gọi hàm LVGL trực tiếp từ luồng CAN! */
+        lv_arc_set_value(speed_arc, speed); 
+    }
+}
 ```
 
-> 📖 **Hướng Dẫn Tra Cứu Nguyên Lý Trong Tài Liệu LVGL & Zephyr Kernel:**
-> 1. **Mở tài liệu LVGL Operating System & Thread-safety:** Truy cập `https://docs.lvgl.io/master/porting/os.html`.
->    * Đọc quy định cốt lõi: "LVGL is not thread-safe". Mọi thao tác tạo widget, đổi thuộc tính hoặc gọi `lv_timer_handler()` từ nhiều luồng khác nhau bắt buộc phải được bảo vệ bởi Mutual Exclusion (Mutex).
-> 2. **Tra cứu Mutex Zephyr:** Mở `zephyr/include/zephyr/kernel.h` xem cách khai báo `K_MUTEX_DEFINE(gui_mutex)` và hàm `k_mutex_lock()`, `k_mutex_unlock()`.
+* **Tại sao lại gây lỗi?** Thư viện LVGL quản lý các đối tượng giao diện (Widget) bằng cấu trúc danh sách liên kết động (Linked List). Hàm `lv_timer_handler()` của luồng GUI đang duyệt danh sách để vẽ dở chừng, nếu bị luồng CAN có priority cao hơn chen ngang và thay đổi node danh sách, con trỏ sẽ bị hỏng (Broken Pointer), dẫn đến lỗi **`MemManage Fault`** hoặc sập hệ thống ngay lập tức.
+
+#### 2 Mô hình kiến trúc giải quyết triệt để:
+1. **Mô hình 1: Bảo vệ bằng Mutex (`k_mutex`):**
+   Mọi thao tác gọi hàm của LVGL ở bất kỳ luồng nào đều phải nằm giữa cặp khóa Mutex:
+   ```c
+   k_mutex_lock(&gui_mutex, K_FOREVER);
+   lv_arc_set_value(speed_arc, speed);
+   k_mutex_unlock(&gui_mutex);
+   ```
+2. **Mô hình 2: Mô hình Hàng Đợi (Actor Pattern - Khuyên Dùng):**
+   Luồng CAN **không bao giờ đụng vào LVGL**. Khi có dữ liệu mới, luồng CAN chỉ đóng gói thành tin nhắn và ném vào hàng đợi `gui_msgq`. Luồng GUI độc quyền đọc hàng đợi này và tự mình cập nhật giao diện.
 
 ---
 
-# 📑 BƯỚC 2: THỰC CHIẾN CẤU HÌNH DEVICETREE & KCONFIG (SETUP & LOOKUP)
+# PHẦN 3: CÁCH SỬ DỤNG THỰC CHIẾN (MÃ NGUỒN MODULAR HOÀN CHỈNH TỪNG FILE)
 
-> 🎯 **NGUYÊN TẮC TRA CỨU ĐỒ HỌA & SDRAM TRÊN ZEPHYR RTOS:**
-> 1. **Tra cứu Kconfig LVGL & LTDC:** Mở `zephyr/modules/lvgl/Kconfig` hoặc gõ `west build -t menuconfig` tìm kiếm `CONFIG_LVGL`, `CONFIG_STM32_LTDC`.
-> 2. **Tra cứu Devicetree Bindings FMC & LTDC:** Mở `zephyr/dts/bindings/display/st,stm32-ltdc.yaml` và `zephyr/dts/bindings/memory-controllers/st,stm32-fmc-sdram.yaml`.
-> 3. **Tra cứu Display & LVGL API:** Mở header `zephyr/include/zephyr/drivers/display.h` và thư viện đồ họa `lvgl.h`.
+Để tích hợp thư viện đồ họa LVGL trên nền tảng phần cứng STM32F746-Discovery, mã nguồn được phân định thành **5 tệp thành phần hoàn chỉnh, có đầu có đuôi rõ ràng**:
 
 ---
 
-## 2.1. Lộ trình Tra cứu Trực tiếp Màn hình LTDC & LVGL trên Zephyr (Display Lookup Methodology)
+### 3.1. Tệp Cấu Hình Tính Năng [ File: `prj.conf` ]
+```properties
+# 1. Bật hệ thống điều khiển bộ nhớ ngoài FMC và chip SDRAM 8MB
+CONFIG_MEMC=y
+CONFIG_MEMC_STM32=y
+CONFIG_MEMC_STM32_SDRAM=y
 
-### 📖 Kênh 1: Cách Tra Cứu Thuộc Tính Node `&fmc` và `&ltdc` (Devicetree Bindings)
-1. **Mở file Binding của mạch điều khiển FMC SDRAM:**
-   * Đường dẫn: **`zephyr/dts/bindings/memory-controllers/st,stm32-fmc-sdram.yaml`**.
-   * Tra cứu các tham số đã tính từ Bare-metal Ngày 4: `refresh-rate = <1667>`, `power-up-delay = <100>`, `num-auto-refresh = <8>`, `mode-register = <0x230>`.
-2. **Mở file Binding của bộ quét màn hình LTDC:**
-   * Đường dẫn: **`zephyr/dts/bindings/display/st,stm32-ltdc.yaml`**.
-   * Xem cấu hình timing màn hình 480x272: `width`, `height`, `hsync-len`, `vsync-len`, `hback-porch`, `vback-porch`.
-3. **Khai báo node `chosen`:**
-   * Gán `zephyr,display = &ltdc;` để báo cho hệ điều hành biết LTDC là ngõ xuất đồ họa mặc định.
+# 2. Bật bộ quét màn hình LTDC Display Driver
+CONFIG_DISPLAY=y
+CONFIG_STM32_LTDC=y
 
-### 📖 Kênh 2: Cách Tra Cứu Tùy Chọn Bộ Nhớ Đồ Họa Kconfig (`prj.conf`)
-1. **Kích thước Buffer vẽ ảo (Virtual Display Buffer - VDB):**
-   * Tìm kiếm `CONFIG_LV_Z_VDB_SIZE`: Xác định phần trăm chiều cao màn hình được cấp phát làm RAM đệm vẽ (ví dụ `20` = 20% màn hình, tương đương 54 dòng quét).
-2. **Vùng nhớ động đối tượng giao diện (Memory Pool):**
-   * Tìm kiếm `CONFIG_LV_Z_MEM_POOL_SIZE`: Cấp phát kích thước heap riêng cho LVGL tạo widget (ví dụ `16384` bytes = 16KB).
+# 3. Kích hoạt thư viện đồ họa LVGL phiên bản 16-bit màu (RGB565)
+CONFIG_LVGL=y
+CONFIG_LV_COLOR_DEPTH_16=y
+CONFIG_LV_COLOR_16_SWAP=n
 
-### 📖 Kênh 3: Cách Tra Cứu API Điều Khiển Hiển Thị
-1. **Zephyr Display Subsystem:**
-   * Mở file: **`zephyr/include/zephyr/drivers/display.h`** ➔ Xem hàm `display_get_capabilities()`, `display_write()`.
-2. **LVGL GUI Engine:**
-   * Mở file: **`lvgl.h`** ➔ Xem các hàm dựng giao diện xe hơi: `lv_meter_create()`, `lv_meter_set_scale_ticks()`, `lv_meter_add_needle_line()`, và hàm chạy bộ đếm thời gian `lv_timer_handler()`.
+# 4. Cấp phát bộ nhớ động nội bộ cho các Widget giao diện táp-lô (32 KB)
+CONFIG_LV_Z_MEM_POOL_SIZE=32768
 
----
+# 5. Cấu hình kích thước Virtual Display Buffer (VDB) bằng 1/10 màn hình
+CONFIG_LV_Z_VDB_SIZE=10
+CONFIG_LV_Z_DOUBLE_VDB=y
 
-## 2.2. Bảng Cấu Hình Tính Năng Kconfig (`prj.conf`)
-
-| Kconfig Symbol | Giá trị | Ý nghĩa Kỹ thuật trong Zephyr RTOS | Đánh Giá Kỹ Thuật, Ưu / Nhược Điểm & Chi Phí Tài Nguyên |
-| :--- | :---: | :--- | :--- |
-| **`CONFIG_DISPLAY`** | `y` | Bật hệ thống Display Subsystem của Zephyr. | • **Ưu điểm:** Khung chuẩn hóa giao tiếp màn hình (API `display_write`, `display_get_capabilities`), độc lập với phần cứng LCD.<br>• **Chi phí:** Tăng khoảng $\approx 3.8\text{ KB}$ Flash ROM. |
-| **`CONFIG_STM32_LTDC`** | `y` | Bật driver điều khiển LTDC trên dòng chip STM32F7. | • **Ưu điểm:** Quét điểm ảnh trực tiếp bằng phần cứng ra bus RGB 24-bit với xung nhịp Pixel Clock $9.6\text{ MHz}$; hoàn toàn không tốn CPU lúc quét dòng.<br>• **Chi phí:** Tốn $\approx 6.2\text{ KB}$ Flash và chiếm dụng các chân GPIO Port I, J, K. |
-| **`CONFIG_MEMC`** | `y` | Bật bộ điều khiển bộ nhớ ngoài (Memory Controller). | • **Ưu điểm:** Khung quản lý chung cho các bộ nhớ ngoại vi (FMC, QSPI, OctoSPI). Bắt buộc phải có để điều khiển SDRAM ngoài.<br>• **Chi phí:** $\approx 1.5\text{ KB}$ Flash. |
-| **`CONFIG_MEMC_STM32_SDRAM`** | `y` | Kích hoạt driver FMC SDRAM tự động khởi tạo chip RAM lúc boot. | • **Ưu điểm Cốt tử:** Thay thế hoàn toàn hàng trăm dòng code Bare-metal Ngày 4; tự động cấu hình thanh ghi `FMC_SDCR` và `FMC_SDTR` theo Devicetree trước khi nhân chạy.<br>• **Tài nguyên:** Mở khóa toàn bộ không gian $8\text{ MB}$ SDRAM ngoài tại địa chỉ `0xC0000000`. |
-| **`CONFIG_LVGL`** | `y` | Tích hợp toàn bộ thư viện đồ họa LVGL vào dự án. | • **Ưu điểm:** Cung cấp kho widget ô tô phong phú (Arc kim đồng hồ, Meter, Canvas, Button, Label, Animation).<br>• **Chi phí:** Tiêu tốn khoảng $\approx 85\text{ KB}$ Flash ROM. |
-| **`CONFIG_LV_COLOR_DEPTH_16`**| `y` | Định dạng màu 16-bit RGB565 tương thích màn hình LCD. | • **Ưu điểm Tối ưu:** Tiết kiệm một nửa dung lượng RAM và băng thông bus so với chuẩn ARGB8888 ($2\text{ bytes}$ thay vì $4\text{ bytes}$/pixel), trong khi mắt thường vẫn nhìn thấy màu sắc mượt mà không phân biệt được.<br>• **Lưu ý:** Phải đồng bộ tuyệt đối với cấu hình Layer 1 LTDC trong Devicetree. |
-| **`CONFIG_LV_Z_MEM_POOL_SIZE`**| `16384` | Cấp phát 16KB RAM cho LVGL Dynamic Object Pool. | • **Đánh giá Trade-off:** $16\text{ KB}$ là mức an toàn cho cụm đồng hồ táp-lô gồm 2 kim quay Arc, 4 nhãn số Label và 1 biểu tượng cảnh báo. Nếu giao diện có nhiều màn hình chuyển đổi phức tạp, cần tăng lên $32\text{ KB}$ để tránh tràn Pool. |
-| **`CONFIG_LV_Z_VDB_SIZE`** | `20` | Virtual Display Buffer chiếm 20% màn hình (khoảng 54 dòng). | • **Ưu điểm Cốt lõi:** Cân bằng hoàn hảo giữa mức tiêu hao SRAM ($50.6\text{ KB}$) và hiệu năng render. Đủ diện tích để chứa mọi chuyển động kim đồng hồ ô tô trong 1 lượt render mà không phải chia nhỏ màn hình quá nhiều lần. |
+# 6. Kích hoạt hệ thống ghi log và bảo vệ ngăn xếp đa luồng
+CONFIG_LOG=y
+CONFIG_MPU_STACK_GUARD=y
+CONFIG_THREAD_NAME=y
+```
 
 ---
 
-## 2.3. Khai Báo Ràng Buộc Phần Cứng Trong File Overlay (`app.overlay`)
-
+### 3.2. Tệp Định Nghĩa Phần Cứng [ File: `app.overlay` ]
 ```dts
 / {
     chosen {
+        /* Định tuyến toàn bộ hiển thị đồ họa của Zephyr sang bộ điều khiển LTDC */
         zephyr,display = &ltdc;
     };
 };
 
-/* Kích hoạt bộ điều khiển bộ nhớ ngoài FMC SDRAM */
+/* 1. Kích hoạt bộ điều khiển bộ nhớ ngoài FMC và chip SDRAM */
 &fmc {
     status = "okay";
+    pinctrl-0 = <&fmc_sdclk_pg8 &fmc_sdnwe_pc0 &fmc_sdnras_pf11 &fmc_sdncas_pg15>;
+    pinctrl-names = "default";
+
     sdram {
         status = "okay";
         power-up-delay = <100>;
         num-auto-refresh = <8>;
-        mode-register = <0x230>;
-        refresh-rate = <1667>;
+        mode-register = <0x220>;
+        refresh-rate = <64>;
+
+        /* Chip SDRAM IS42S32800J: 8MB tại địa chỉ cơ sở 0xC0000000 */
+        bank@0 {
+            reg = <0>;
+            st,sdram-control = <0x00001800>;
+            st,sdram-timing = <0x000001FF>;
+        };
     };
 };
 
-/* Kích hoạt khối quét màn hình đồ họa LTDC */
+/* 2. Cấu hình bộ quét hiển thị LTDC cho màn hình LCD 480x272 RK043FN48H */
 &ltdc {
     status = "okay";
-    pinctrl-0 = <&ltdc_r0_pi15 &ltdc_r1_pj0 &ltdc_r2_pj1 &ltdc_r3_pj2
-                 &ltdc_r4_pj3 &ltdc_r5_pj4 &ltdc_r6_pj5 &ltdc_r7_pj6
-                 &ltdc_g0_pj7 &ltdc_g1_pj8 &ltdc_g2_pj9 &ltdc_g3_pj10
-                 &ltdc_g4_pj11 &ltdc_g5_pk0 &ltdc_g6_pk1 &ltdc_g7_pk2
-                 &ltdc_b0_pj12 &ltdc_b1_pj13 &ltdc_b2_pj14 &ltdc_b3_pj15
-                 &ltdc_b4_pk3 &ltdc_b5_pk4 &ltdc_b6_pk5 &ltdc_b7_pk6
-                 &ltdc_de_pk7 &ltdc_clk_pi14 &ltdc_hsync_pi12 &ltdc_vsync_pi13>;
+    pinctrl-0 = <&ltdc_r0_pi15 &ltdc_g0_pj7 &ltdc_b0_pe4 &ltdc_clk_pi14>;
     pinctrl-names = "default";
 
-    clocks = <&rcc STM32_CLOCK_BUS_APB2 0x04000000>;
-    
-    width = <480>;
-    height = <272>;
-    def-refresh-rate = <60>;
+    /* Cấu hình phân giải và chu kỳ định thời quét pixel */
+    display-timings {
+        compatible = "zephyr,display-timings";
+        timing_480_272: 480x272 {
+            hactive = <480>;
+            vactive = <272>;
+            hsync-len = <41>;
+            hback-porch = <13>;
+            hfront-porch = <32>;
+            vsync-len = <10>;
+            vback-porch = <2>;
+            vfront-porch = <2>;
+            pixelclk-active = <1>;
+        };
+    };
 };
 ```
 
 ---
 
-# 💻 BƯỚC 3: GÕ CODE GIAO DIỆN & MỔ XẺ BUG ĐỒ HỌA (CODING & DEBUGS)
-
-## 3.1. Phân chia Cấu trúc File Dự án cho Ngày 9
-
-```text
-zephyr_gateway/
-├── app.overlay        <-- Ràng buộc chosen zephyr,display và cấu hình FMC/LTDC
-├── prj.conf           <-- Bật CONFIG_DISPLAY, CONFIG_LVGL, cấu hình VDB
-└── src/
-    ├── gui_cluster.h  <-- Khai báo API giao diện táp-lô & Mutex bảo vệ
-    ├── gui_cluster.c  <-- Tạo Widget Arc, Label, Bar và hàm cập nhật an toàn
-    └── main.c         <-- Khởi tạo màn hình và luồng định kỳ lv_timer_handler
-```
-
----
-
-### 📂 KHỐI 1: FILE HEADER GIAO DIỆN TÁP-LÔ [ `src/gui_cluster.h` ]
-
-#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 1:
-1. **Tra cứu Thư viện đồ họa LVGL trong Zephyr:**
-   - **Mở Zephyr SDK** ➔ `zephyr/modules/lvgl`: File header chính `<lvgl.h>`.
-   - Tra cứu quy tắc đa luồng: LVGL không hỗ trợ thread-safe nội tại, bắt buộc khai báo `extern struct k_mutex g_gui_mutex` để bảo vệ tài nguyên chia sẻ.
-2. **Khai báo nguyên mẫu giao diện xe hơi:**
-   - Các API cập nhật số liệu tốc độ `GUI_Cluster_UpdateSpeed(uint16_t speed_kmh)` và vòng tua `GUI_Cluster_UpdateRPM(uint16_t rpm)`.
-
-#### TODO 1 [File: `src/gui_cluster.h`]: Khai Báo API Cập Nhật Giao Diện
+### 3.3. Tệp Khai Báo Giao Diện Táp-Lô [ File: `src/gui_cluster.h` ]
 ```c
-#ifndef GUI_CLUSTER_H
-#define GUI_CLUSTER_H
+#ifndef GUI_CLUSTER_H_
+#define GUI_CLUSTER_H_
 
-#include <stdint.h>
 #include <zephyr/kernel.h>
+#include <stdint.h>
 
-/* Khởi tạo toàn bộ các thành phần đồ họa táp-lô ô tô */
-void GUI_Cluster_Init(void);
+/* Cấu trúc dữ liệu trạng thái xe hơi dùng chung giữa luồng CAN và luồng GUI */
+struct dashboard_telemetry {
+    uint16_t engine_rpm;    /* Vòng tua máy (0 - 8000 RPM) */
+    uint8_t  vehicle_speed; /* Tốc độ xe (0 - 240 km/h) */
+    int8_t   coolant_temp;  /* Nhiệt độ nước làm mát (-40 đến +125 độ C) */
+    uint8_t  battery_volt;  /* Điện áp ắc quy (nhân 10: 124 = 12.4V) */
+};
 
-/* Cập nhật tốc độ xe (km/h) an toàn từ luồng bất kỳ */
-void GUI_Cluster_UpdateSpeed(uint16_t speed_kmh);
+/**
+ * @brief Khởi tạo giao diện táp-lô ô tô (Kim đồng hồ, thanh đo nhiệt độ)
+ * @return 0 nếu thành công, mã lỗi âm nếu thất bại
+ */
+int gui_cluster_init(void);
 
-/* Cập nhật vòng tua động cơ (RPM) an toàn từ luồng bất kỳ */
-void GUI_Cluster_UpdateRPM(uint16_t rpm);
+/**
+ * @brief Đẩy dữ liệu đo lường mới vào hàng đợi GUI (Thread-Safe)
+ * @param data Con trỏ chứa dữ liệu xe hơi vừa bóc tách từ mạng CAN
+ * @return 0 nếu nạp vào hàng đợi thành công
+ */
+int gui_cluster_update_telemetry(const struct dashboard_telemetry *data);
 
-/* Mutex bảo vệ an toàn luồng cho toàn bộ thư viện LVGL */
-extern struct k_mutex g_gui_mutex;
-
-#endif /* GUI_CLUSTER_H */
+#endif /* GUI_CLUSTER_H_ */
 ```
 
 ---
 
-### 📂 KHỐI 2: FILE SOURCE WIDGET ĐỒ HỌA [ `src/gui_cluster.c` ]
-
-#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 2:
-1. **Tra cứu Widget Arc (Đồng hồ vòng cung):**
-   - **Mở tài liệu LVGL** ➔ `Widgets -> Arc`:
-     - `lv_arc_create(parent)`: Tạo đối tượng vòng cung.
-     - `lv_arc_set_rotation()`, `lv_arc_set_bg_angles()`: Góc quay và độ mở góc (0 đến 270 độ).
-     - `lv_arc_set_range(arc, min, max)`: Cài dải đo từ 0 đến 240 km/h.
-     - `lv_obj_remove_style(..., LV_PART_KNOB)`: Ẩn núm kéo tròn để biến thành mặt đồng hồ hiển thị tĩnh.
-2. **Tra cứu Widget Bar & Label:**
-   - `lv_bar_create()`: Thanh đo vòng tua 0 - 8000 RPM.
-   - `lv_label_create()`: Hiển thị chỉ số số học kích thước font chữ lớn.
-3. **Cơ chế đồng bộ hóa Mutex an toàn:**
-   - Bắt buộc gọi `k_mutex_lock(&g_gui_mutex, K_FOREVER)` trước khi can thiệp widget, và giải phóng bằng `k_mutex_unlock(&g_gui_mutex)` ngay sau khi hoàn tất.
-
-#### TODO 2 [File: `src/gui_cluster.c`]: Khởi Tạo Widget Đồng Hồ Vòng Cung (Arc)
+### 3.4. Tệp Hiện Thực Hóa Logic Giao Diện Đa Luồng [ File: `src/gui_cluster.c` ]
 ```c
 #include "gui_cluster.h"
+#include <zephyr/drivers/display.h>
 #include <lvgl.h>
-#include <stdio.h>
 #include <zephyr/logging/log.h>
 
 LOG_MODULE_REGISTER(gui_cluster, LOG_LEVEL_INF);
 
-/* Định nghĩa Mutex dùng chung toàn hệ thống */
-K_MUTEX_DEFINE(g_gui_mutex);
+/* 1. Hàng đợi tin nhắn độc quyền dành riêng cho luồng GUI (Chứa tối đa 10 gói tin) */
+K_MSGQ_DEFINE(gui_msgq, sizeof(struct dashboard_telemetry), 10, 4);
 
+/* Khai báo luồng GUI chuyên biệt */
+#define GUI_STACK_SIZE 4096
+#define GUI_PRIORITY   6
+
+/* Các con trỏ đối tượng giao diện đồ họa LVGL */
 static lv_obj_t *s_speed_arc;
 static lv_obj_t *s_speed_label;
 static lv_obj_t *s_rpm_bar;
 
-void GUI_Cluster_Init(void)
+/* 2. Hàm vẽ và bố trí các Widget trên màn hình táp-lô */
+static void build_dashboard_ui(void)
 {
-    k_mutex_lock(&g_gui_mutex, K_FOREVER);
-
-    /* 1. Thiết lập màu nền toàn màn hình màu xám đen sang trọng */
     lv_obj_t *scr = lv_scr_act();
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0x101418), 0);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x10141D), 0); /* Nền xanh đen ô tô */
 
-    /* 2. Tạo Widget Đồng Hồ Tốc Độ (Arc Widget) */
+    /* Đồng hồ Arc hiển thị tốc độ xe (0 - 240 km/h) */
     s_speed_arc = lv_arc_create(scr);
-    lv_obj_set_size(s_speed_arc, 180, 180);
-    lv_obj_align(s_speed_arc, LV_ALIGN_CENTER, 0, -10);
-    lv_arc_set_rotation(s_speed_arc, 135);
-    lv_arc_set_bg_angles(s_speed_arc, 0, 270);
-    lv_arc_set_range(s_speed_arc, 0, 240); /* Tối đa 240 km/h */
+    lv_obj_set_size(s_speed_arc, 160, 160);
+    lv_obj_center(s_speed_arc);
+    lv_arc_set_range(s_speed_arc, 0, 240);
     lv_arc_set_value(s_speed_arc, 0);
-    lv_obj_remove_style(s_speed_arc, NULL, LV_PART_KNOB); /* Ẩn núm vặn */
-    lv_obj_clear_flag(s_speed_arc, LV_OBJ_FLAG_CLICKABLE); /* Khóa cảm ứng */
+    lv_arc_set_bg_angles(s_speed_arc, 135, 45);
 
-    /* Định dạng màu sắc kim đồng hồ (Xanh Cyan) */
-    lv_obj_set_style_arc_color(s_speed_arc, lv_color_hex(0x00E5FF), LV_PART_INDICATOR);
-    lv_obj_set_style_arc_width(s_speed_arc, 12, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(s_speed_arc, lv_color_hex(0x2A323D), LV_PART_MAIN);
-    lv_obj_set_style_arc_width(s_speed_arc, 12, LV_PART_MAIN);
+    /* Nhãn chữ hiển thị số km/h */
+    s_speed_label = lv_label_create(s_speed_arc);
+    lv_label_set_text(s_speed_label, "0 km/h");
+    lv_obj_center(s_speed_label);
 
-    /* 3. Tạo Label Hiển Thị Số Tốc Độ Ở Tâm */
-    s_speed_label = lv_label_create(scr);
-    lv_label_set_text(s_speed_label, "0");
-    lv_obj_set_style_text_color(s_speed_label, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(s_speed_label, &lv_font_montserrat_28, 0);
-    lv_obj_align(s_speed_label, LV_ALIGN_CENTER, 0, -15);
-
-    /* Label đơn vị km/h */
-    lv_obj_t *unit_label = lv_label_create(scr);
-    lv_label_set_text(unit_label, "KM/H");
-    lv_obj_set_style_text_color(unit_label, lv_color_hex(0x8A9BA8), 0);
-    lv_obj_align(unit_label, LV_ALIGN_CENTER, 0, 15);
-
-    /* 4. Tạo Thanh Đo Vòng Tua Động Cơ (RPM Bar) ở đáy màn hình */
+    /* Thanh Bar hiển thị vòng tua động cơ (0 - 8000 RPM) */
     s_rpm_bar = lv_bar_create(scr);
-    lv_obj_set_size(s_rpm_bar, 300, 10);
+    lv_obj_set_size(s_rpm_bar, 300, 15);
     lv_obj_align(s_rpm_bar, LV_ALIGN_BOTTOM_MID, 0, -20);
-    lv_bar_set_range(s_rpm_bar, 0, 8000); /* 0 - 8000 RPM */
-    lv_bar_set_value(s_rpm_bar, 1000, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(s_rpm_bar, lv_color_hex(0xFF3D00), LV_PART_INDICATOR);
-
-    k_mutex_unlock(&g_gui_mutex);
-    LOG_INF("Khởi tạo toàn bộ đối tượng đồ họa Cluster thành công!");
+    lv_bar_set_range(s_rpm_bar, 0, 8000);
+    lv_bar_set_value(s_rpm_bar, 800, LV_ANIM_OFF);
 }
 
-void GUI_Cluster_UpdateSpeed(uint16_t speed_kmh)
+/* 3. Hàm thực thi của luồng GUI: Quét hàng đợi và gọi lv_timer_handler() */
+void gui_thread_entry(void *p1, void *p2, void *p3)
 {
-    /* BẮT BUỘC: KHÓA MUTEX TRƯỚC KHI THAO TÁC TRÊN ĐỐI TƯỢNG LVGL */
-    k_mutex_lock(&g_gui_mutex, K_FOREVER);
+    ARG_UNUSED(p1); ARG_UNUSED(p2); ARG_UNUSED(p3);
+    struct dashboard_telemetry rx_data;
 
-    if (speed_kmh > 240) {
-        speed_kmh = 240;
+    const struct device *display_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
+    if (!device_is_ready(display_dev)) {
+        LOG_ERR("Lỗi: Ngoại vi LTDC Display chưa sẵn sàng!");
+        return;
     }
-    lv_arc_set_value(s_speed_arc, speed_kmh);
 
-    char buf[8];
-    snprintf(buf, sizeof(buf), "%u", speed_kmh);
-    lv_label_set_text(s_speed_label, buf);
+    /* Xây dựng giao diện táp-lô lần đầu */
+    build_dashboard_ui();
+    LOG_INF("Đã khởi tạo xong giao diện táp-lô Digital Instrument Cluster!");
 
-    k_mutex_unlock(&g_gui_mutex);
+    char text_buf[16];
+    while (1) {
+        /* BƯỚC AN TOÀN ĐA LUỒNG: Luồng GUI chủ động lấy dữ liệu từ hàng đợi tin nhắn */
+        if (k_msgq_get(&gui_msgq, &rx_data, K_NO_WAIT) == 0) {
+            /* Cập nhật giá trị vào các widget đồ họa */
+            lv_arc_set_value(s_speed_arc, rx_data.vehicle_speed);
+            snprintf(text_buf, sizeof(text_buf), "%u km/h", rx_data.vehicle_speed);
+            lv_label_set_text(s_speed_label, text_buf);
+
+            lv_bar_set_value(s_rpm_bar, rx_data.engine_rpm, LV_ANIM_ON);
+        }
+
+        /* Gọi hàm điều phối chu kỳ render của LVGL (Xử lý Dirty Area Invalidation) */
+        lv_timer_handler();
+
+        /* Ngủ 10ms để duy trì tần số quét 60 FPS và nhường CPU cho luồng CAN */
+        k_msleep(10);
+    }
 }
 
-void GUI_Cluster_UpdateRPM(uint16_t rpm)
+K_THREAD_DEFINE(gui_tid, GUI_STACK_SIZE,
+                gui_thread_entry, NULL, NULL, NULL,
+                GUI_PRIORITY, 0, 0);
+
+int gui_cluster_update_telemetry(const struct dashboard_telemetry *data)
 {
-    k_mutex_lock(&g_gui_mutex, K_FOREVER);
-    lv_bar_set_value(s_rpm_bar, rpm, LV_ANIM_ON);
-    k_mutex_unlock(&g_gui_mutex);
+    /* Đẩy dữ liệu vào hàng đợi k_msgq, không bao giờ gọi trực tiếp hàm LVGL */
+    return k_msgq_put(&gui_msgq, data, K_NO_WAIT);
 }
 ```
 
 ---
 
-### 📂 KHỐI 3: LUỒNG QUẢN TRỊ ĐỒ HỌA [ `src/main.c` ]
-
-#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 3:
-1. **Lấy thiết bị hiển thị mặc định qua Devicetree:**
-   - Macro `DEVICE_DT_GET(DT_CHOSEN(zephyr_display))` trỏ đến node được khai báo trong `chosen { zephyr,display = &ltdc; };`.
-   - Kiểm tra `device_is_ready(display_dev)` trước khi render.
-2. **Vòng lặp LVGL Task Handler:**
-   - **Mở tài liệu LVGL** ➔ `Porting -> Timer Handler`:
-     - Hàm `lv_timer_handler()` tính toán lại tọa độ, vẽ lại các vùng bẩn (Dirty Areas) và kích hoạt flush callback xuống phần cứng.
-     - Bọc bởi Mutex và cho luồng ngủ `k_msleep(10)` để CPU đạt tốc độ làm tươi ổn định 100 FPS mà không làm nghẽn bus.
-
-#### TODO 3 [File: `src/main.c`]: Khởi Động Vòng Lặp Render Định Kỳ
+### 3.5. Tệp Khởi Động Ứng Dụng Chính [ File: `src/main.c` ]
 ```c
 #include <zephyr/kernel.h>
-#include <zephyr/device.h>
-#include <zephyr/drivers/display.h>
-#include <lvgl.h>
 #include <zephyr/logging/log.h>
 #include "gui_cluster.h"
 
 LOG_MODULE_REGISTER(main_app, LOG_LEVEL_INF);
 
-#define GUI_THREAD_STACK_SIZE 4096
-#define GUI_THREAD_PRIORITY   6 /* Mức ưu tiên đồ họa trung bình */
-
-void gui_render_thread(void *p1, void *p2, void *p3)
-{
-    ARG_UNUSED(p1); ARG_UNUSED(p2); ARG_UNUSED(p3);
-
-    const struct device *display_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
-    if (!device_is_ready(display_dev)) {
-        LOG_ERR("Lỗi: Màn hình LCD LTDC chưa sẵn sàng!");
-        return;
-    }
-
-    /* Khởi tạo giao diện táp-lô */
-    GUI_Cluster_Init();
-
-    LOG_INF("Luồng Render đồ họa LVGL bắt đầu hoạt động...");
-
-    while (1) {
-        /* BƯỚC QUAN TRỌNG: KHÓA MUTEX KHI GỌI BỘ LẬP LỊCH LVGL TIMER HANDLER */
-        k_mutex_lock(&g_gui_mutex, K_FOREVER);
-        lv_timer_handler();
-        k_mutex_unlock(&g_gui_mutex);
-
-        /* Ngủ 10ms (Tương đương tốc độ làm tươi tối đa 100 FPS) */
-        k_msleep(10);
-    }
-}
-
-K_THREAD_DEFINE(gui_tid, GUI_THREAD_STACK_SIZE,
-                gui_render_thread, NULL, NULL, NULL,
-                GUI_THREAD_PRIORITY, 0, 0);
-
 int main(void)
 {
-    LOG_INF("Khởi động hệ thống Dashboard Display Gateway...");
-    
-    /* Vòng lặp test cập nhật số liệu giả lập */
-    uint16_t test_speed = 0;
-    while (1) {
-        k_sleep(K_MSEC(100));
-        test_speed = (test_speed + 2) % 240;
-        GUI_Cluster_UpdateSpeed(test_speed);
-        GUI_Cluster_UpdateRPM(test_speed * 30);
-    }
+    LOG_INF("=================================================");
+    LOG_INF("   KHỞI ĐỘNG HỆ THỐNG HIỂN THỊ TÁP-LÔ ĐỒ HỌA     ");
+    LOG_INF("=================================================");
+
+    /* Giả lập gửi dữ liệu khởi động lên táp-lô */
+    struct dashboard_telemetry init_telemetry = {
+        .engine_rpm = 1000,
+        .vehicle_speed = 0,
+        .coolant_temp = 85,
+        .battery_volt = 126
+    };
+    gui_cluster_update_telemetry(&init_telemetry);
+
+    LOG_INF("Hệ thống táp-lô hiển thị 60 FPS đang vận hành ổn định!");
     return 0;
 }
 ```
 
 ---
 
-## 3.2. Mổ xẻ 5 Bug Đồ Họa "Kinh Điển" trong Ngày 9
+# PHẦN 4: BỘ CÂU HỎI PHỎNG VẤN CHUYÊN SÂU (INTERVIEW DEEP-DIVE)
 
-```text
-┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                 5 BẪY HỆ THỐNG ZEPHYR DISPLAY & LVGL                            │
-├───────────────────┬───────────────────────────────────────────┬─────────────────────────────────┤
-│ HIỆN TƯỢNG BUG    │ NGUYÊN NHÂN SÂU XA PHẦN MỀM / PHẦN CỨNG   │ GIẢI PHÁP SỬA CODE CHUẨN XÁC    │
-├───────────────────┼───────────────────────────────────────────┼─────────────────────────────────┤
-│ 1. Màn hình sọc   │ Quên `CONFIG_MEMC=y` khiến bộ điều khiển  │ Bật đầy đủ `CONFIG_MEMC=y` và   │
-│    nhiễu ngẫu nhiên│ SDRAM ngoài không nạp lệnh JEDEC init.    │ `CONFIG_MEMC_STM32_SDRAM=y`.    │
-├───────────────────┼───────────────────────────────────────────┼─────────────────────────────────┤
-│ 2. HardFault ngẫu │ Luồng CAN gọi thẳng hàm LVGL mà không có  │ Luôn bọc mọi hàm LVGL bằng      │
-│    nhiên khi chạy │ Mutex, làm gãy con trỏ danh sách Object.  │ `k_mutex_lock(&gui_mutex)`.     │
-├───────────────────┼───────────────────────────────────────────┼─────────────────────────────────┤
-│ 3. Sai lệch hệ màu│ LVGL nạp màu ARGB8888 trong khi LTDC chỉ  │ Cài `CONFIG_LV_COLOR_DEPTH_16=y`│
-│    (Đỏ thành Xanh)│ nhận định dạng 16-bit RGB565.             │ đồng bộ tuyệt đối với LTDC.     │
-├───────────────────┼───────────────────────────────────────────┼─────────────────────────────────┤
-│ 4. Widget không   │ Bộ nhớ `CONFIG_LV_Z_MEM_POOL_SIZE` bị     │ Tăng kích thước Pool lên 16KB   │
-│    hiển thị (NULL)│ cạn kiệt, không cấp phát được đối tượng.  │ hoặc 32KB trong file `prj.conf`.│
-├───────────────────┼───────────────────────────────────────────┼─────────────────────────────────┤
-│ 5. Giao diện giật │ Gọi `lv_timer_handler()` mà không có lệnh │ Thêm `k_msleep(10);` sau mỗi lần│
-│    đơ (Lag/Freeze)│ `k_msleep()`, chiếm dụng 100% CPU.        │ chạy vòng lặp handler.          │
-└───────────────────┴───────────────────────────────────────────┴─────────────────────────────────┘
-```
+### ❓ Câu 1: "Thư viện đồ họa LVGL có thread-safe không? Nếu bạn có một luồng nhận dữ liệu CAN tốc độ cao và một luồng vẽ màn hình, bạn xử lý việc cập nhật dữ liệu hiển thị như thế nào để không bị crash hệ điều hành?"
+* **Trả lời chuẩn:**
+  * LVGL hoàn toàn **không thread-safe**. Các cấu trúc dữ liệu của nó không được bảo vệ nội bộ bằng mutex để tối ưu hóa hiệu năng và dung lượng mã nguồn.
+  * Để cập nhật an toàn từ luồng CAN, em áp dụng **Mô hình Hàng đợi Tin nhắn (Message Queue / Actor Pattern)**: Luồng CAN khi giải mã xong dữ liệu sẽ đóng gói giá trị tốc độ vào `k_msgq`. Luồng GUI trong chu kỳ lặp sẽ kiểm tra `k_msgq_get` với thời gian chờ 0. Nếu có dữ liệu mới, chính luồng GUI sẽ thực hiện gọi hàm `lv_arc_set_value()`. Cách này loại bỏ 100% hiện tượng tranh chấp tài nguyên (Race Condition) và triệt tiêu nguy cơ Priority Inversion mà không cần lạm dụng Mutex.
+
+### ❓ Câu 2: "Tại sao trên vi điều khiển ARM Cortex-M7, việc hiển thị đồ họa qua DMA/LTDC thường gặp lỗi sọc màn hình hoặc nhiễu pixel? Làm thế nào để xử lý triệt để?"
+* **Trả lời chuẩn:**
+  * Nguyên nhân do tính chất **bất đồng bộ giữa bộ nhớ đệm L1 D-Cache của CPU và phần cứng quét màn hình LTDC**: Khi CPU vẽ các pixel, dữ liệu nằm lại trong D-Cache (do chính sách Write-Back) mà chưa được xả xuống chip RAM SDRAM ngoài. Khi LTDC đọc trực tiếp từ SDRAM, nó đọc phải dữ liệu rác cũ khiến màn hình bị sọc.
+  * Giải pháp triệt để: Em sử dụng khối phần cứng **MPU (Memory Protection Unit)** để cấu hình toàn bộ phân vùng nhớ của Framebuffer trên SDRAM thành chế độ **`Non-cacheable`** (hoặc `Write-Through`). Bằng cách này, mọi pixel CPU ghi ra sẽ được nạp thẳng xuống RAM ngoài ngay lập tức, đảm bảo tính nhất quán bộ nhớ 100% giữa CPU và bộ quét màn hình LTDC.
+
+### ❓ Câu 3: "Sự khác biệt giữa việc cấp phát Full Framebuffer và Virtual Display Buffer (VDB / Partial Buffer) trong LVGL là gì?"
+* **Trả lời chuẩn:**
+  * **Full Framebuffer:** Cần một vùng nhớ RAM đủ lớn để chứa trọn vẹn toàn bộ số điểm ảnh của màn hình (ví dụ màn 480x272 màu 16-bit tốn khoảng 255 KB cho 1 buffer, 510 KB cho double buffer). Bắt buộc phải có RAM ngoài (SDRAM).
+  * **Virtual Display Buffer (Partial Buffer):** Chỉ cấp phát một vùng đệm nhỏ bằng 1/10 hoặc 1/20 màn hình (ví dụ chỉ tốn 10 KB đến 20 KB trong RAM nội SRAM). LVGL sẽ chia màn hình thành từng lát nhỏ để render lần lượt rồi dùng DMA đẩy ra màn hình. Giải pháp này giúp các vi điều khiển có dung lượng RAM nhỏ vẫn có thể chạy được giao diện đồ họa mượt mà.
 
 ---
 
-# 🎯 BƯỚC 4: BỘ CÂU HỎI PHỎNG VẤN & KỊCH BẢN TRẢ LỜI CHUYÊN SÂU
+### 🎙️ KỊCH BẢN TRẢ LỜI PHỎNG VẤN 60 GIÂY VỀ ĐỒ HỌA NHÚNG (ELEVATOR PITCH)
 
-### ❓ Câu 1: Tại sao thư viện đồ họa LVGL lại không Thread-Safe? Giải pháp kiến trúc an toàn trong RTOS là gì?
-* **Trả lời chuẩn Kỹ sư RTOS:** 
-  * LVGL được thiết kế tối ưu hóa bộ nhớ cho hệ thống nhúng (Microcontrollers), do đó nó không tích hợp sẵn các cơ chế khóa Semaphore hay Mutex bên trong từng hàm để tiết kiệm dung lượng RAM và chu kỳ lệnh. Cây đối tượng đồ họa (Object Tree) và hệ thống Style sử dụng các danh sách liên kết dùng chung.
-  * Nếu nhiều luồng (ví dụ luồng CAN Worker và luồng GUI Timer) cùng sửa đổi thuộc tính đối tượng hoặc duyệt cây vẽ cùng lúc, xung đột cuộc đua (Race Condition) sẽ phá hủy các con trỏ liên kết và gây lỗi `MemManage` hoặc `HardFault`.
-  * **Giải pháp chuẩn:** Có 2 phương án:
-    1. **Sử dụng Mutex (`k_mutex`):** Bọc toàn bộ các lệnh truy cập LVGL và hàm `lv_timer_handler()` bằng cùng một Mutex.
-    2. **Mô hình Hàng đợi (Actor Pattern):** Luồng ngoài chỉ gửi dữ liệu số thô vào một Message Queue (`k_msgq`), luồng GUI là luồng duy nhất được phép lấy dữ liệu ra và gọi hàm cập nhật widget.
-
-### ❓ Câu 2: Cơ chế "Dirty Area Invalidation" của LVGL hoạt động như thế nào?
-* **Trả lời chuẩn Kỹ sư RTOS:** 
-  * Khi một widget bị sửa đổi (ví dụ kim đồng hồ đổi góc quay), LVGL không xóa toàn bộ màn hình để vẽ lại. Nó tính toán tọa độ bao quanh phần diện tích bị ảnh hưởng và đánh dấu đó là một "Vùng bẩn" (Dirty Area).
-  * Trong chu kỳ gọi `lv_timer_handler()`, LVGL chỉ render đúng các pixel nằm trong vùng bẩn này vào bộ đệm ảo VDB, sau đó phát tín hiệu qua hàm `display_write()` tới driver phần cứng LTDC. Điều này giúp giảm thiểu tới 80% - 95% khối lượng dữ liệu phải trung chuyển qua bus AXI và bộ nhớ SDRAM ngoài, giải phóng băng thông cho các ngoại vi truyền thông khác.
-
-### ❓ Câu 3: Làm thế nào để đảm bảo chip SDRAM ngoài được khởi tạo đúng lúc trên Zephyr RTOS?
-* **Trả lời chuẩn Kỹ sư RTOS:**
-  * Zephyr quản lý thứ tự khởi động driver bằng thông số **Init Priority**.
-  * Driver điều khiển bộ nhớ ngoài FMC SDRAM (`drivers/memc/memc_stm32_sdram.c`) được đăng ký với mức ưu tiên `CONFIG_MEMC_INIT_PRIORITY` (mặc định là mức rất sớm: `POST_KERNEL, 0`).
-  * Trong khi đó, driver quét màn hình LTDC (`drivers/display/display_stm32_ltdc.c`) khởi động ở mức muộn hơn (`POST_KERNEL, CONFIG_APPLICATION_INIT_PRIORITY`). Điều này đảm bảo chuỗi lệnh cấu hình JEDEC (Precharge, Auto-Refresh, Mode Register) của SDRAM đã hoàn tất 100% trước khi LTDC phát lệnh đọc Framebuffer đầu tiên ra màn hình.
-
----
-
-### 🎙️ KỊCH BẢN TRẢ LỜI PHỎNG VẤN 60 GIÂY (ELEVATOR PITCH)
-
-> *"Tại Ngày 9, em xây dựng hệ thống hiển thị táp-lô ô tô kỹ thuật số bằng cách tích hợp thư viện **LVGL** lên nền tảng **Zephyr Display Subsystem**.  
-> Em cấu hình Devicetree ràng buộc chip bộ nhớ ngoài **FMC SDRAM** và bộ điều khiển **LTDC** (480 x 272), tận dụng cơ chế **Virtual Display Buffer (VDB)** chiếm vỏn vẹn 20% khung hình trong RAM nội để giảm thiểu tối đa tài nguyên SRAM cần thiết.  
-> Để bảo vệ tính toàn vẹn hệ thống trong môi trường đa luồng thời gian thực, em thiết lập cơ chế đồng bộ hóa luồng nghiêm ngặt bằng **`k_mutex`**, đảm bảo luồng CAN Worker và luồng Render đồ họa không bao giờ xung đột tài nguyên trên cây đối tượng LVGL. Kết quả là giao diện táp-lô hiển thị kim đồng hồ Arc và thanh vòng tua máy chuyển động mượt mà ở tần số quét cao mà không hề gây nghẽn bus bộ nhớ."*
+> *"Ở tầng giao diện người dùng táp-lô, em tích hợp thư viện **LVGL** trên nền tảng **Zephyr Display Subsystem** kết hợp bộ nhớ ngoài FMC SDRAM và bộ quét LTDC của STM32F746.  
+> Em giải quyết bài toán hiệu năng hiển thị bằng cơ chế **Dirty Area Invalidation**, chỉ vẽ lại vùng có sự thay đổi giá trị và tận dụng bộ tăng tốc đồ họa Chrom-ART (DMA2D) để sao chép khối pixel siêu tốc mà không làm nghẽn CPU.  
+> Nhận thức sâu sắc về đặc tính phần cứng Cortex-M7, em cấu hình phân vùng **MPU Non-cacheable** cho Framebuffer trên SDRAM để hóa giải hoàn toàn lỗi bất đồng bộ D-Cache gây sọc màn hình, đồng thời thiết kế mô hình truyền thông điệp **Message Queue** an toàn đa luồng giữa luồng CAN thời gian thực và luồng đồ họa, đảm bảo giao diện đạt chuẩn mượt mà 60 FPS mà không có nguy cơ bị sập hệ thống."*

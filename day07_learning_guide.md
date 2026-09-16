@@ -1,663 +1,362 @@
-# 🏆 [NGÀY 7] CẨM NANG TOÀN DIỆN ZEPHYR RTOS: BOARD BRING-UP, DEVICETREE OVERLAY & HỆ THỐNG ĐA LUỒNG (MULTI-THREADING)
-## Lộ trình 4 Bước: Kiến Trúc RTOS ➔ Thực Chiến Devicetree/Kconfig ➔ Gõ Code Ứng Dụng ➔ Phỏng Vấn Chuyên Sâu
+# 🏆 [NGÀY 7] LÀM CHỦ ZEPHYR RTOS: CƠ CHẾ NỘI TẠI, TƯ DUY KIẾN TRÚC & CÁCH VẬN HÀNH HỆ ĐIỀU HÀNH
+## Chuyên khảo Kỹ thuật: Compile-Time Devicetree Engine, Driver Model, Scheduler Mechanics & Hardware Protection
 
-> **Mục tiêu:** Chuyển dịch toàn diện từ tư duy Bare-metal sang hệ điều hành thời gian thực **Zephyr RTOS** trên STM32F746: Làm chủ cơ chế tách biệt phần cứng bằng cây thiết bị **Devicetree (`.dts`/`.overlay`)** và bộ cấu hình nhân **Kconfig (`prj.conf`)**, cấu hình ánh xạ chân vật lý qua **Pinctrl**, tạo và điều phối đa luồng **Kernel Multi-Threading (`k_thread`)**, thiết lập lá chắn bảo vệ tràn ngăn xếp bằng phần cứng **`CONFIG_MPU_STACK_GUARD`** và hệ thống nhật ký bất đồng bộ **Zephyr Logging (`LOG_MODULE_REGISTER`)**.  
-> **Nguyên tắc kỹ thuật:** **Đi thẳng vào cơ chế phân tầng hệ thống, cấu trúc Devicetree node, Kconfig symbols, bảng so sánh tài nguyên và phân chia file rõ ràng — KHÔNG dùng ví dụ ẩn dụ ngoài lề dài dòng.**
+> **Mục tiêu chuyên sâu:** Thay vì học vẹt cách gõ code, ngày này tập trung 100% vào việc làm chủ **TƯ DUY THIẾT KẾ HỆ THỐNG** và **CƠ CHẾ NỘI TẠI DƯỚI NỀN TẢNG (UNDER THE HOOD)** của Zephyr RTOS trên ARM Cortex-M7 (STM32F746):
+> 1. **Cơ chế Biên Dịch Tĩnh (Compile-Time Evaluation):** Tại sao Zephyr không đọc Devicetree lúc runtime như Linux? Cơ chế sinh macro C tĩnh từ file `.dts`/`.overlay` hoạt động ra sao để đạt 0 byte RAM và 0 ns overhead?
+> 2. **Mô Hình Driver Model Đa Hình trong C:** Cách Zephyr tách biệt 3 lớp `config` (ROM) - `data` (RAM) - `api` (Bảng con trỏ hàm), và quy trình khởi tạo tự động lúc boot qua `DEVICE_DT_DEFINE`.
+> 3. **Bộ Điều Phối Đa Luồng (Scheduler Mechanics):** Phân tích luồng thực thi Cooperative (Priority âm) vs Preemptive (Priority dương), cơ chế Tickless Idle và MetaIRQ.
+> 4. **Bảo Vệ Ngăn Xếp Bằng Phần Cứng (Hardware MPU Stack Guard):** Cơ chế MPU bẫy lỗi tràn ngăn xếp ngay tại chu kỳ lệnh đầu tiên, triệt tiêu lỗi hỏng bộ nhớ ngầm.
+> 5. **Cách Sử Dụng Thực Chiến & Mẫu Cấu Hình Chuẩn (Design Patterns & Cheat Sheet):** Mẫu cấu hình Kconfig, Devicetree Overlay và quy chuẩn gỡ lỗi bằng Zephyr Shell & Thread Analyzer.
 
 ---
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                           LỘ TRÌNH 5 BƯỚC CHINH PHỤC NGÀY 7                                     │
-├───────────────────┬───────────────────┬───────────────────┬────────────────────────────┬────────┤
-│ BƯỚC 0: TOOLCHAIN │ BƯỚC 1: KIẾN TRÚC │ BƯỚC 2: THỰC CHIẾN│ BƯỚC 3: GÕ CODE ỨNG DỤNG   │ BƯỚC 4:│
-│ • Cài đặt Host    │ • Triết lý Zephyr │ • Soạn prj.conf   │ • Gắn nhãn file cụ thể     │ PHỎNG  │
-│   tools (CMake...)│ • Devicetree vs   │ • Viết overlay    │ • TODO 1 [prj.conf]        │ VẤN    │
-│ • Python & West   │   Compile Macros  │ • Bảng Kconfig    │ • TODO 2 [app.overlay]     │ • Bộ 5 │
-│ • Zephyr SDK ARM  │ • Multi-threading │ • Pinctrl Node    │ • TODO 3 [CMakeLists.txt]  │   câu  │
-│ • Sanity Blinky   │ • MPU Stack Guard │ • Khóa Device     │ • TODO 4-5 [src/main.c]    │   hỏi  │
-│   stm32f746g_disco│ • Zephyr Logging  │   Binding API     │ • Mổ xẻ 5 Bug hệ thống     │   vặn  │
-└───────────────────┴───────────────────┴───────────────────┴────────────────────────────┴────────┘
+│                    BẢN ĐỒ KIẾN TRÚC VẬN HÀNH CỦA ZEPHYR RTOS TRÊN CORTEX-M7                     │
+├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                 TẦNG ỨNG DỤNG (APPLICATION LOGIC)                               │
+│           • Thread CAN Worker            • Thread GUI/LVGL           • Thread Monitor           │
+├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+│                              HỆ THỐNG GIAO TIẾP LIÊN LUỒNG (IPC)                                │
+│       • k_msgq (Copy Buffer)      • k_sem (Đồng bộ)      • k_mutex (Priority Inheritance)       │
+├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+│                               ZEPHYR KERNEL SCHEDULER ENGINE                                    │
+│   • Cooperative (-Prio: Chạy độc quyền)  │  • Preemptive (+Prio: Chiếm quyền theo mức ưu tiên)  │
+│   • MPU Stack Guard (32B No-Access Zone) │  • Tickless Idle (Ngủ sâu tiết kiệm điện tối đa)    │
+├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+│                             ZEPHYR DRIVER MODEL (ĐA HÌNH TRONG C)                               │
+│     DEVICE_DT_DEFINE: [ struct device -> .config (ROM) | .data (RAM) | .api (Function Ptrs) ]    │
+├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                 PHẦN CỨNG VI ĐIỀU KHIỂN (STM32F746)                             │
+│       ARM Cortex-M7 Core  │  RCC Clock Tree  │  NVIC Ngắt  │  MPU Bảo Vệ Bộ Nhớ  │  Ngoại Vi    │
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🛠️ RÀ SOÁT 7 QUY TẮC ZEPHYR RTOS CỐT LÕI (CHUYÊN CHO NGÀY 7)
+# PHẦN 1: TƯ DUY KIẾN TRÚC — TẠI SAO PHẢI LÀ ZEPHYR RTOS?
 
-| STT | Quy tắc Zephyr RTOS | Thể hiện cụ thể trong Ngày 7 (Board Bring-Up) |
-| :---: | :--- | :--- |
-| **1** | **Compile-Time Evaluation** | Devicetree trong Zephyr **hoàn toàn được tính toán lúc biên dịch (Compile-time)**. Mọi hàm `DT_PROP` hay `DEVICE_DT_GET` sinh ra hằng số tĩnh, tiêu thụ 0 byte RAM và 0 chu kỳ khởi động. |
-| **2** | **Device Ready Check** | Trước khi dùng bất kỳ ngoại vi nào lấy từ `DEVICE_DT_GET`, **BẮT BUỘC** phải gọi `device_is_ready(dev)`. Tuyệt đối không gọi hàm API khi thiết bị chưa sẵn sàng (tránh lỗi Kernel Oops / HardFault). |
-| **3** | **Explicit Thread Stack** | Khai báo ngăn xếp cho Thread bằng macro `K_THREAD_STACK_DEFINE(name, size)`. Tuyệt đối không dùng mảng C thông thường `uint8_t stack[size]` vì sẽ làm sai lệch căn lề (Alignment) của phần cứng MPU. |
-| **4** | **MPU Stack Protection** | Luôn bật `CONFIG_MPU_STACK_GUARD=y` trong `prj.conf`. Phần cứng MPU sẽ đặt 1 trang nhớ 32 bytes cấm ghi (Guard Region) ở đáy ngăn xếp để bắt trọn vẹn lỗi Stack Overflow ngay chu kỳ ghi đầu tiên. |
-| **5** | **Preemptive vs Cooperative** | Phân biệt Priority: Giá trị âm (từ `-CONFIG_NUM_COOP_PRIO` đến `-1`) là luồng Cooperative (không bị chen ngang), giá trị dương (từ `0` đến `CONFIG_NUM_PREEMPT_PRIO-1`) là luồng Preemptive. |
-| **6** | **Deferred Logging** | Dùng `CONFIG_LOG_MODE_DEFERRED=y`. Tuyệt đối không dùng `printf` thô hay log Blocking trong ISR/Real-time threads để không làm trôi thời gian thực (Jitter). |
-| **7** | **Pinctrl Dependency** | Trong STM32 Devicetree, chân GPIO không được cấu hình tự do bằng thanh ghi trong driver mà phải được khai báo tập trung trong node `&pinctrl` của file overlay. |
+Để làm chủ Zephyr, bạn phải hiểu rõ sự tiến hóa tư duy giữa 3 thời kỳ của lập trình vi điều khiển:
+
+### 1.1. Bảng So Sánh Bản Chất Kỹ Thuật: Bare-Metal vs FreeRTOS vs Zephyr RTOS
+
+| Tiêu Chí Kỹ Thuật | 1. Bare-Metal (Ngày 0-6) | 2. FreeRTOS (ST HAL/CubeMX) | 3. Zephyr RTOS (Ngày 7-14) |
+| :--- | :--- | :--- | :--- |
+| **Mô hình kiến trúc** | Super-loop `while(1)` + ISR | Microkernel điều phối Task | Comprehensive RTOS Ecosystem (như Linux thu nhỏ) |
+| **Mô tả phần cứng** | Gõ trực tiếp thanh ghi: `GPIOx->MODER` | ST CubeMX sinh code C cứng (`MX_GPIO_Init`) | **Devicetree (`.dts`/`.overlay`)** chuẩn Open Firmware |
+| **Cấu hình phần mềm** | Tự viết cờ `#define` phân tán | Sửa file `#define` trong `FreeRTOSConfig.h` | **Kconfig (`prj.conf`)** chuẩn Linux Kernel |
+| **Khởi tạo Driver** | Tự viết hàm `MyDriver_Init()` rồi gọi tay | Gọi hàm `HAL_PPP_Init()` của CubeMX | **Tự động đăng ký boot** qua `DEVICE_DT_DEFINE` |
+| **Tạo luồng tác vụ** | Không có (1 luồng duy nhất) | Động qua `xTaskCreate()` (cấp phát Heap) | Tĩnh qua **`K_THREAD_DEFINE`** (0% phân mảnh RAM) |
+| **Bảo vệ Stack** | Không có (Tràn stack gây sập chip ngầm) | Kiểm tra phần mềm Canary `0xA5` (thụ động) | **Phần cứng MPU Guard** (bắt lỗi ngay tức thì) |
+| **Tính đa nền tảng** | 0% (Đổi chip phải viết lại từ đầu) | 30% (Chỉ đa nền tảng phần RTOS, driver vẫn theo hãng) | **100% (Giữ nguyên code C, chỉ thay file Overlay)** |
 
 ---
 
-# ⚙️ BƯỚC 0: HƯỚNG DẪN CÀI ĐẶT MÔI TRƯỜNG PHÁT TRIỂN ZEPHYR RTOS (TOOLCHAIN & SDK SETUP)
+### 1.2. Tư Duy "Separation of Concerns" (Tách Biệt Phần Cứng Khỏi Phần Mềm)
 
-> **Tầm quan trọng:** Khác với Bare-metal (chỉ cần cài ARM GCC và Make), Zephyr RTOS là một hệ sinh thái mã nguồn mở hiện đại gồm hàng trăm module phần mềm. Việc thiết lập đúng công cụ quản trị đa kho mã nguồn **`west`**, bộ biên dịch chéo chính thức **Zephyr SDK** và trình biên dịch cây thiết bị **DTC** là điều kiện tiên quyết bắt buộc trước khi bước vào viết code!
+* **Tư duy cũ (Bare-metal / FreeRTOS HAL):** Mã nguồn C bị "dính chặt" vào mã định danh của chip. Nếu bạn viết `HAL_GPIO_WritePin(GPIOI, GPIO_PIN_1, GPIO_PIN_SET);`, code C của bạn đã bị trói chặt vào chân `PI1` của STM32F7. Nếu ngày mai sếp yêu cầu chuyển sản phẩm sang chip NXP i.MX RT1060 hoặc Nordic nRF5340, bạn phải đi rà soát và sửa lại toàn bộ hàng nghìn dòng code C.
+* **Tư duy Zephyr RTOS:** Mã nguồn C **hoàn toàn không biết phần cứng bên dưới là gì**. 
+  * File C chỉ gọi: `gpio_pin_toggle_dt(&led_spec);` (Một hàm API trừu tượng).
+  * Chân đó là chân nào, thuộc port nào, tích cực mức cao hay thấp được giao trọn gói cho file **`app.overlay`**.
+  * Muốn đổi sang chip khác? Giữ nguyên 100% file `.c`, chỉ cần viết lại file `.overlay` tương ứng với bo mạch mới!
+
+---
+
+# PHẦN 2: CƠ CHẾ NỘI TẠI (UNDER THE HOOD) CỦA ZEPHYR RTOS
+
+---
+
+### 2.1. Cơ Chế 1: Devicetree Compile-Time Evaluation Engine
+
+Khác với Linux nhúng (phải biên dịch DTS ra file nhị phân `.dtb`, nạp vào RAM rồi Kernel chạy vòng lặp duyệt cây lúc boot), **Zephyr RTOS hoạt động trên vi điều khiển có RAM cực kỳ hạn chế (vài chục đến vài trăm KB)**. Do đó:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant DTS as File Phần Cứng (.dts / .overlay)
+    participant YAML as Schema Bindings (.yaml)
+    participant Py as Bộ Sinh Code Python (DTC Parser)
+    participant H as devicetree_generated.h (Macros C)
+    participant GCC as Trình Biên Dịch C (GCC)
+    participant ELF as File Nhị Phân (Flash ROM)
+
+    DTS->>Py: Đọc cấu trúc cây phần cứng
+    YAML->>Py: Kiểm tra tính hợp lệ (Validate Schema)
+    Py->>H: Sinh ra hàng nghìn macro hằng số tĩnh
+    H->>GCC: Mã nguồn ứng dụng gọi DT_PROP / DEVICE_DT_GET
+    GCC->>GCC: Trình biên dịch tối ưu hóa hằng số (Constant Folding)
+    GCC->>ELF: Nhúng thẳng địa chỉ thanh ghi vào lệnh ASM (0 byte RAM overhead!)
+```
+
+#### Bản chất kỹ thuật:
+1. Khi bạn gõ `reg = <0x40011000 0x400>;` trong file DTS, bộ phân tích Python của Zephyr sẽ chuyển đổi nó thành một macro C tĩnh trong file sinh tự động `build/zephyr/include/generated/zephyr/devicetree_generated.h`:
+   ```c
+   /* Mã macro được Zephyr sinh tự động lúc build */
+   #define DT_N_S_soc_S_serial_40011000_REG_NUM_0 0
+   #define DT_N_S_soc_S_serial_40011000_REG_BASE  0x40011000
+   #define DT_N_S_soc_S_serial_40011000_REG_SIZE  0x400
+   ```
+2. Trong mã nguồn C, khi bạn gọi:
+   ```c
+   #define UART_BASE DT_REG_ADDR(DT_NODELABEL(usart1))
+   ```
+   Trình biên dịch GCC nhìn thấy `UART_BASE` là một **hằng số tức thời `0x40011000`**. Nó không tốn một chu kỳ đọc RAM nào, không có con trỏ động, và tiêu thụ đúng **0 byte RAM**.
+
+---
+
+### 2.2. Cơ Chế 2: Mô Hình Driver Đa Hình trong C (Zephyr Driver Model)
+
+Làm thế nào Zephyr có thể cung cấp hàm `uart_tx()` dùng chung cho cả STM32, NXP, TI, ESP32 mà không bị chậm hiệu năng? Nó sử dụng kỹ thuật **Đa hình hướng đối tượng trong C (Polymorphism via Struct Function Pointers)**.
+
+Mỗi driver ngoại vi trong Zephyr được cấu thành từ 3 cấu trúc dữ liệu kinh điển:
+
+```mermaid
+classDiagram
+    class device {
+        +char *name
+        +void *config (Nằm trong Flash ROM)
+        +void *data (Nằm trong RAM)
+        +void *api (Bảng con trỏ hàm API)
+    }
+    class uart_config {
+        +uint32_t base_address (0x40011000)
+        +int irq_num (37)
+        +struct pinctrl_dev_config *pcfg
+    }
+    class uart_data {
+        +struct k_msgq *rx_msgq
+        +uint32_t baudrate
+        +struct k_spinlock lock
+    }
+    class uart_driver_api {
+        +int (*poll_in)(struct device *dev, unsigned char *p_char)
+        +void (*poll_out)(struct device *dev, unsigned char out_char)
+        +int (*err_check)(struct device *dev)
+        +int (*configure)(struct device *dev, struct uart_config *cfg)
+    }
+
+    device --> uart_config : Trỏ tới cấu hình tĩnh
+    device --> uart_data : Trỏ tới bộ đệm động
+    device --> uart_driver_api : Trỏ tới bảng hàm thực thi
+```
+
+#### Quy trình khởi tạo tự động lúc boot:
+1. Driver sử dụng macro `DEVICE_DT_DEFINE` để khai báo:
+   ```c
+   DEVICE_DT_DEFINE(node_id, init_fn, pm_action_cb, data_ptr, cfg_ptr, level, prio, api_ptr);
+   ```
+2. Macro này đặt một cấu trúc `struct device` vào một phân vùng linker đặc biệt (Linker Section `.z_device`).
+3. Khi vi điều khiển vừa boot (trước khi hàm `main()` chạy), nhân Zephyr thực hiện một vòng lặp duyệt qua phân vùng `.z_device` này và tự động gọi hàm khởi tạo `init_fn()` của từng driver theo đúng mức ưu tiên:
+   * `EARLY`: Khởi tạo xung nhịp, cấp nguồn.
+   * `PRE_KERNEL_1` / `PRE_KERNEL_2`: Khởi tạo bộ nhớ, thanh ghi ngoại vi cơ bản.
+   * `POST_KERNEL`: Khởi tạo các driver cần dùng dịch vụ của OS (như mutex, semaphore).
+   * `APPLICATION`: Khởi tạo tầng ứng dụng.
+4. **Kết quả:** Lập trình viên ứng dụng **không bao giờ phải tự tay gọi hàm khởi tạo ngoại vi** trong `main()`!
+
+---
+
+### 2.3. Cơ Chế 3: Bộ Điều Phối Đa Luồng (Scheduler Mechanics)
+
+Zephyr hỗ trợ một cơ chế lập lịch đa tầng cực kỳ độc đáo và an toàn:
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                        HỆ THỐNG CÔNG CỤ XÂY DỰNG ZEPHYR RTOS (BUILD SYSTEM)                      │
-├───────────────────┬─────────────────────────────────────────────────────────────────────────────┤
-│ 1. Python 3.10+   │ Môi trường chạy công cụ `west`, kconfiglib, và bộ tiền xử lý Devicetree    │
-│ 2. West Meta-Tool │ Quản lý Git repository đa repo, tải module con, gọi lệnh build và nạp flash │
-│ 3. CMake & Ninja  │ Hệ thống sinh file biên dịch và thực thi build code song song siêu tốc      │
-│ 4. DTC (devicetree│ Trình biên dịch cú pháp cây thiết bị từ `.dts`/`.overlay` sang mã C macro   │
-│ 5. Zephyr SDK     │ Bộ Cross-Compiler (`arm-zephyr-eabi-gcc`), GDB Debugger, Newlib C library   │
-└───────────────────┴─────────────────────────────────────────────────────────────────────────────┘
+│                           MÔ HÌNH PHÂN CẤP ƯU TIÊN SCHEDULER ZEPHYR                             │
+├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ [Mức cao nhất] NGẮT PHẦN CỨNG (Hardware Interrupts - ISR) : Ưu tiên cao hơn mọi Thread         │
+├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ [Mức nhì]      META-IRQ THREADS : Luồng đặc biệt chen ngang được cả Cooperative Threads          │
+├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ [Mức ba]       COOPERATIVE THREADS (Priority âm: -CONFIG_NUM_COOP_PRIO đến -1)                  │
+│                • Chạy ĐỘC QUYỀN, KHÔNG BAO GIỜ bị Preemptive Threads chiếm quyền.               │
+│                • Chỉ nhường CPU khi chính nó tự gọi: k_yield(), k_sleep(), hoặc chờ IPC.        │
+├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ [Mức bốn]      PREEMPTIVE THREADS (Priority dương: 0 đến CONFIG_NUM_PREEMPT_PRIO - 1)           │
+│                • Lập lịch theo độ ưu tiên (Priority-based Preemption: Số nhỏ ưu tiên cao).      │
+│                • Hỗ trợ chia sẻ thời gian (Round-Robin Time Slicing) giữa các luồng cùng Prio.   │
+├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ [Mức đáy]      IDLE THREAD (Mức ưu tiên thấp nhất) : Chạy Tickless Idle đưa CPU vào chế độ ngủ  │
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-> 📖 **Hướng Dẫn Tra Cứu Tài Liệu Cài Đặt Chính Thức Từ Zephyr Project:**
-> 1. **Mở trình duyệt truy cập:** `https://docs.zephyrproject.org/latest/develop/getting_started/index.html`
-> 2. **Tìm các đề mục cốt lõi:**
->    * Mục 1: **Install dependencies** (Chọn tab tương ứng với hệ điều hành Windows hoặc Linux / Ubuntu).
->    * Mục 2: **Get Zephyr and install Python dependencies** (Lệnh `west init` và `west update`).
->    * Mục 3: **Install Zephyr SDK** (Tải bundle `zephyr-sdk-0.16.8` hoặc dùng `west sdk install`).
->    * Mục 4: **Build your first sample application** (Kiểm tra với ứng dụng mẫu `samples/basic/blinky`).
+#### Bản chất của Cơ chế Tickless Idle:
+* Các RTOS truyền thống (như FreeRTOS cấu hình cơ bản) yêu cầu một bộ đếm thời gian SysTick ngắt liên tục mỗi 1ms (1000 Hz). Dù không có việc gì làm, CPU vẫn bị đánh thức dậy 1000 lần mỗi giây, gây lãng phí năng lượng khủng khiếp.
+* **Zephyr Tickless Kernel:** Khi tất cả các luồng đều đang ngủ (chờ sự kiện hoặc chờ delay), Kernel tính toán chính xác luồng kế tiếp cần thức dậy sau bao nhiêu micro-giây. Nó lập trình một bộ đếm phần cứng (Hardware Timer) thức dậy đúng thời điểm đó, rồi đưa CPU vào giấc ngủ sâu (Deep Sleep). **Tiết kiệm điện năng tối đa cho thiết bị IoT / Smartwatch.**
 
 ---
 
-### 0.1. Cài Đặt Các Công Cụ Nền Tảng (Host Tools)
+### 2.4. Cơ Chế 4: Bảo Vệ Ngăn Xếp Bằng Phần Cứng (`CONFIG_MPU_STACK_GUARD`)
 
-#### Cách 1: Trên Hệ Điều Hành Windows (PowerShell)
-Mở **PowerShell dưới quyền Administrator** (Chuột phải vào PowerShell/Terminal chọn **Run as Administrator**) và sử dụng trình quản lý gói **Chocolatey**:
-```powershell
-# 1. Dọn dẹp thư mục Chocolatey hỏng nếu lần cài trước bị gián đoạn/thiếu quyền Admin
-Remove-Item -Recurse -Force "C:\ProgramData\chocolatey" -ErrorAction SilentlyContinue
+Tràn ngăn xếp (Stack Overflow) là "kẻ giết người thầm lặng" số 1 trong hệ thống nhúng: Khi một hàm gọi đệ quy hoặc khai báo mảng cục bộ quá lớn, con trỏ ngăn xếp `SP` sẽ đè bẹp lên vùng nhớ của biến toàn cục hoặc làm hỏng ngăn xếp của luồng kế bên, gây ra lỗi reset bí ẩn vài ngày mới xuất hiện một lần.
 
-# 2. Cài đặt trình quản lý gói Chocolatey (nếu máy tính chưa có)
-Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+```mermaid
+flowchart TD
+    subgraph RAM_Layout["Kiến Trúc Ngăn Xếp Khi Bật CONFIG_MPU_STACK_GUARD"]
+        TOP["Đỉnh Stack (Địa chỉ cao)"]
+        SPACE["Vùng Không Gian Ngăn Xếp Hợp Lệ (Valid Stack Space)<br/>Con trỏ SP dịch chuyển lên xuống tại đây"]
+        GUARD["MPU GUARD REGION (Vùng 32 Bytes ở đáy)<br/>CẤU HÌNH PHẦN CỨNG: NO ACCESS (CẤM ĐỌC / GHI)"]
+        NEIGHBOR["Vùng Bộ Nhớ Của Luồng Kế Cận (Neighbor Thread Memory)"]
+    end
 
-# 3. Nạp lại biến môi trường PATH vào phiên làm việc hiện tại
-$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-
-# 4. Cài đặt toàn bộ bộ công cụ nền tảng cho Zephyr
-choco install -y cmake --installargs 'ADD_CMAKE_TO_PATH=System'
-choco install -y ninja gperf python git dtc-msys2
+    SP_NORMAL["Con trỏ SP hoạt động bình thường"] --> SPACE
+    SP_OVERFLOW["Con trỏ SP bị tràn (Tràn Stack)"] -->|"Ghi dữ liệu vào MPU Guard"| GUARD
+    GUARD -->|"PHẦN CỨNG BẬT BÁO ĐỘNG NGAY LẬP TỨC"| FAULT["Nổ ngắt ngoại lệ phần cứng: MemManage Fault!<br/>In chính xác tên luồng và dòng lệnh gây tràn."]
 ```
 
-> 💡 **Mẹo:** Nếu máy không có quyền Administrator, bạn có thể dùng lệnh `winget install Kitware.CMake Ninja-build.Ninja Python.Python.3.11 Git.Git` tích hợp sẵn trên Windows.
-
-#### Cách 2: Trên Hệ Điều Hành Linux / Ubuntu (hoặc Windows WSL2)
-```bash
-# Cập nhật danh sách gói và cài đặt các công cụ biên dịch
-sudo apt update
-sudo apt install -y --no-install-recommends \
-  git cmake ninja-build gperf ccache dfu-util \
-  device-tree-compiler wget python3-dev python3-pip \
-  python3-venv xz-utils file make gcc gcc-multilib \
-  g++-multilib libsdl2-dev libmagic1
-```
+#### So sánh với cơ chế Stack Canary của FreeRTOS:
+* **FreeRTOS (Software Canary):** Ghi giá trị mẫu `0xA5A5A5A5` ở đáy stack. Khi chuyển đổi ngữ cảnh (Context Switch), phần mềm kiểm tra xem giá trị này còn nguyên không.
+  * *Nhược điểm:* **Phát hiện quá trễ!** Tại thời điểm kiểm tra, dữ liệu của luồng bên cạnh đã bị phá hỏng từ lâu.
+* **Zephyr (`CONFIG_MPU_STACK_GUARD`):** Lập trình khối MPU phần cứng của ARM Cortex-M7.
+  * *Ưu điểm tuyệt đối:* **Bắt quả tang tại trận!** Ngay tại chu kỳ xung nhịp mà lệnh ghi đè chạm vào ranh giới 32 bytes của Guard Region, khối MPU phần cứng phát hiện vi phạm bus và đóng băng hệ thống ngay tức khắc.
 
 ---
 
-### 0.2. Thiết Lập Môi Trường Ảo Python & Cài Đặt Meta-Tool `west` Trên Ổ D:\
-
-> 💡 **Khuyến nghị lưu trữ:** Toàn bộ mã nguồn Zephyr, module mở rộng (HAL ST, LVGL, CMSIS) và Zephyr SDK chiếm khoảng **5 GB đến 8 GB**. Do đó, hướng dẫn chuẩn dưới đây sẽ thiết lập **trực tiếp 100% lên ổ `D:\`** để bảo vệ dung lượng ổ hệ điều hành `C:\`. *(Nếu máy bạn chỉ có ổ `C:\` hoặc chạy Linux, chỉ cần thay `D:\` thành `C:\` hoặc `~/`)*.
-
-> ⚠️ **Lưu ý phiên bản Python:** Zephyr v3.7.0 bắt buộc tối thiểu **Python 3.10 trở lên** (khuyên dùng Python 3.11 hoặc 3.12). Hãy kiểm tra bằng lệnh `python --version` trước khi tạo môi trường ảo.
-
-Mở **PowerShell** và thực hiện:
-```powershell
-# 1. Chuyển dấu nhắc lệnh sang ổ đĩa D và tạo thư mục làm việc
-D:
-mkdir D:\zephyrproject
-cd D:\zephyrproject
-
-# 2. Tạo môi trường ảo Python riêng biệt tại D:\zephyrproject\.venv
-python -m venv D:\zephyrproject\.venv
-
-# 3. Kích hoạt môi trường ảo (Dấu nhắc sẽ hiện (.venv) ở đầu dòng)
-D:\zephyrproject\.venv\Scripts\Activate.ps1
-
-# 4. Nâng cấp pip và cài đặt công cụ quản trị đa kho mã nguồn west
-# LƯU Ý TRÊN WINDOWS: Bắt buộc dùng `python -m pip` thay vì `pip install --upgrade pip`
-# để tránh lỗi [WinError 5] Access is denied do Windows khóa file pip.exe đang chạy!
-python -m pip install --upgrade pip
-pip install west
-```
-
-> 🛠️ **Xử lý sự cố nếu pip bị lỗi `ModuleNotFoundError: No module named 'pip'`:**
-> Chạy lệnh `python -m ensurepip` để khôi phục lại pip, sau đó chạy tiếp `python -m pip install --upgrade pip`. Nếu môi trường ảo hoàn toàn mới, bạn có thể xóa thư mục `.venv` bằng `Remove-Item -Recurse -Force .venv` rồi chạy lại từ bước 2.
+# PHẦN 3: CÁCH SỬ DỤNG THỰC CHIẾN (PRACTICAL HOW-TO & DESIGN PATTERNS)
 
 ---
 
-### 0.3. Tải Mã Nguồn Zephyr RTOS Vào `D:\zephyrproject` & Cài Đặt Dependencies
+### 3.1. Quy Chuẩn 3 Bước Để Sử Dụng Một Ngoại Vi Trong Zephyr
 
-```powershell
-# 1. Khởi tạo workspace tải về D:\zephyrproject (chọn bản LTS ổn định v3.7.0)
-west init -m https://github.com/zephyrproject-rtos/zephyr --mr v3.7.0 D:\zephyrproject
-
-# 2. Chuyển vào thư mục và đồng bộ toàn bộ các module con (HAL ST, LVGL, CMSIS, mbedTLS...)
-cd D:\zephyrproject
-west update
-
-# 3. Xuất gói CMake để hệ thống tự nhận diện đường dẫn Zephyr
-west zephyr-export
-
-# 4. Cài đặt toàn bộ danh mục thư viện Python bắt buộc của Zephyr (DTC parser, Kconfiglib...)
-pip install -r D:\zephyrproject\zephyr\scripts\requirements.txt
-```
-
----
-
-### 0.4. Cài Đặt Bộ Trình Biên Dịch Chéo Zephyr SDK Vào `D:\zephyr-sdk-0.16.8`
-
-Zephyr cung cấp bộ công cụ **Zephyr SDK** độc lập chứa trình biên dịch tối ưu hóa `arm-zephyr-eabi-gcc`. Để tiết kiệm thời gian và dung lượng (thay vì tải bản full 1.4 GB), ta chỉ tải bản **Minimal (~48 MB)** kèm riêng **ARM Toolchain (~85 MB)**:
-
-```powershell
-# 1. Tải công cụ giải nén siêu nhẹ 7zr.exe (500 KB) vào ổ D
-curl.exe -L -o D:\7zr.exe https://www.7-zip.org/a/7zr.exe
-
-# 2. Tải bản SDK Minimal và toolchain ARM Cortex-M bằng dịch vụ Windows BITS (nhanh và không bị nghẽn mạng như curl)
-Start-BitsTransfer -Source https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.16.8/zephyr-sdk-0.16.8_windows-x86_64_minimal.7z -Destination D:\zephyr-sdk-minimal.7z
-Start-BitsTransfer -Source https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.16.8/toolchain_windows-x86_64_arm-zephyr-eabi.7z -Destination D:\toolchain-arm.7z
-# (Hoặc tải trực tiếp bằng trình duyệt Chrome/Edge nếu muốn tải thủ công rồi copy vào D:\)
-
-# 3. Giải nén vào D:\zephyr-sdk-0.16.8
-D:\7zr.exe x D:\zephyr-sdk-minimal.7z -oD:\ -y
-D:\7zr.exe x D:\toolchain-arm.7z -oD:\zephyr-sdk-0.16.8 -y
-
-# 4. Đăng ký SDK với CMake (chạy trực tiếp bằng CMake, không chạy setup.cmd vì script này đòi cài wget)
-cd D:\zephyr-sdk-0.16.8
-cmake -P cmake\zephyr_sdk_export.cmake
-
-# 5. Dọn dẹp các file nén tạm để giải phóng dung lượng
-Remove-Item D:\zephyr-sdk-minimal.7z, D:\toolchain-arm.7z, D:\7zr.exe -Force
-
-# 6. Thiết lập 3 Biến Môi Trường Windows cố định vĩnh viễn
-setx ZEPHYR_BASE "D:\zephyrproject\zephyr"
-setx ZEPHYR_SDK_INSTALL_DIR "D:\zephyr-sdk-0.16.8"
-setx ZEPHYR_TOOLCHAIN_VARIANT "zephyr"
-```
-
-> 💡 **Lưu ý quan trọng sau khi setx:** Đóng cửa sổ PowerShell hiện tại và mở lại một cửa sổ mới để Windows cập nhật biến môi trường vừa tạo.
-
----
-
-### 0.5. Cài Đặt Bộ Nạp Flash & Kiểm Tra Hoạt Động (Sanity Check Blinky)
-
-Zephyr mặc định sử dụng **OpenOCD** làm runner để nạp code xuống kit STM32 qua cổng ST-Link:
-
-```powershell
-# 1. Cài đặt OpenOCD thông qua Chocolatey (chỉ cần chạy 1 lần duy nhất)
-choco install -y openocd
-
-# 2. Kích hoạt môi trường ảo Python
-D:\zephyrproject\.venv\Scripts\Activate.ps1
-
-# 3. Biên dịch ứng dụng mẫu blinky với board stm32f746g_disco
-cd D:\zephyrproject
-west build -b stm32f746g_disco zephyr/samples/basic/blinky -p auto
-
-# 4. Cắm kit STM32F746G-DISCO vào máy qua cổng USB ST-Link và nạp firmware
-west flash
-```
-
-> 💡 **Phương án nạp dự phòng qua STM32CubeProgrammer CLI:**
-> Nếu không dùng OpenOCD, bạn có thể nạp thẳng file nhị phân bằng STM32CubeProgrammer có sẵn:
-> ```powershell
-> & "D:\STM32CubeIDE_1.19.0\STM32CubeIDE\plugins\com.st.stm32cube.ide.mcu.externaltools.cubeprogrammer.win32_2.2.200.202503041107\tools\bin\STM32_Programmer_CLI.exe" -c port=SWD -w D:\zephyrproject\build\zephyr\zephyr.bin 0x08000000 -v -rst
-> ```
-
-#### 🔍 Giải thích trạng thái LED trên bo mạch sau khi nạp:
-* **`LD1` (LED xanh lá cạnh nút User):** Nhấp nháy chu kỳ 1 giây (1s sáng / 1s tắt) -> **Code Zephyr đang chạy thành công 100%!**
-* **`LD7` (LED cạnh cổng USB ST-Link):** 
-  - Khi đang nạp (`west flash`): Chớp liên tục Đỏ / Xanh.
-  - Khi nạp xong: Đứng yên màu **ĐỎ** (ST-Link giải phóng kết nối, ở chế độ Idle) hoặc màu **XANH LÁ** (nếu Windows đang giữ kết nối ổ đĩa ảo/cổng COM). Cả hai trạng thái đều hoàn toàn bình thường.
-
----
-
-### 0.6. Quy Trình Viết Code & Thao Tác Hằng Ngày Trong Antigravity
-
-Trong Zephyr RTOS, bạn **KHÔNG CẦN mở STM32CubeIDE nữa**, toàn bộ quá trình viết code, cấu hình và nạp chip diễn ra trực tiếp ngay trong **Antigravity** (hoặc VS Code):
-
-#### 1. Cấu trúc một thư mục ứng dụng Zephyr chuẩn:
-```text
-my_zephyr_app/
-├── CMakeLists.txt     <-- Khai báo dự án CMake, liên kết hệ sinh thái Zephyr
-├── prj.conf           <-- Bật/tắt các module tính năng của hệ điều hành (Kconfig)
-├── app.overlay        <-- Cấu hình sơ đồ chân cắm phần cứng (Devicetree)
-└── src/
-    └── main.c         <-- Mã nguồn C ứng dụng logic của bạn
-```
-
-#### 2. Chu trình 4 bước làm việc mỗi khi mở máy:
-1. **Mở terminal Antigravity** ➔ Kích hoạt môi trường (chỉ gõ 1 lần khi mở terminal mới):
-   ```powershell
-   D:\zephyrproject\.venv\Scripts\Activate.ps1
-   ```
-2. **Viết/Chỉnh sửa code:** Mở trực tiếp các file `src/main.c`, `prj.conf`, `app.overlay` trong trình soạn thảo Antigravity để code.
-3. **Biên dịch (Build):**
-   ```powershell
-   west build -b stm32f746g_disco <đường_dẫn_thư_mục_app>
-   # Ví dụ nếu đang đứng ngay trong thư mục app:
-   west build -b stm32f746g_disco
-   ```
-4. **Nạp code (Flash):**
-   ```powershell
-   west flash
-   ```
-
----
-
-# 🧠 BƯỚC 1: KIẾN TRÚC HỆ THỐNG (SO SÁNH TRỰC DIỆN VỚI FREERTOS)
-
-Để không bị bỡ ngỡ khi chuyển từ lập trình truyền thống sang Zephyr RTOS, hãy đối chiếu trực diện 4 thành phần cốt lõi của Zephyr với Bare-Metal và FreeRTOS:
-
-### 1.1. Bảng Đối Chiếu 3 Mô Hình Lập Trình (Chi Tiết Ưu / Nhược Điểm & Đánh Giá Chuyên Sâu)
-
-| Khía cạnh Kỹ thuật | 1. Bare-Metal (Ngày 0-6) | 2. FreeRTOS (ST HAL / CubeMX) | 3. Zephyr RTOS (Ngày 7-14) | Đánh Giá Ưu / Nhược Điểm & Trade-off Kỹ Thuật |
-| :--- | :--- | :--- | :--- | :--- |
-| **1. Cấu hình chân phần cứng (Pinmux)** | Gõ trực tiếp thanh ghi: `GPIOI->MODER`, `AFRH` | Dùng STM32CubeMX click chuột sinh code C (`MX_GPIO_Init()`) | Dùng file văn bản **Devicetree (`app.overlay`)** để mô tả chân | • **Bare-Metal:** Tối ưu hiệu năng tuyệt đối ($0\text{ ns}$ overhead), nhưng phụ thuộc chặt vào mã chip; đổi vi điều khiển phải viết lại toàn bộ.<br>• **FreeRTOS:** Kéo thả trực quan ban đầu, nhưng code sinh ra phân mảnh, khó quản lý Git diff và dễ bị CubeMX ghi đè khi re-generate.<br>• **Zephyr:** Tách biệt 100% phần cứng khỏi mã nguồn C; đổi sang bo mạch chip NXP/TI chỉ cần sửa file `.overlay` mà giữ nguyên $100\%$ code logic C. Nhược điểm: Cú pháp DTS trừu tượng, dốc học tập ban đầu cao. |
-| **2. Bật/tắt tính năng OS & Subsystem** | Không có hệ điều hành (Tự code logic bằng cờ phần mềm) | Sửa macro `#define` trong file **`FreeRTOSConfig.h`** | Gõ cờ `CONFIG_XXX=y` trong file **`prj.conf` (Kconfig)** | • **Bare-Metal:** Tiết kiệm Flash/RAM tối đa, nhưng thiếu chuẩn mực khi tích hợp các stack phức tạp (TCP/IP, BLE, CANopen).<br>• **FreeRTOS:** Macro C truyền thống, đơn giản, nhưng thiếu cơ chế tự động giải quyết phụ thuộc (Dependency Resolution).<br>• **Zephyr:** Chuẩn Kconfig Linux cực mạnh, tự động nạp driver và bật các thư viện phụ thuộc lúc compile-time; có menu trực quan `west build -t menuconfig`. Nhược điểm: Phụ thuộc vào công cụ Python và CMake/West. |
-| **3. Tạo luồng đa nhiệm (Multi-Tasking)** | Vòng lặp đơn `while(1)` trong hàm `main()` + Ngắt ISR | Gọi hàm động **`xTaskCreate()`** hoặc tĩnh `xTaskCreateStatic()` | Dùng macro tĩnh **`K_THREAD_DEFINE()`** hoặc `k_thread_create()` | • **Bare-Metal:** $0\text{ byte}$ RAM cho Stack luồng, nhưng mã nguồn bị nghẽn (Blocking) nếu có tác vụ chạy lâu; khó đáp ứng đa nhiệm thời gian thực.<br>• **FreeRTOS:** Linh hoạt, tạo task lúc runtime dễ dàng; tuy nhiên `xTaskCreate` dùng Heap dễ gây phân mảnh RAM nếu tạo/xóa task liên tục.<br>• **Zephyr:** `K_THREAD_DEFINE` cấp phát tĩnh toàn bộ Stack và Thread Control Block lúc biên dịch ($0\%$ phân mảnh RAM, an toàn cho chuẩn MISRA-C/ISO 26262). |
-| **4. Mức ưu tiên (Priority Model)** | Mức ưu tiên ngắt NVIC (Số bé ưu tiên cao, 0 là khẩn cấp nhất) | Số càng LỚN $\rightarrow$ Ưu tiên càng CAO (Priority 5 > 1) | Số càng NHỎ $\rightarrow$ Ưu tiên càng CAO (Priority 0 > 5, giống NVIC) | • **Bare-Metal:** Chỉ có ưu tiên ngắt NVIC, không có ưu tiên mức tác vụ phần mềm.<br>• **FreeRTOS:** Quy ước ngược với phần cứng ARM Cortex-M NVIC, khiến lập trình viên mới dễ bị nhầm lẫn giữa NVIC Priority và FreeRTOS Task Priority.<br>• **Zephyr:** Nhất quán hoàn hảo với chuẩn phần cứng ARM Cortex-M: Số nhỏ hơn là mức ưu tiên cao hơn ($0$ là cao nhất trong dải Preemptive). Ngoài ra có thêm dải số âm (Negative Priorities) dành riêng cho Cooperative Threads (không bao giờ bị chiếm quyền). |
-| **5. Giao tiếp liên luồng (IPC)** | Biến toàn cục `volatile` kết hợp cờ hiệu (Flags) | `xQueueSend()` / `xQueueReceive()` | `k_msgq_put()` / `k_msgq_get()` | • **Bare-Metal:** Tốc độ tức thì nhưng dễ gặp lỗi Race Condition, xé vụn dữ liệu (Torn Read/Write), CPU phải chạy vòng lặp đói (Busy Polling).<br>• **FreeRTOS:** Hàng đợi an toàn, nhưng phải phân biệt rạch ròi 2 hàm riêng biệt: hàm trong Thread (`xQueueSend`) và hàm trong ngắt (`xQueueSendFromISR`), rất dễ gây lỗi crash nếu gọi nhầm.<br>• **Zephyr:** Dùng **1 hàm duy nhất** `k_msgq_put()` cho cả ngữ cảnh Thread lẫn ngắt ISR (chỉ cần truyền timeout `K_NO_WAIT`). Copy theo giá trị an toàn, tự động đưa Thread vào trạng thái Sleep ($0\%$ CPU) khi hàng đợi rỗng. |
-
----
-
-### 1.2. Devicetree (`app.overlay`) Là Gì? (Bản Đồ Phần Cứng)
-
-* **Bản chất:** Thay vì vào CubeMX click chuột cấu hình chân `PI1` rồi sinh ra hàng trăm dòng code C của hãng, bạn chỉ cần mô tả chân đó trong file text **`app.overlay`**:
-  ```dts
-  / {
-      aliases {
-          led0 = &green_led; /* Gán nhãn ngắn gọn cho đèn LED */
-      };
-      leds {
-          compatible = "gpio-leds";
-          green_led: led_0 {
-              gpios = <&gpioi 1 GPIO_ACTIVE_HIGH>; /* Chân PI1, tích cực mức cao */
-              label = "User Green LED";
-          };
-      };
-  };
-  ```
-* **Tại sao lại tối ưu?**
-  * **Tách rời code và phần cứng:** Khi chuyển sang một bo mạch khác (ví dụ LED dời sang chân `PB7`), bạn **giữ nguyên 100% code C logic**, chỉ cần sửa đúng số chân trong file `.overlay`!
-
----
-
-### 1.3. Kconfig (`prj.conf`) Là Gì? (Công Tắc Bật/Tắt Tính Năng)
-
-* **Bản chất:** Tương tự như file `FreeRTOSConfig.h`, nhưng Kconfig của Zephyr được chuẩn hóa theo phong cách nhân Linux. Cần dùng ngoại vi nào, bạn chỉ cần gõ `CONFIG_<TÊN>=y` vào file **`prj.conf`**:
-  ```properties
-  CONFIG_GPIO=y               # Bật driver điều khiển GPIO
-  CONFIG_SERIAL=y             # Bật giao tiếp nối tiếp UART
-  CONFIG_CONSOLE=y            # Bật màn hình Console ST-Link
-  CONFIG_LOG=y                # Bật hệ thống ghi log
-  CONFIG_MPU_STACK_GUARD=y    # Bật phần cứng MPU tự động bắt lỗi tràn ngăn xếp
-  ```
-* **Tại sao lại tiện?**
-  * Không cần nhớ tên hàm khởi tạo driver phức tạp, chỉ cần bật cờ `CONFIG`, Zephyr sẽ tự động nạp driver tương ứng vào lúc biên dịch.
-
----
-
-### 1.4. Cơ Chế Đa Luồng (Multi-Threading) So Với FreeRTOS
-
-Trong Zephyr, mỗi tác vụ độc lập được gọi là một **Thread** (tương đương với **Task** trong FreeRTOS):
-
-#### So sánh cách tạo luồng:
-* **Bên FreeRTOS:**
-  ```c
-  xTaskCreate(vWorkerTask, "Worker", 512, NULL, 2, &xTaskHandle);
-  ```
-* **Bên Zephyr RTOS (Cách 1: Khai báo tĩnh bằng macro cực kỳ tiện lợi):**
-  ```c
-  // Tên luồng, Kích thước Stack, Hàm thực thi, Tham số 1, 2, 3, Mức ưu tiên, Tùy chọn, Thời gian delay khởi động
-  K_THREAD_DEFINE(worker_tid, 1024, worker_entry, NULL, NULL, NULL, 5, 0, 0);
-  ```
-
-#### Quy tắc mức ưu tiên (Priority Rules):
-1. **Dải ưu tiên Preemptive (Số dương: 0, 1, 2...):**
-   * Số càng bé -> Ưu tiên càng cao (Luồng Priority 0 có quyền ngắt ngang luồng Priority 5).
-   * Điểm này **ngược lại với FreeRTOS** nhưng **giống hệt quy tắc ngắt NVIC của vi điều khiển ARM Cortex-M** (IRQ Priority 0 là khẩn cấp nhất).
-2. **Bảo vệ ngăn xếp bằng phần cứng (`CONFIG_MPU_STACK_GUARD=y`):**
-   * Trong FreeRTOS, nếu 1 Task bị tràn Stack, nó sẽ ghi đè làm hỏng bộ nhớ của Task bên cạnh mà bạn không hề hay biết.
-   * Trong Zephyr, phần cứng MPU tự động đặt một "vùng cấm" dưới đáy ngăn xếp. Nếu Task dùng quá dung lượng stack, **chip sẽ chặn đứng ngay lập tức và in tên Task gây lỗi ra màn hình**, giúp gỡ lỗi cực nhanh.
-
----
-
-# 📑 BƯỚC 2: THỰC CHIẾN CẤU HÌNH DEVICETREE & KCONFIG (SETUP & LOOKUP)
-
-> 🎯 **NGUYÊN TẮC TRA CỨU TRONG HỆ ĐIỀU HÀNH ZEPHYR RTOS:**
-> Trong RTOS, ta không tra cứu Base Address hay Bitmask của thanh ghi trong RM0385 nữa. Mọi thông tin phần cứng được chuẩn hóa qua **3 trụ cột tra cứu**:
-> 1. **Tra cứu Kconfig:** Định hình tính năng nhân, kích thước stack, hệ thống log (`menuconfig` hoặc Kconfig Search).
-> 2. **Tra cứu Devicetree Bindings (`.yaml`):** Định dạng cú pháp và các thuộc tính hợp lệ của từng node thiết bị.
-> 3. **Tra cứu Board DTS Gốc (`.dts`):** Xem sơ đồ phần cứng có sẵn của bo mạch STM32F746G-Discovery.
-
----
-
-## 2.1. Lộ trình Tra cứu Trực tiếp trong Zephyr RTOS (Zephyr Lookup Methodology)
-
-### 📖 Kênh 1: Cách Tra Cứu Tùy Chọn Kconfig
-1. **Tra cứu trực quan qua GUI / TUI:**
-   * Trong thư mục dự án, chạy lệnh: **`west build -t menuconfig`** (hoặc `guiconfig`).
-   * Nhấn phím **`/`** ➔ Gõ từ khóa cần tìm: ví dụ gõ **`MPU_STACK_GUARD`** hoặc **`LOG_MODE_DEFERRED`**.
-   * Hệ thống sẽ hiển thị chính xác: Macro Kconfig đầy đủ, kiểu dữ liệu (`bool`/`int`), giá trị mặc định (`default`), các điều kiện phụ thuộc (`depends on`), và file khai báo.
-2. **Tra cứu online:** Truy cập `https://docs.zephyrproject.org/latest/kconfig.html` ➔ Gõ tên symbol vào ô tìm kiếm.
-
-### 📖 Kênh 2: Cách Tra Cứu Thuộc Tính Node Devicetree (Bindings `.yaml`)
-Khi cần thêm một node thiết bị vào file `app.overlay`, để biết node đó hỗ trợ những thuộc tính gì:
-1. **Tìm file Schema `.yaml` tương ứng trong Zephyr SDK:**
-   * Node `compatible = "gpio-leds";` ➔ Mở file: **`zephyr/dts/bindings/gpio/gpio-leds.yaml`**.
-   * Node cổng GPIO STM32 ➔ Mở file: **`zephyr/dts/bindings/gpio/st,stm32-gpio.yaml`**.
-2. **Đọc mục `properties:` trong file `.yaml`:**
-   * Bạn sẽ thấy rõ các thuộc tính bắt buộc (`required: true`) và tùy chọn (như `gpios`, `label`).
-
-### 📖 Kênh 3: Cách Tra Cứu Bản Đồ Phần Cứng Của Bo Mạch (`stm32f746g_disco.dts`)
-Để biết bo mạch STM32F746-Discovery đã khai báo những ngoại vi nào:
-1. **Mở file DTS gốc của bo:**
-   * Đường dẫn: **`zephyr/boards/arm/stm32f746g_disco/stm32f746g_disco.dts`**.
-2. **Kiểm tra phần `aliases` và các chân nối ngoài:**
-   * Nhìn vào mục `leds`: Bạn sẽ thấy nhãn `green_led: led_0` gắn vào `gpios = <&gpioi 1 GPIO_ACTIVE_HIGH>;` (Chân **`PI1`**).
-   * Nhìn vào mục `buttons`: Bạn sẽ thấy nhãn `user_button` gắn vào `gpios = <&gpioi 11 GPIO_ACTIVE_LOW>;` (Chân **`PI11`**).
-
----
-
-## 2.2. Bảng Cấu Hình Tính Năng Kconfig (`prj.conf`)
-
-Tập tin `prj.conf` kích hoạt các subsystem cần thiết cho dự án:
-
-| Kconfig Symbol | Giá trị | Ý nghĩa Kỹ thuật trong Zephyr RTOS | Đánh Giá Kỹ Thuật, Ưu / Nhược Điểm & Chi Phí Tài Nguyên |
-| :--- | :---: | :--- | :--- |
-| **`CONFIG_GPIO`** | `y` | Bật hệ thống driver điều khiển GPIO chuẩn Zephyr. | • **Ưu điểm:** Cung cấp API GPIO đồng nhất (`gpio_pin_configure_dt`, `gpio_pin_set_dt`), độc lập với phần cứng chip.<br>• **Chi phí:** Tăng khoảng $\approx 1.2\text{ KB}$ Flash ROM. |
-| **`CONFIG_SERIAL`** | `y` | Bật giao tiếp nối tiếp UART/USART. | • **Ưu điểm:** Nền tảng cho Console, Logging và truyền thông Gateway.<br>• **Chi phí:** Tăng $\approx 2.5\text{ KB}$ Flash, chiếm 1 bộ đệm truyền nhận UART trong SRAM. |
-| **`CONFIG_CONSOLE`** | `y` | Điều hướng đầu ra Console sang cổng nối tiếp ST-Link. | • **Ưu điểm:** Cho phép in debug qua `printk()` và xem trạng thái bo mạch trực tiếp từ terminal PC.<br>• **Hạn chế:** Nếu in quá nhiều mà không dùng chế độ Deferred sẽ làm chậm các luồng thời gian thực. |
-| **`CONFIG_UART_CONSOLE`** | `y` | Sử dụng UART làm kênh Console chuẩn. | • **Ưu điểm:** Đơn giản, độ tin cậy cao, chạy được ngay khi khởi động bo mạch mà không cần thiết lập USB phức tạp.<br>• **Trade-off:** Chiếm dụng ngoại vi USART1 trên bo STM32F746-Disco. |
-| **`CONFIG_LOG`** | `y` | Bật hệ thống ghi nhật ký Zephyr Logging Subsystem. | • **Ưu điểm:** Hỗ trợ lọc mức độ log (`ERR`, `WRN`, `INF`, `DBG`), định dạng màu sắc ANSI và gắn nhãn theo module.<br>• **Chi phí:** Tiêu tốn khoảng $\approx 4\text{ KB}$ Flash và $\approx 1\text{ KB}$ RAM cho cấu trúc metadata log. |
-| **`CONFIG_LOG_MODE_DEFERRED`**| `y` | Nhật ký ghi vào RAM đệm, chỉ in ra UART lúc CPU rảnh rỗi. | • **Ưu điểm Cốt tử:** Giải phóng hoàn toàn luồng thời gian thực khỏi độ trễ in UART ($1\text{ - }10\text{ ms}$/lệnh in); triệt tiêu hiện tượng giật khung hình giao diện táp-lô.<br>• **Nhược điểm:** Tốn thêm Ring Buffer RAM ($\approx 1024\text{ bytes}$); nếu CPU gặp HardFault ngay lập tức thì các log chưa kịp đẩy ra UART có thể bị mất. |
-| **`CONFIG_MPU_STACK_GUARD`** | `y` | Bật mạch phần cứng MPU giám sát tràn ngăn xếp của từng luồng. | • **Ưu điểm Vượt trội:** Bắt lỗi Stack Overflow bằng ngắt MemManage ngay thời điểm vi phạm; ngăn chặn $100\%$ lỗi ghi đè phá hỏng RAM của luồng bên cạnh.<br>• **Chi phí:** Không tốn chu kỳ CPU khi chạy bình thường (phần cứng MPU tự kiểm tra địa chỉ bus AXI/AHB). Mỗi Stack luồng phải căn lề $32\text{ bytes}$ tương ứng với 1 Region MPU. |
-| **`CONFIG_THREAD_NAME`** | `y` | Cho phép gán tên chuỗi cho từng luồng phục vụ gỡ lỗi. | • **Ưu điểm:** In rõ tên luồng (`"can_rx"`, `"gui_task"`) khi xem lệnh `thread-analyzer` hoặc lúc xảy ra lỗi Panic thay vì chỉ in địa chỉ hex vô nghĩa.<br>• **Chi phí:** Tốn thêm $\approx 16\text{ bytes}$ RAM cho mỗi Thread Control Block để lưu chuỗi tên. |
-
----
-
-## 2.3. Ánh Xạ Chân Phần Cứng trong File Overlay (`app.overlay`)
-
-Bo mạch STM32F746G-Discovery có đèn LED màu xanh lá tại chân **`PI1`** và nút bấm User B1 tại chân **`PI11`**. Ta khai báo cấu trúc phần cứng chuẩn trong Devicetree:
-
-```dts
-/ {
-    aliases {
-        led0 = &green_led;
-    };
-
-    leds {
-        compatible = "gpio-leds";
-        green_led: led_0 {
-            gpios = <&gpioi 1 GPIO_ACTIVE_HIGH>;
-            label = "User Green LED PI1";
-        };
-    };
-};
-```
-
----
-
-# 💻 BƯỚC 3: GÕ CODE ỨNG DỤNG & MỔ XẺ BUG HỆ THỐNG (CODING & DEBUGS)
-
-## 3.1. Phân chia Cấu trúc File Dự án cho Ngày 7
+Khi muốn sử dụng bất kỳ ngoại vi nào (GPIO, UART, CAN, I2C, SPI), bạn luôn áp dụng **cùng một tư duy thống nhất 3 bước**:
 
 ```text
-zephyr_gateway/
-├── CMakeLists.txt     <-- Khai báo dự án Zephyr CMake
-├── prj.conf           <-- Cấu hình hệ điều hành Kconfig
-├── app.overlay        <-- Cây thiết bị phần cứng Devicetree cho STM32F746-Disco
-└── src/
-    └── main.c         <-- Tạo luồng Worker, điều khiển GPIO và chạy Logging
+┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                             QUY TRÌNH 3 BƯỚC LÀM VIỆC VỚI ZEPHYR NGOẠI VI                       │
+├─────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ BƯỚC 1: BẬT DRIVER TRONG prj.conf     ➔   Khai báo CONFIG_xxx=y                                 │
+│ BƯỚC 2: MÔ TẢ PHẦN CỨNG TRONG .overlay ➔   Gán chân, tốc độ baud, kích hoạt status = "okay"     │
+│ BƯỚC 3: LẤY THIẾT BỊ VÀ GỌI API TRONG .c ➔   DEVICE_DT_GET() -> device_is_ready() -> Gọi API   │
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
----
-
-### 📂 KHỐI 1: CẤU HÌNH DỰ ÁN [ `CMakeLists.txt` & `prj.conf` ]
-
-#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 1:
-1. **Quy chuẩn hệ thống build Zephyr CMake:**
-   - **Mở Zephyr Docs** ➔ Tìm kiếm: `Application Development Primer` ➔ Section `CMakeLists.txt`.
-   - Cú pháp bắt buộc: Lệnh `find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})` nạp toàn bộ toolchain, Kconfig, Devicetree và thư viện hệ điều hành trước khi định nghĩa target.
-
-#### TODO 1 [File: `CMakeLists.txt`]: Tích Hợp Dự Án Zephyr RTOS
-```cmake
-cmake_minimum_required(VERSION 3.20.0)
-
-find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-project(can_gateway_zephyr)
-
-target_sources(app PRIVATE src/main.c)
-```
-
-#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 2:
-1. **Tra cứu Kconfig qua công cụ Menuconfig:**
-   - Trong terminal, gõ: `west build -t menuconfig` ➔ Bấm phím `/` để tra cứu symbol:
-     - Gõ `GPIO`: Bật `CONFIG_GPIO=y` để biên dịch driver GPIO của STM32.
-     - Gõ `LOG_MODE_DEFERRED`: Bật hệ thống ghi log bất đồng bộ (tránh giật lag).
-     - Gõ `MPU_STACK_GUARD`: Kích hoạt phần cứng MPU bảo vệ ngăn xếp luồng.
-     - Gõ `HEAP_MEM_POOL_SIZE`: Cấp phát vùng nhớ Heap chung cho hệ điều hành.
-
-#### TODO 2 [File: `prj.conf`]: Cấu Hình Subsystem Nhân Zephyr
+#### BƯỚC 1: Bật Tính Năng Trong `prj.conf` (Kconfig Cheat Sheet)
 ```properties
-# Bật tính năng điều khiển GPIO và Console UART
+# 1. Bật hệ thống GPIO và UART Console
 CONFIG_GPIO=y
 CONFIG_SERIAL=y
 CONFIG_CONSOLE=y
 CONFIG_UART_CONSOLE=y
 
-# Bật hệ thống Zephyr Logging đa tầng
+# 2. Bật hệ thống ghi log bất đồng bộ (Deferred Logging - Không làm trễ luồng thời gian thực)
 CONFIG_LOG=y
 CONFIG_LOG_MODE_DEFERRED=y
 CONFIG_LOG_DEFAULT_LEVEL=3
 
-# Bảo vệ an toàn bộ nhớ và ngăn xếp luồng
+# 3. Kích hoạt khiên bảo vệ tràn ngăn xếp bằng phần cứng MPU
 CONFIG_MPU_STACK_GUARD=y
 CONFIG_THREAD_NAME=y
 CONFIG_THREAD_STACK_INFO=y
 
-# Cấp phát bộ nhớ Heap chung cho hệ thống (4KB)
-CONFIG_HEAP_MEM_POOL_SIZE=4096
+# 4. Bật công cụ chẩn đoán bộ nhớ và hiệu năng luồng lúc runtime
+CONFIG_THREAD_ANALYZER=y
+CONFIG_THREAD_ANALYZER_AUTO=y
+CONFIG_THREAD_ANALYZER_AUTO_INTERVAL=5
 ```
 
----
-
-### 📂 KHỐI 2: ĐỊNH NGHĨA PHẦN CỨNG [ `app.overlay` ]
-
-#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 3:
-1. **Tra cứu Schema Devicetree Binding (.yaml):**
-   - Mở file: `zephyr/dts/bindings/gpio/gpio-leds.yaml`:
-     - Xem mục `compatible: "gpio-leds"`.
-     - Xem thuộc tính `gpios`: Yêu cầu tham chiếu đến phandle của GPIO controller (ví dụ `&gpioi 1`) và cờ cực tính `GPIO_ACTIVE_HIGH`.
-2. **Tra cứu chân nối bo mạch:**
-   - Mở file: `zephyr/boards/arm/stm32f746g_disco/stm32f746g_disco.dts`: Đèn LED xanh gắn vào chân `PI1`.
-
-#### TODO 3 [File: `app.overlay`]: Khai Báo Node LED & Thiết Bị Ngoại Vi
+#### BƯỚC 2: Định Nghĩa Phần Cứng Trong `app.overlay` (Devicetree Cheat Sheet)
 ```dts
 / {
+    /* Đặt bí danh (alias) để mã nguồn C không bị phụ thuộc vào tên node */
     aliases {
-        led-status = &status_led;
+        led-status = &green_led;
     };
 
     leds {
         compatible = "gpio-leds";
-        status_led: led_pi1 {
+        green_led: led_pi1 {
+            /* Mượn chân PI1 của STM32F746-Discovery, tích cực mức cao */
             gpios = <&gpioi 1 GPIO_ACTIVE_HIGH>;
-            label = "Status LED PI1";
+            label = "User Status LED";
         };
     };
 };
 
-/* Bật bộ điều khiển GPIOI trên chip STM32F7 */
+/* Bắt buộc bật controller quản lý cổng GPIOI */
 &gpioi {
     status = "okay";
 };
 ```
 
----
-
-### 📂 KHỐI 3: MÃ NGUỒN ỨNG DỤNG ĐA LUỒNG [ `src/main.c` ]
-
-#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 4:
-1. **Khai báo Thread tĩnh bằng K_THREAD_DEFINE:**
-   - **Mở Zephyr Docs** ➔ `Kernel Services -> Threads`:
-     - Cú pháp `K_THREAD_DEFINE(name, stack_size, entry, p1, p2, p3, prio, options, delay)`.
-     - Bộ nhớ stack được cấp tĩnh và tự động căn lề theo yêu cầu của MPU.
-2. **Ánh xạ thiết bị Devicetree qua GPIO_DT_SPEC_GET:**
-   - **Mở Zephyr Docs** ➔ `Devicetree API -> GPIO DT Spec`:
-     - Macro `GPIO_DT_SPEC_GET(node_id, prop)` chuyển đổi node trong file overlay thành struct `struct gpio_dt_spec` chứa con trỏ `device` và số chân pin tại compile-time.
-
-#### TODO 4 [File: `src/main.c`]: Khởi Tạo Luồng Độc Lập & Nhận Diện Thiết Bị Devicetree
+#### BƯỚC 3: Mẫu Code C Vận Hành Chuẩn Mực (Design Pattern)
 ```c
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
 
-/* Đăng ký Module Nhật ký với Zephyr Logging */
 LOG_MODULE_REGISTER(main_app, LOG_LEVEL_INF);
 
-/* Kích thước ngăn xếp và Mức ưu tiên của các luồng */
-#define BLINK_STACK_SIZE   1024
-#define BLINK_PRIORITY     7
-
-#define MONITOR_STACK_SIZE 2048
-#define MONITOR_PRIORITY   5
-
-/* Lấy thông số cấu hình LED từ Devicetree thông qua alias 'led-status' */
+/* 1. Lấy thông số kỹ thuật phần cứng tại COMPILE-TIME thông qua alias */
 static const struct gpio_dt_spec s_led = GPIO_DT_SPEC_GET(DT_ALIAS(led_status), gpios);
 
-/* Prototype cho các hàm thực thi của luồng */
-void blink_thread_entry(void *p1, void *p2, void *p3);
-void monitor_thread_entry(void *p1, void *p2, void *p3);
+/* 2. Khai báo ngăn xếp và luồng tĩnh lúc COMPILE-TIME (0 byte RAM phân mảnh) */
+#define WORKER_STACK_SIZE 1024
+#define WORKER_PRIORITY   7
 
-/* BƯỚC 1: ĐỊNH NGHĨA VÀ KHỞI TẠO TĨNH CÁC LUỒNG BẰNG K_THREAD_DEFINE */
-K_THREAD_DEFINE(blink_tid, BLINK_STACK_SIZE,
-                blink_thread_entry, NULL, NULL, NULL,
-                BLINK_PRIORITY, 0, 0);
-
-K_THREAD_DEFINE(monitor_tid, MONITOR_STACK_SIZE,
-                monitor_thread_entry, NULL, NULL, NULL,
-                MONITOR_PRIORITY, 0, 0);
-```
-
-#### 📖 Hướng Dẫn Tra Cứu Tài Liệu Cho TODO 5:
-1. **Kiểm tra ngoại vi sẵn sàng và cấu hình:**
-   - **Mở Zephyr Docs** ➔ `Device Driver Model`:
-     - Bắt buộc kiểm tra `gpio_is_ready_dt()` trước khi truy cập ngoại vi.
-     - Hàm `gpio_pin_configure_dt(&s_led, GPIO_OUTPUT_ACTIVE)` cấu hình chiều xuất dữ liệu.
-     - Hàm `gpio_pin_toggle_dt(&s_led)` đảo trạng thái chân LED.
-2. **Cơ chế nhường CPU và điều phối:**
-   - Hàm `k_msleep(500)` đưa luồng vào trạng thái ngủ, nhường CPU cho các luồng khác thực thi.
-
-#### TODO 5 [File: `src/main.c`]: Thân Luồng Thực Thi & Kiểm Tra Sẵn Sàng Thiết Bị
-```c
-void blink_thread_entry(void *p1, void *p2, void *p3)
+void worker_thread_entry(void *p1, void *p2, void *p3)
 {
     ARG_UNUSED(p1); ARG_UNUSED(p2); ARG_UNUSED(p3);
 
-    /* BƯỚC 2: KIỂM TRA TÍNH SẴN SÀNG CỦA NGOẠI VI (DEVICE READY CHECK) */
+    /* QUY TẮC SỐNG CÒN: Luôn kiểm tra tính sẵn sàng của thiết bị trước khi gọi API */
     if (!gpio_is_ready_dt(&s_led)) {
-        LOG_ERR("Lỗi: Ngoại vi GPIO điều khiển LED chưa sẵn sàng!");
+        LOG_ERR("Phần cứng GPIO điều khiển LED chưa sẵn sàng!");
         return;
     }
 
-    /* BƯỚC 3: CẤU HÌNH HƯỚNG XUẤT CHO CHÂN GPIO */
-    int ret = gpio_pin_configure_dt(&s_led, GPIO_OUTPUT_ACTIVE);
-    if (ret < 0) {
-        LOG_ERR("Lỗi: Không thể cấu hình chân LED PI1 (Mã lỗi: %d)", ret);
-        return;
-    }
-
-    LOG_INF("Khởi tạo luồng Blink LED thành công! Bắt đầu chớp tắt...");
+    /* Cấu hình chân sang chế độ ngõ ra mức tích cực ban đầu */
+    gpio_pin_configure_dt(&s_led, GPIO_OUTPUT_ACTIVE);
 
     while (1) {
         gpio_pin_toggle_dt(&s_led);
-        /* Tự động chuyển CPU sang trạng thái Sleep và nhường tài nguyên cho luồng khác */
+        
+        /* Đưa luồng vào trạng thái ngủ, nhường CPU cho luồng khác */
         k_msleep(500);
     }
 }
 
-void monitor_thread_entry(void *p1, void *p2, void *p3)
-{
-    ARG_UNUSED(p1); ARG_UNUSED(p2); ARG_UNUSED(p3);
-
-    LOG_INF("Khởi tạo luồng Hệ Thống Giám Sát (Monitor Worker) thành công!");
-
-    uint32_t heartbeat_count = 0;
-    while (1) {
-        heartbeat_count++;
-        LOG_INF("[HEARTBEAT #%u] Hệ điều hành Zephyr RTOS đang chạy ổn định!", heartbeat_count);
-        
-        /* Định kỳ 2 giây in thông điệp trạng thái một lần */
-        k_sleep(K_SECONDS(2));
-    }
-}
+/* Định nghĩa luồng tĩnh bằng K_THREAD_DEFINE: Không cần gọi xTaskCreate */
+K_THREAD_DEFINE(worker_tid, WORKER_STACK_SIZE,
+                worker_thread_entry, NULL, NULL, NULL,
+                WORKER_PRIORITY, 0, 0);
 
 int main(void)
 {
-    LOG_INF("=================================================");
-    LOG_INF("     STM32F746 DUAL-GATEWAY ZEPHYR BRING-UP      ");
-    LOG_INF("=================================================");
-    
-    /* Hàm main kết thúc, nhường hoàn toàn quyền điều khiển cho bộ lập lịch Zephyr */
+    LOG_INF("Zephyr RTOS Bring-Up thành công trên STM32F746!");
+    /* Hàm main kết thúc nhiệm vụ, Kernel tự động quản lý các luồng Worker */
     return 0;
 }
 ```
 
 ---
 
-## 3.2. Mổ xẻ 5 Bug Hệ Thống "Kinh Điển" trong Ngày 7
+# PHẦN 4: BỘ CÂU HỎI SÁT HẠCH CHUYÊN SÂU (INTERVIEW DEEP-DIVE)
 
-```text
-┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                 5 BẪY HỆ THỐNG ZEPHYR RTOS                                      │
-├───────────────────┬───────────────────────────────────────────┬─────────────────────────────────┤
-│ HIỆN TƯỢNG BUG    │ NGUYÊN NHÂN SÂU XA HỆ ĐIỀU HÀNH           │ GIẢI PHÁP SỬA CODE CHUẨN XÁC    │
-├───────────────────┼───────────────────────────────────────────┼─────────────────────────────────┤
-│ 1. `DEVICE_DT_GET`│ Quên bật Kconfig tương ứng trong `prj.conf`│ Kiểm tra `prj.conf`: phải có    │
-│    trả về con trỏ │ (ví dụ thiếu `CONFIG_GPIO=y`). Driver     │ `CONFIG_GPIO=y`, kiểm tra node  │
-│    NULL hoặc treo │ không được biên dịch vào mã máy.          │ `status = "okay";` ở overlay.   │
-├───────────────────┼───────────────────────────────────────────┼─────────────────────────────────┤
-│ 2. Kernel Panic   │ Cấp phát Stack luồng quá nhỏ (ví dụ 256B) │ Tăng kích thước Stack lên 1KB   │
-│    (MemManage)    │ khiến biến cục bộ đè vào MPU Guard Region.│ hoặc 2KB; tránh đệ quy/mảng to. │
-├───────────────────┼───────────────────────────────────────────┼─────────────────────────────────┤
-│ 3. Các luồng khác │ Luồng Cooperative (Priority âm) chạy vòng │ Thêm `k_yield()` hoặc           │
-│    bị chết đói    │ lặp vô tận tính toán mà không nhường CPU. │ `k_msleep()` vào trong thân lặp.│
-│    (Starvation)   │                                           │                                 │
-├───────────────────┼───────────────────────────────────────────┼─────────────────────────────────┤
-│ 4. Mất log hoặc in│ Dùng `LOG_MODE_IMMEDIATE=y` trong luồng   │ Đổi sang `LOG_MODE_DEFERRED=y`  │
-│    chậm trễ ngắt  │ tần số cao làm nghẽn UART Console.        │ để log được đệm vào RAM.        │
-├───────────────────┼───────────────────────────────────────────┼─────────────────────────────────┤
-│ 5. Lỗi biên dịch  │ Tên alias trong file overlay gõ sai khác  │ Kiểm tra khớp từng ký tự giữa   │
-│    macro DT_ALIAS │ với chuỗi truyền vào macro trong C code.  │ `DT_ALIAS(led_status)` & overlay│
-└───────────────────┴───────────────────────────────────────────┴─────────────────────────────────┘
-```
+Đây là các câu hỏi kinh điển mà các Trưởng nhóm Kỹ thuật (Technical Lead) tại Ban Vien, Renesas, NXP sẽ dùng để khảo sát tư duy Zephyr của bạn:
+
+### ❓ Câu 1: "Devicetree trong Zephyr khác gì Devicetree trong Linux nhúng?"
+* **Trả lời chuẩn:**
+  * Trong Linux nhúng: Devicetree được biên dịch thành file nhị phân `.dtb`. Khi khởi động, Bootloader (U-Boot) nạp file `.dtb` này vào RAM. Linux Kernel duyệt cây nhị phân lúc runtime để tìm driver tương ứng. Quá trình này tiêu tốn hàng chục KB RAM và hàng triệu chu kỳ CPU lúc boot.
+  * Trong Zephyr RTOS: Devicetree được xử lý **hoàn toàn ở giai đoạn biên dịch (Compile-time)**. Công cụ Python đọc file `.dts`/`.overlay`, đối chiếu với schema `.yaml` và sinh ra trực tiếp các macro C tĩnh trong file `devicetree_generated.h`. Các thông số địa chỉ thanh ghi, số chân ngắt trở thành các hằng số tức thời nhúng thẳng vào mã máy ASM. Kết quả: **Tiêu thụ 0 byte RAM runtime và 0 ns thời gian duyệt cây lúc khởi động**.
+
+### ❓ Câu 2: "Khi gọi hàm API của một ngoại vi trong Zephyr, cơ chế gọi hàm thực sự diễn ra như thế nào?"
+* **Trả lời chuẩn:**
+  * Lập trình viên gọi hàm API chung (ví dụ `uart_poll_out(dev, c)`).
+  * Hàm này thực chất là một hàm inline: Nó lấy con trỏ `dev->api` (chứa bảng con trỏ hàm `struct uart_driver_api`), rồi nhảy gián tiếp tới hàm tương ứng của driver phần cứng cụ thể: `api->poll_out(dev, c)`.
+  * Đây là cơ chế đa hình (Polymorphism) bằng ngôn ngữ C, giúp code tầng ứng dụng hoàn toàn độc lập với phần cứng của từng hãng vi điều khiển.
+
+### ❓ Câu 3: "Sự khác biệt cốt tử giữa Luồng Cooperative và Luồng Preemptive trong Zephyr là gì? Khi nào nên dùng loại nào?"
+* **Trả lời chuẩn:**
+  * **Cooperative Thread (Priority âm từ `-CONFIG_NUM_COOP_PRIO` đến `-1`):** Luồng này nắm quyền thực thi độc quyền. Một khi đã chiếm CPU, **không có luồng nào khác (kể cả luồng có priority cao hơn) có thể cướp quyền**, trừ khi chính nó chủ động gọi `k_yield()`, `k_sleep()` hoặc chờ một tài nguyên IPC. Thích hợp cho: Các tác vụ quan trọng tuyệt đối không được gián đoạn (như nạp dữ liệu Flash, tính toán mã hóa).
+  * **Preemptive Thread (Priority không âm từ `0` đến `N`):** Bộ lập lịch có quyền tước quyền thực thi của nó bất kỳ lúc nào nếu có một luồng có priority cao hơn sẵn sàng chạy. Thích hợp cho: Các tác vụ thông thường (đọc cảm biến, vẽ màn hình GUI, nhận gói tin mạng).
+
+### ❓ Câu 4: "Tại sao Zephyr lại ưu tiên dùng `K_THREAD_DEFINE` tĩnh thay vì tạo luồng động bằng `k_thread_create()`?"
+* **Trả lời chuẩn:**
+  * Trong các hệ thống nhúng quan trọng (Automotive / Y tế / Hàng không vũ trụ theo chuẩn MISRA-C và ISO 26262), việc cấp phát bộ nhớ động (Dynamic Allocation / Heap) bị nghiêm cấm hoặc hạn chế tối đa vì nguy cơ gây phân mảnh RAM và rò rỉ bộ nhớ (Memory Leak).
+  * Macro `K_THREAD_DEFINE` cấp phát toàn bộ cấu trúc dữ liệu của luồng (`struct k_thread`) và bộ nhớ ngăn xếp (`k_thread_stack_t`) vào phân vùng tĩnh BSS/DATA lúc biên dịch. Trình biên dịch và Linker biết chính xác 100% dung lượng RAM của hệ thống ngay từ lúc build, loại trừ hoàn toàn nguy cơ sập hệ thống do hết RAM lúc đang vận hành.
 
 ---
 
-# 🎯 BƯỚC 4: BỘ CÂU HỎI PHỎNG VẤN & KỊCH BẢN TRẢ LỜI CHUYÊN SÂU
+### 🎙️ KỊCH BẢN TRẢ LỜI PHỎNG VẤN 60 GIÂY VỀ NĂNG LỰC ZEPHYR (ELEVATOR PITCH)
 
-### ❓ Câu 1: Devicetree trong Zephyr RTOS được nạp và xử lý vào thời điểm nào? Nó tối ưu hơn Linux nhúng ra sao?
-* **Trả lời chuẩn Kỹ sư RTOS:** 
-  * Trong Zephyr RTOS, Devicetree được xử lý **hoàn toàn ở giai đoạn Biên dịch (Compile-time)** bằng bộ công cụ Python. Nó trích xuất dữ liệu từ các file `.dts`/`.overlay` và sinh ra trực tiếp mã nguồn C macro tĩnh (`devicetree_generated.h`).
-  * Khác với Linux nhúng phải nạp file nhị phân `.dtb` vào RAM và duyệt cây lúc boot (tốn hàng chục KB RAM và chu kỳ CPU), Zephyr không tốn một byte RAM nào cho việc lưu cấu trúc cây lúc chạy. Trình biên dịch GCC có thể thực hiện tối ưu hóa hằng số (Constant Folding) và loại bỏ mã chết (Dead Code Elimination) ngay từ lúc build.
-
-### ❓ Câu 2: Cơ chế `CONFIG_MPU_STACK_GUARD` phát hiện lỗi tràn ngăn xếp (Stack Overflow) như thế nào?
-* **Trả lời chuẩn Kỹ sư RTOS:** 
-  * Thay vì dùng phương pháp kiểm tra phần mềm thụ động (như ghi mẫu số ảo Canary `0xA5A5A5A5` ở đáy stack rồi chờ bộ lập lịch kiểm tra định kỳ), Zephyr kích hoạt khối phần cứng **MPU (Memory Protection Unit)** của ARM Cortex-M7.
-  * MPU sẽ cấu hình một vùng đệm kích thước 32 bytes nằm ngay dưới đáy ngăn xếp của luồng thành vùng cấm truy cập (`No Access`). Cứ mỗi lần CPU chuyển đổi ngữ cảnh (Context Switch), MPU tự động tái lập trình vùng cấm này tương ứng với luồng chuẩn bị chạy. Nếu con trỏ ngăn xếp `SP` vượt ranh giới và ghi đè vào đây, ngoại lệ phần cứng **`MemManage Fault`** lập tức nổ ra ngay tại chu kỳ lệnh vi phạm, bắt quả tang chính xác dòng lệnh gây lỗi.
-
-### ❓ Câu 3: Sự khác biệt cơ bản giữa Luồng Cooperative và Luồng Preemptive trong Zephyr là gì?
-* **Trả lời chuẩn Kỹ sư RTOS:**
-  * **Cooperative Thread (Priority âm: `-CONFIG_NUM_COOP_PRIO` đến `-1`):** Một khi đã chiếm CPU, nó sẽ nắm quyền thực thi độc quyền. Không có bất kỳ luồng nào khác (kể cả luồng có priority cao hơn) có thể chen ngang, trừ khi chính nó chủ động nhường quyền bằng lệnh `k_yield()` hoặc `k_sleep()`.
-  * **Preemptive Thread (Priority không âm: `0` đến `CONFIG_NUM_PREEMPT_PRIO - 1`):** Bộ lập lịch có quyền tước quyền thực thi bất kỳ lúc nào nếu có một luồng khác có priority cao hơn sẵn sàng chạy hoặc khi hết khoảng thời gian chia sẻ (Time slice).
-
----
-
-### 🎙️ KỊCH BẢN TRẢ LỜI PHỎNG VẤN 60 GIÂY (ELEVATOR PITCH)
-
-> *"Sau khi làm chủ toàn bộ nền tảng Bare-metal ở tầng thanh ghi, em mở rộng dự án CAN Gateway lên hệ điều hành **Zephyr RTOS** để khai thác khả năng đa nhiệm và quản trị phần cứng hiện đại.  
-> Em thiết kế file **`app.overlay`** để phân tách hoàn toàn tầng mô tả chân vật lý (Pinctrl) khỏi mã nguồn C, giúp ứng dụng có thể dễ dàng chuyển đổi sang các dòng chip STM32 khác chỉ bằng việc thay file cấu hình.  
-> Để bảo vệ hệ thống trước các lỗi bộ nhớ thời gian thực, em cấu hình tính năng **`CONFIG_MPU_STACK_GUARD`** tận dụng khối MPU phần cứng của Cortex-M7 bắt lỗi tràn ngăn xếp tức thời, đồng thời áp dụng mô hình **Deferred Logging** để toàn bộ hoạt động in vết hệ thống được đẩy vào RAM đệm và xử lý lúc CPU rảnh rỗi, triệt tiêu hoàn toàn hiện tượng jitter hay trễ nhịp thời gian thực của các luồng truyền thông."*
+> *"Bên cạnh nền tảng vững chắc về lập trình thanh ghi Bare-metal, em làm chủ hệ sinh thái **Zephyr RTOS** để phát triển các hệ thống nhúng quy mô công nghiệp.  
+> Em nắm rõ cơ chế **Compile-Time Evaluation** của Devicetree và Kconfig, hiểu cách Zephyr chuyển đổi mô tả phần cứng thành macro C tĩnh để đạt 0 byte RAM overhead. Em áp dụng mô hình **Driver Model đa hình** để tách biệt hoàn toàn mã nguồn logic C khỏi cấu hình chân cẳng trong file `.overlay`, giúp phần mềm có khả năng chuyển đổi tức thì sang các dòng vi điều khiển khác.  
+> Về mặt an toàn hệ thống, em thành thạo việc cấu hình **MPU Stack Guard** tận dụng phần cứng Cortex-M7 bắt lỗi tràn ngăn xếp ngay tức khắc, kết hợp với chế độ **Deferred Logging** để triệt tiêu hiện tượng jitter thời gian thực của các luồng điều khiển ô tô."*

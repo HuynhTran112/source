@@ -18,9 +18,7 @@ zephyr_project/
 
 # 3. Bỏ qua các file markdown phụ (chỉ giữ lại Day 00 -> Day 14 trên GitHub)
 project_roadmap.md
-interview_stack_heap_guide.md
 fresher_embedded_study_guide.md
-interview_fresher_zephyr_guide.md
 resume_harvard_embedded.md
 resume_harvard_embedded.tex
 # 4. Bỏ qua file build & artifacts biên dịch

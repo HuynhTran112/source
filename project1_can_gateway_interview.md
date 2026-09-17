@@ -1,8 +1,8 @@
 # Cẩm Nang Phỏng Vấn Dự Án 1: Automotive CAN Telematics Gateway
 
 > **Hệ Thống:** Automotive CAN Telematics Gateway & Diagnostic Node  
-> **Nền Tảng Phần Cứng:** STM32F746NG (ARM Cortex-M7 @ 216 MHz)  
-> **Hệ Điều Hành & Framework:** Zephyr RTOS, Kconfig, DeviceTree, West CLI  
+> **Nền Tảng Phần Cứng:** STM32F746NG (ARM Cortex-M7 @ 216 MHz, MPU, L1 Cache 16KB)  
+> **Hệ Điều Hành & Framework:** Zephyr RTOS (v3.x), Kconfig, DeviceTree, West CLI  
 > **Chuẩn Công Nghiệp Ô Tô:** CAN 2.0B (ISO 11898-1), AUTOSAR E2E Profile 1 (CRC-8 SAE J1850), Vector DBC Engine, Zephyr Shell CLI  
 > **Tài liệu nền tảng tham chiếu:** [`day00_baremetal_foundations.md`](file:///d:/Project/STM32F7/day00_baremetal_foundations.md), STM32F746 Reference Manual (RM0385 Chapter 30: bxCAN).
 
@@ -12,14 +12,15 @@
 
 - [1. TỔNG QUAN HỆ THỐNG & KIẾN TRÚC PHẦN MỀM](#1-tổng-quan-hệ-thống--kiến-trúc-phần-mềm)
   - [1.1. Mục Tiêu Dự Án & Thông Số Kỹ Thuật Định Lượng](#11-mục-tiêu-dự-án--thông-số-kỹ-thuật-định-lượng)
-  - [1.2. Sơ Đồ Khối Kiến Trúc Phân Tầng (Zephyr Architecture)](#12-sơ-đồ-khối-kiến-trúc-phân-tầng-zephyr-architecture)
+  - [1.2. Sơ Đồ Khối Kiến Trúc Phân Tầng & Luồng Dữ Liệu Đa Nhiệm (Zephyr Multi-threading)](#12-sơ-đồ-khối-kiến-trúc-phân-tầng--luồng-dữ-liệu-đa-nhiệm-zephyr-multi-threading)
+  - [1.3. Cấu Trúc Khung CAN 2.0B & Cấu Hình DeviceTree Chuẩn Ô Tô](#13-cấu-trúc-khung-can-20b--cấu-hình-devicetree-chuẩn-ô-tô)
 - [2. LÝ THUYẾT CỐT LÕI & CÔNG THỨC BẮT BUỘC PHẢI NHỚ](#2-lý-thuyết-cốt-lõi--công-thức-bắt-buộc-phải-nhớ)
-  - [2.1. Tính Toán CAN Bit Timing (500 kbps @ APB1 54 MHz)](#21-tính-toán-can-bit-timing-500-kbps--apb1-54-mhz)
-  - [2.2. Cơ Chế Lọc Phần Cứng bxCAN Filter Bank (32-bit Identifier Mask Mode)](#22-cơ-chế-lọc-phần-cứng-bxcan-filter-bank-32-bit-identifier-mask-mode)
-  - [2.3. AUTOSAR E2E Profile 1 & Thuật Toán CRC-8 SAE J1850](#23-autosar-e2e-profile-1--thuật-toán-crc-8-sae-j1850)
+  - [2.1. Chi Tiết CAN Bit Timing & Bảng Thanh Ghi CAN_BTR (500 kbps @ APB1 54 MHz)](#21-chi-tiết-can-bit-timing--bảng-thanh-ghi-can_btr-500-kbps--apb1-54-mhz)
+  - [2.2. Cơ Chế Bộ Lọc bxCAN Filter Bank: Bố Cục Bit 32-bit Mask & Quy Trình Nạp RMW](#22-cơ-chế-bộ-lọc-bxcan-filter-bank-bố-cục-bit-32-bit-mask--quy-trình-nạp-rmw)
+  - [2.3. AUTOSAR E2E Profile 1: Đa Thức CRC-8 SAE J1850, Alive Counter & Data ID](#23-autosar-e2e-profile-1-đa-thức-crc-8-sae-j1850-alive-counter--data-id)
   - [2.4. Máy Trạng Thái Quản Lý Lỗi CAN (Fault Confinement - ISO 11898-1)](#24-máy-trạng-thái-quản-lý-lỗi-can-fault-confinement---iso-11898-1)
 - [3. SƠ ĐỒ TUẦN TỰ HOẠT ĐỘNG (MERMAID SEQUENCE DIAGRAMS)](#3-sơ-đồ-tuần-tự-hoạt-động-mermaid-sequence-diagrams)
-  - [3.1. Quy Trình Cấu Hình Tuần Tự (Peripheral Configuration Pipeline)](#31-quy-trình-cấu-hình-tuần-tự-peripheral-configuration-pipeline)
+  - [3.1. Quy Trình Cấu Hình Khởi Động Phần Cứng (Peripheral Configuration Pipeline)](#31-quy-trình-cấu-hình-khởi-động-phần-cứng-peripheral-configuration-pipeline)
   - [3.2. Quy Trình Vận Hành & Bắt Tay Dữ Liệu Thời Gian Thực (Runtime Dataflow)](#32-quy-trình-vận-hành--bắt-tay-dữ-liệu-thời-gian-thực-runtime-dataflow)
   - [3.3. Quy Trình Xử Lý Sự Cố & Phục Hồi An Toàn (Fault & Recovery Pipeline)](#33-quy-trình-xử-lý-sự-cố--phục-hồi-an-toàn-fault--recovery-pipeline)
 - [4. PHÂN LOẠI BUG THỰC TẾ & BẪY PHẦN CỨNG KINH ĐIỂN](#4-phân-loại-bug-thực-tế--bẫy-phần-cứng-kinh-điển)
@@ -38,235 +39,373 @@ Dự án hiện thực một **Trạm Cổng Giao Tiếp (Gateway) và Giám Sá
 
 | Thông Số Kỹ Thuật | Giá Trị Thực Tế Dự Án | Ý Nghĩa Kỹ Thuật / Cơ Sở Thiết Kế |
 | :--- | :--- | :--- |
-| **Vi điều khiển** | STM32F746NG (ARM Cortex-M7) | Xung nhịp hệ thống $f_{SYSCLK} = 216\text{ MHz}$, $f_{APB1} = 54\text{ MHz}$. |
+| **Vi điều khiển** | STM32F746NG (ARM Cortex-M7) | Xung nhịp hệ thống `f_SYSCLK = 216 MHz`, `f_APB1 = 54 MHz`. |
 | **Ngoại vi CAN** | bxCAN1 (CAN1) | Kết nối chip CAN Transceiver ngoài (TJA1050/MCP2551 qua chân PB8/PB9). |
-| **Tốc độ truyền (Baudrate)** | $500\text{ kbps}$ (High-Speed CAN) | Tốc độ tiêu chuẩn của mạng điều khiển động cơ / phanh ô tô. |
-| **Điểm lấy mẫu (Sample Point)** | $87.5\%$ | Chuẩn khuyến nghị CiA (CAN in Automation) chống méo xung đường truyền dài. |
-| **Tải truyền nhận (Throughput)** | $> 1,000\text{ frames/s}$ | Đảm bảo tải nặng không làm rớt bản tin, CPU load đo được $< 2\%$. |
-| **Độ trễ giải mã tín hiệu** | $< 15\text{ }\mu\text{s / frame}$ | Thuật toán DBC tối ưu bằng số nguyên cố định (Fixed-point integer arithmetic). |
-| **An toàn dữ liệu** | AUTOSAR E2E Profile 1 | CRC-8 SAE J1850 đa thức $0\text{x1D}$ kèm bộ đếm Alive Counter 4-bit và Data ID. |
-| **Khả năng tự phục hồi** | ISO 11898-1 Bus-Off Recovery | Nhận diện trạng thái tê liệt bus và kích hoạt chuỗi phục hồi an toàn trong $< 100\text{ ms}$. |
+| **Tốc độ truyền (Baudrate)** | `500 kbps` (High-Speed CAN) | Tốc độ tiêu chuẩn của mạng điều khiển động cơ / phanh ô tô. |
+| **Điểm lấy mẫu (Sample Point)** | `87.5%` | Chuẩn khuyến nghị CiA (CAN in Automation) chống méo xung đường truyền dài. |
+| **Tải truyền nhận (Throughput)** | `> 1,000 frames/s` | Đảm bảo tải nặng không làm rớt bản tin, CPU load đo được `< 2%`. |
+| **Độ trễ giải mã tín hiệu** | `< 15 us / frame` | Thuật toán DBC tối ưu bằng số nguyên cố định (Fixed-point integer arithmetic). |
+| **An toàn dữ liệu** | AUTOSAR E2E Profile 1 | CRC-8 SAE J1850 đa thức `0x1D` kèm bộ đếm Alive Counter 4-bit và Data ID. |
+| **Khả năng tự phục hồi** | ISO 11898-1 Bus-Off Recovery | Nhận diện trạng thái tê liệt bus và kích hoạt chuỗi phục hồi an toàn trong `< 100 ms`. |
 
 ---
 
-### 1.2. Sơ Đồ Khối Kiến Trúc Phân Tầng (Zephyr Architecture)
+### 1.2. Sơ Đồ Khối Kiến Trúc Phân Tầng & Luồng Dữ Liệu Đa Nhiệm (Zephyr Multi-threading)
+
+Hệ thống được thiết kế theo mô hình 3 luồng thực thi (Threads) có mức độ ưu tiên giảm dần, giao tiếp với nhau qua hàng đợi thông điệp phi khóa `k_msgq` và bộ đệm Ring Buffer:
 
 ```text
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                   ỨNG DỤNG NGƯỜI DÙNG (APPLICATION LAYER)                        │
-│  ┌─────────────────────────────────────┐  ┌───────────────────────────────────┐  │
-│  │   Zephyr Shell Diagnostic CLI       │  │   DBC Signal Publisher / Telemetry│  │
-│  │   (Lệnh: can show, e2e stat, fault) │  │   (Tốc độ xe, Vòng tua máy, Bàn đạp)  │  │
-│  └──────────────────▲──────────────────┘  └─────────────────▲─────────────────┘  │
-└─────────────────────┼───────────────────────────────────────┼────────────────────┘
-                      │                                       │
-┌─────────────────────┼───────────────────────────────────────┼────────────────────┐
-│                     │  TẦNG XỬ LÝ DỮ LIỆU Ô TÔ (MIDDLEWARE) │                    │
-│  ┌──────────────────┴───────────────────────────────────────┴─────────────────┐  │
-│  │               Thread 2: DBC Decoding & E2E Validation Engine                │  │
-│  │   - E2E Profile 1: Check Data ID + Alive Counter + CRC-8 (SAE J1850)        │  │
-│  │   - DBC Signal Extraction: Bitmasking, Intel/Motorola Byte Unpacking       │  │
-│  └──────────────────────────────────▲─────────────────────────────────────────┘  │
-│                                     │ k_msgq (Capacity: 32 Frames)                │
-│  ┌──────────────────────────────────┴─────────────────────────────────────────┐  │
-│  │                   Thread 1: CAN RX Dispatcher Task                         │  │
-│  │   - Chờ Semaphore/MsgQ từ ISR, đọc frame từ Hardware FIFO0 / FIFO1          │  │
-│  │   - Thống kê Error Warning, Error Passive, Bus-Off và kích hoạt phục hồi   │  │
-│  └──────────────────────────────────▲─────────────────────────────────────────┘  │
-└─────────────────────────────────────┼────────────────────────────────────────────┘
-                                      │
-┌─────────────────────────────────────┼────────────────────────────────────────────┐
-│                    ZEPHYR KERNEL & DEVICE DRIVER MODEL                           │
-│  ┌──────────────────────────────────┴─────────────────────────────────────────┐  │
-│  │  Zephyr CAN Controller Subsystem (`drivers/can/can_stm32.c`)              │  │
-│  │  - DeviceTree Node: `can1: can@40006400 { ... bus-speed = <500000>; }`     │  │
-│  │  - Filter Banks: Cấu hình 6 bộ lọc phần cứng phân luồng ID về FIFO0/FIFO1   │  │
-│  └──────────────────────────────────▲─────────────────────────────────────────┘  │
-└─────────────────────────────────────┼────────────────────────────────────────────┘
-                                      │
-┌─────────────────────────────────────┼────────────────────────────────────────────┐
-│              PHẦN CỨNG VI ĐIỀU KHIỂN & NGOẠI VI BARE-METAL (STM32F746)           │
-│  ┌──────────────────────────────────┴─────────────────────────────────────────┐  │
-│  │  Khối ngoại vi bxCAN1 (`0x40006400` trên APB1 @ 54 MHz)                   │  │
-│  │  - Chân PB8 (CAN1_RX) & PB9 (CAN1_TX) ghép kênh AF9                        │  │
-│  │  - CAN Transceiver ngoài (TJA1050 / MCP2551) kết nối Bus CAN vật lý       │  │
-│  └────────────────────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                 APPLICATION LAYER (ZEPHYR RTOS)                                  │
+│                                                                                                  │
+│   ┌──────────────────────────────────────────────┐  ┌─────────────────────────────────────────┐  │
+│   │     Thread 3: Diagnostic Shell CLI Task      │  │    Thread 2: DBC & E2E Processing Task  │  │
+│   │     - Priority: 7 (Preemptive, Low)          │  │    - Priority: 3 (Preemptive, High)     │  │
+│   │     - Stack: 2048 bytes                      │  │    - Stack: 4096 bytes                  │  │
+│   │     - Hiển thị bảng Telemetry thời gian thực │  │    - Thẩm định E2E CRC-8 + Alive Counter│  │
+│   │     - Bắt lệnh chẩn đoán: "can stat", "e2e"  │  │    - Unpack tín hiệu DBC (Tốc độ, RPM)  │  │
+│   └──────────────────────▲───────────────────────┘  └────────────────────▲────────────────────┘  │
+│                          │                                               │                       │
+│                          │ Shared State / Ring Buffer                    │ k_msgq (32 Frames)    │
+│                          └───────────────────────────────────────────────┼───────────────────────┘
+│                                                                          │                       │
+│   ┌──────────────────────────────────────────────────────────────────────┴────────────────────┐  │
+│   │                     Thread 1: CAN RX Dispatcher & State Monitor Task                      │  │
+│   │                     - Priority: 2 (Preemptive, Realtime)                                  │  │
+│   │                     - Stack: 2048 bytes                                                   │  │
+│   │                     - Lắng nghe Event từ ISR: Đọc khung tin từ FIFO0 / FIFO1              │  │
+│   │                     - Theo dõi máy trạng thái lỗi: Error Warning, Passive, Bus-Off        │  │
+│   └──────────────────────────────────────────────▲────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────┼───────────────────────────────────────────────┘
+                                                   │
+┌──────────────────────────────────────────────────┼───────────────────────────────────────────────┐
+│                      ZEPHYR DRIVER MODEL & HARDWARE INTERRUPTS                                   │
+│                                                  │                                               │
+│   ┌──────────────────────────────────────────────┴────────────────────────────────────────────┐  │
+│   │                  CAN_RX0_IRQHandler / CAN_SCE_IRQHandler (Cortex-M7 NVIC)                 │  │
+│   │                  - Đọc các thanh ghi dữ liệu: CAN_RI0R, CAN_RDT0R, CAN_RDL0R, CAN_RDH0R   │  │
+│   │                  - Ghi bit W1C: RFOM0 = 1 trong CAN_RF0R để giải phóng Hardware Mailbox   │  │
+│   │                  - Đẩy vào Queue không chờ: k_msgq_put(&can_rx_msgq, &frame, K_NO_WAIT)   │  │
+│   └──────────────────────────────────────────────▲────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────┼───────────────────────────────────────────────┘
+                                                   │
+┌──────────────────────────────────────────────────┼───────────────────────────────────────────────┐
+│                       BARE-METAL HARDWARE REGISTERS (STM32F746)                                  │
+│                                                  │                                               │
+│   ┌──────────────────────────────────────────────┴────────────────────────────────────────────┐  │
+│   │  Khối bxCAN1 (Base: 0x40006400 trên APB1 @ 54 MHz)                                        │  │
+│   │  - Chân PB8 (CAN1_RX) & PB9 (CAN1_TX) ghép kênh Alternate Function AF9                    │  │
+│   │  - 28 Filter Banks (Chế độ 32-bit Mask Mode phân luồng gói về FIFO0 / FIFO1)              │  │
+│   │  - CAN Transceiver ngoài (TJA1050 / MCP2551) kết nối Bus CAN vi sai vật lý                │  │
+│   └───────────────────────────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 1.3. Cấu Trúc Khung CAN 2.0B & Cấu Hình DeviceTree Chuẩn Ô Tô
+
+Mọi bản tin trao đổi trong dự án đều tuân thủ cấu trúc khung chuẩn **CAN 2.0B Standard Frame** (11-bit ID) và **Extended Frame** (29-bit ID):
+
+```text
+┌──────┬───────────────┬───────┬──────┬─────┬────────┬──────────────┬─────────┬─────────┬──────┬─────────────┐
+│ SOF  │ Identifier    │  RTR  │ IDE  │ r0  │  DLC   │ Data Field   │ CRC     │ CRC Del │ ACK  │ EOF (7 bits)│
+│1 bit │ 11/29 bits    │ 1 bit │1 bit │1 bit│ 4 bits │ 0 - 8 Bytes  │ 15 bits │ 1 bit   │2 bits│ Recessive   │
+└──────┴───────────────┴───────┴──────┴─────┴────────┴──────────────┴─────────┴─────────┴──────┴─────────────┘
+  0       ID bản tin      0=Data  0=Std  0     Độ dài   Payload ô tô    Mã băm   1=Recess  Slot   Kết thúc
+(Dom)                     1=Rmt   1=Ext        (0..8)   (Tốc độ, RPM)   phần cứng          + Del  khung tin
+```
+
+#### File cấu hình DeviceTree Overlay (`app.overlay`) trong Zephyr:
+```dts
+/ {
+    chosen {
+        zephyr,can-primary = &can1;
+    };
+};
+
+&can1 {
+    status = "okay";
+    pinctrl-0 = <&can1_rx_pb8 &can1_tx_pb9>;
+    pinctrl-names = "default";
+    bus-speed = <500000>;
+    sample-point = <875>; /* 87.5% theo chuẩn CiA */
+
+    can-transceiver {
+        max-bitrate = <1000000>;
+    };
+};
 ```
 
 ---
 
 # 2. LÝ THUYẾT CỐT LÕI & CÔNG THỨC BẮT BUỘC PHẢI NHỚ
 
-### 2.1. Tính Toán CAN Bit Timing (500 kbps @ APB1 54 MHz)
+### 2.1. Chi Tiết CAN Bit Timing & Bảng Thanh Ghi CAN_BTR (500 kbps @ APB1 54 MHz)
 
-Trong giao thức CAN, 1 bit dữ liệu được chia làm 4 đoạn định thời (Time Segments):
-1. **Sync_Seg**: Luôn luôn bằng $1\text{ }t_q$ (dùng để đồng bộ xung nhịp cạnh sườn).
-2. **Prop_Seg**: Bù trễ trễ vật lý của đường dây cáp và transceiver.
-3. **Phase_Seg1**: Đoạn trễ pha 1 (cho phép kéo dài khi có sai lệch xung nhịp).
-4. **Phase_Seg2**: Đoạn trễ pha 2 (cho phép rút ngắn khi có sai lệch xung nhịp).
+Trong giao thức CAN, 1 bit dữ liệu được cấu thành từ 4 đoạn định thời (Time Segments):
+1. **Sync_Seg (Synchronization Segment):** Luôn cố định bằng `1 tq`. Dùng để đồng bộ xung nhịp cạnh sườn khi có chuyển tiếp mức logic từ Recessive sang Dominant.
+2. **Prop_Seg (Propagation Segment):** Bù trễ truyền sóng vật lý trên dây cáp và độ trễ chuyển mạch nội của chip CAN Transceiver.
+3. **Phase_Seg1 (Phase Buffer Segment 1):** Đoạn trễ bù pha 1. Cho phép kéo dài thêm một khoảng tối đa bằng `SJW` khi cạnh sườn xuất hiện muộn hơn dự kiến.
+4. **Phase_Seg2 (Phase Buffer Segment 2):** Đoạn trễ bù pha 2. Cho phép rút ngắn đi một khoảng tối đa bằng `SJW` khi cạnh sườn xuất hiện sớm hơn dự kiến.
 
-**Điểm lấy mẫu (Sample Point):** Là thời điểm bộ nhận đọc trạng thái logic của bus:
-$$\text{Sample Point (\%)} = \frac{\text{Sync\_Seg} + \text{Prop\_Seg} + \text{Phase\_Seg1}}{\text{Tổng số } t_q \text{ trong 1 bit}} \times 100\%$$
+#### Cơ chế đồng bộ hóa: Hard Sync vs Resynchronization:
+* **Hard Synchronization:** Xảy ra duy nhất tại cạnh xuống của bit **SOF (Start of Frame)**. Bộ đếm thời gian bit bị ép reset về 0 ngay lập tức bên trong đoạn `Sync_Seg`.
+* **Resynchronization (Đồng bộ lại):** Xảy ra khi có sự chuyển tiếp mức logic trong quá trình nhận các bit tiếp theo. Đoạn `Phase_Seg1` sẽ được kéo dài hoặc đoạn `Phase_Seg2` sẽ bị rút ngắn một lượng tối đa bằng tham số **SJW (Synchronization Jump Width)** để đưa điểm lấy mẫu về đúng vị trí danh định.
 
-#### Các bước tính toán trên STM32F746:
-* **Tần số bus APB1:** $f_{APB1} = 54\text{ MHz}$.
-* **Tốc độ mong muốn:** $\text{Baudrate} = 500\text{ kbps} \implies \text{Thời gian 1 bit} = \frac{1}{500,000} = 2\text{ }\mu\text{s} = 2,000\text{ ns}$.
-* **Chọn tổng số $t_q$ cho 1 bit:** Chọn $\text{Tổng } t_q = 18\text{ }t_q$.
-  * Suy ra chu kỳ 1 $t_q$: $t_q = \frac{2,000\text{ ns}}{18} = 111.11\text{ ns}$.
-  * Hệ số chia Prescaler (BRP):
-    $$\text{BRP} = \frac{f_{APB1}}{\text{Baudrate} \times \text{Tổng } t_q} = \frac{54,000,000}{500,000 \times 18} = \frac{54,000,000}{9,000,000} = 6$$
-* **Phân bổ các đoạn để đạt Sample Point $87.5\%$:**
-  * $\text{Sync\_Seg} = 1\text{ }t_q$ (bắt buộc).
-  * Mục tiêu lấy mẫu tại $87.5\% \implies \text{Vị trí lấy mẫu} = 18 \times 87.5\% \approx 15.75 \implies \text{chọn } 16\text{ }t_q$.
-  * Do đó: $\text{Phase\_Seg2} = 18 - 16 = 2\text{ }t_q$.
-  * Phần còn lại: $\text{Prop\_Seg} + \text{Phase\_Seg1} = 15\text{ }t_q$ (trong thanh ghi STM32 gộp chung thành $TS1 = 15$).
-  * Điểm lấy mẫu thực tế: $\frac{1 + 15}{18} = \frac{16}{18} = 88.88\%$ (rất sát chuẩn CiA $87.5\%$).
-  * Nhảy đồng bộ lại (SJW): $\text{SJW} = 1\text{ }t_q$ đến $2\text{ }t_q$.
+#### Bảng thanh ghi định thời CAN_BTR (RM0385 Section 30.9.2):
+* **Địa chỉ:** `CAN1_BASE + 0x01C` (`0x4000641C`).
+* **Reset Value:** `0x01230000`.
+
+```text
+Bit 31: SILM (Silent mode: 0 = Bình thường, 1 = Chỉ lắng nghe)
+Bit 30: LBKM (Loopback mode: 0 = Kết nối bus thật, 1 = Tự kiểm tra nội bộ)
+Bit 25..24: SJW[1:0]  (Resynchronization Jump Width: nạp SJW - 1)
+Bit 22..20: TS2[2:0]  (Time Segment 2: nạp Phase_Seg2 - 1)
+Bit 19..16: TS1[3:0]  (Time Segment 1: nạp Prop_Seg + Phase_Seg1 - 1)
+Bit 9..0:   BRP[9:0]  (Baud Rate Prescaler: nạp Prescaler - 1)
+```
+
+#### Các bước tính toán cụ thể trên STM32F746:
+```text
+Tần số xung nhịp ngoại vi: f_APB1 = 54 MHz
+Tốc độ baudrate yêu cầu:   Baudrate = 500 kbps
+Thời gian 1 bit:           T_bit = 1 / 500,000 = 2,000 ns
+Chọn tổng số time quanta:  Tổng tq = 18 tq
+
+1. Chu kỳ 1 time quanta:
+   tq = T_bit / Tổng tq = 2,000 ns / 18 = 111.11 ns
+
+2. Hệ số chia Prescaler (BRP):
+   BRP = f_APB1 / (Baudrate * Tổng tq) = 54,000,000 / (500,000 * 18) = 6
+   -> Nạp vào bitfield BRP[9:0]: 6 - 1 = 5
+
+3. Phân bổ các đoạn để đạt Sample Point 87.5% chuẩn CiA:
+   - Sync_Seg = 1 tq (Bắt buộc)
+   - Vị trí điểm lấy mẫu: 18 * 87.5% = 15.75 -> Chọn 16 tq
+   - Đoạn Phase_Seg2: 18 - 16 = 2 tq -> Nạp vào TS2[2:0]: 2 - 1 = 1
+   - Đoạn TS1 (Prop_Seg + Phase_Seg1): 16 - 1 = 15 tq -> Nạp vào TS1[3:0]: 15 - 1 = 14
+   - Chọn SJW: SJW = 2 tq -> Nạp vào SJW[1:0]: 2 - 1 = 1
+
+4. Điểm lấy mẫu thực tế đạt được:
+   Sample Point thực tế = (1 + 15) / 18 = 16 / 18 = 88.88% (Rất sát 87.5%)
+```
 
 ---
 
-### 2.2. Cơ Chế Lọc Phần Cứng bxCAN Filter Bank (32-bit Identifier Mask Mode)
+### 2.2. Cơ Chế Bộ Lọc bxCAN Filter Bank: Bố Cục Bit 32-bit Mask & Quy Trình Nạp RMW
 
-Phần cứng bxCAN của STM32F7 hỗ trợ tới 28 Filter Banks (chia sẻ giữa CAN1 và CAN2). Để tối ưu CPU không bị ngắt rác, dự án sử dụng **Chế độ Mặt nạ 32-bit (32-bit Mask Mode)**:
-* **Thanh ghi Định danh (ID Register - `FxR1`):** Chứa các bit ID mong muốn nhận.
-* **Thanh ghi Mặt nạ (Mask Register - `FxR2`):** Chỉ thị bit nào bắt buộc phải khớp.
-  * **Bit Mask = 1:** Phần cứng **bắt buộc so khớp tuyệt đối** bit tương ứng của frame đến với bit trong ID Register. Nếu khác nhau $\to$ Hủy gói tin.
-  * **Bit Mask = 0:** Phần cứng **bỏ qua (Don't care)**, bit của frame đến bằng 0 hay 1 đều chấp nhận.
+Để giảm tải triệt để cho CPU, khối phần cứng bxCAN tích hợp **28 bộ lọc phần cứng (Filter Banks)**. Mỗi bộ lọc có thể hoạt động ở chế độ 32-bit hoặc 16-bit, theo kiểu Danh sách (Identifier List) hoặc Mặt nạ (Identifier Mask). Dự án sử dụng **32-bit Mask Mode** gán trực tiếp vào **RxFIFO0**:
 
-#### Ví dụ bài toán dự án: Nhận dải ID từ `0x200` đến `0x20F` (16 node động cơ):
-* Dải nhị phân của ID: `0010 0000 0000` đến `0010 0000 1111`.
-* Ta thấy 8 bit cao (`0x20`) cố định, 4 bit thấp biến thiên.
-* **Cấu hình:**
-  * `ID Register`  $= 0\text{x200}$
-  * `Mask Register` $= 0\text{x7F0}$ (111 1111 0000: 7 bit cao bắt buộc khớp, 4 bit thấp bỏ qua).
-* Kết quả: Chỉ 1 bộ lọc phần cứng duy nhất xử lý xong toàn bộ 16 node mà không tốn một chu kỳ CPU nào.
+#### Cấu trúc bit 32-bit của thanh ghi Filter (CAN_FxR1 và CAN_FxR2):
+```text
+Bit 31..21: STID[10:0]  - 11 bit Identifier chuẩn (Standard ID)
+Bit 20..3:  EXID[17:0]  - 18 bit Identifier mở rộng (Extended ID)
+Bit 2:      IDE         - Cờ loại ID: 0 = Standard 11-bit, 1 = Extended 29-bit
+Bit 1:      RTR         - Cờ khung tin: 0 = Data Frame, 1 = Remote Frame
+Bit 0:      0 (Reserved)
+```
+
+#### Quy tắc so khớp mặt nạ (Mask Rule):
+* **Bit Mask = 1:** Phần cứng **bắt buộc so khớp tuyệt đối** bit tương ứng của khung tin đến với bit trong thanh ghi ID. Nếu chỉ cần 1 bit khác biệt -> Hủy khung tin.
+* **Bit Mask = 0:** Phần cứng **bỏ qua (Don't care)**, bit tương ứng của khung tin đến bằng 0 hay 1 đều được chấp nhận và đẩy vào FIFO.
+
+#### Quy trình 6 bước Clear-then-Set nạp bộ lọc Bare-Metal (RM0385 Section 30.7.4):
+1. **Vào chế độ cấu hình bộ lọc:** Đặt bit `FINIT = 1` trong thanh ghi `CAN_FMR`.
+2. **Vô hiệu hóa bộ lọc muốn sửa:** Xóa bit `FACTx = 0` trong thanh ghi `CAN_FA1R`.
+3. **Cấu hình độ rộng 32-bit:** Đặt bit `FSCx = 1` trong thanh ghi `CAN_FS1R`.
+4. **Cấu hình chế độ Mặt nạ (Mask Mode):** Xóa bit `FBMx = 0` trong thanh ghi `CAN_FM1R`.
+5. **Gán bộ đệm nhận FIFO:** Xóa bit `FFAx = 0` trong `CAN_FFA1R` (đẩy vào FIFO0).
+6. **Nạp giá trị ID và Mask:**
+   ```c
+   /* Nạp ID: 0x200 (Dịch 21 bit sang trái để khớp STID[10:0]) */
+   CAN1->sFilterRegister[0].FR1 = (0x200 << 21);
+   /* Nạp Mask: 0x7F0 (So khớp chính xác 7 bit cao, bỏ qua 4 bit thấp) */
+   CAN1->sFilterRegister[0].FR2 = (0x7F0 << 21);
+   ```
+7. **Kích hoạt bộ lọc và thoát chế độ Init:** Đặt bit `FACTx = 1` trong `CAN_FA1R`, sau đó xóa bit `FINIT = 0` trong `CAN_FMR`.
 
 ---
 
-### 2.3. AUTOSAR E2E Profile 1 & Thuật Toán CRC-8 SAE J1850
+### 2.3. AUTOSAR E2E Profile 1: Đa Thức CRC-8 SAE J1850, Alive Counter & Data ID
 
-Trong tiêu chuẩn an toàn ô tô (ISO 26262), mạng CAN có thể gặp lỗi: mất gói tin (drop), lặp lại gói tin (replay), sai lệch dữ liệu (corruption). **AUTOSAR End-to-End (E2E) Profile 1** bảo vệ gói tin bằng cách chèn thêm 2 trường bảo vệ vào Payload:
-1. **Alive Counter (4-bit, 0 đến 15):** Tăng dần theo mỗi chu kỳ truyền. Bên nhận kiểm tra nếu Counter không tăng liên tục $\implies$ Phát hiện mất gói hoặc lặp gói.
-2. **Data ID (16-bit duy nhất của bản tin):** Ngăn ngừa việc gửi nhầm bản tin khác ID vào bộ đệm.
-3. **CRC-8 Checksum (8-bit):** Đa thức SAE J1850.
+Tiêu chuẩn an toàn chức năng ô tô **ISO 26262 (ASIL B/D)** đòi hỏi tầng truyền thông phải có khả năng phát hiện lỗi toàn vẹn dữ liệu kể cả khi tầng phần cứng CAN đã báo nhận thành công. **AUTOSAR E2E Profile 1** bảo vệ chống lại 4 nguy cơ mất an toàn:
+1. **Mất gói tin (Message Loss):** Phát hiện qua bộ đếm `Alive Counter` bị nhảy bước (ví dụ: đang 3 nhảy thẳng lên 5).
+2. **Lặp gói tin (Message Replay):** Phát hiện qua bộ đếm `Alive Counter` bị đứng yên (`Counter_n == Counter_n-1`).
+3. **Sai địa chỉ (Masquerading / Wrong Addressing):** Ngăn chặn bằng cách lồng trường `Data ID 16-bit` bí mật vào phép tính CRC.
+4. **Lỗi đảo bit (Data Corruption):** Phát hiện bằng thuật toán mã băm `CRC-8 SAE J1850`.
 
-$$\text{Đa thức CRC-8 SAE J1850: } P(x) = x^8 + x^4 + x^3 + x^2 + 1 \quad (\text{Mã Hex: } 0\text{x1D})$$
+#### Cấu trúc Payload 8 Bytes chuẩn Automotive trong dự án:
+```text
+Byte 0: CRC-8 Checksum (Tính toán trên 7 bytes còn lại + Data ID)
+Byte 1: Alive Counter (bits 3..0: giá trị 0..15) & Data ID Low Nibble (bits 7..4)
+Byte 2..3: Tín hiệu Tốc độ xe (Vehicle Speed, 16-bit Little-Endian, factor = 0.01 km/h)
+Byte 4..5: Tín hiệu Vòng tua máy (Engine RPM, 16-bit Little-Endian, factor = 0.25 rpm)
+Byte 6:    Vị trí Bàn đạp ga (Pedal Position, 8-bit, 0..100%)
+Byte 7:    Trạng thái Phanh & Cảnh báo an toàn (Brake Switch & Fault Status flags)
+```
 
-* **Giá trị khởi tạo (Init Seed):** $0\text{xFF}$.
-* **XOR đầu ra (XOR Out):** $0\text{xFF}$.
-* **Trình tự tính CRC:**
-  1. Nạp Byte thấp của Data ID vào tính CRC.
-  2. Nạp Byte cao của Data ID vào tính tiếp.
-  3. Lần lượt nạp các byte dữ liệu (Payload Byte 1 đến Byte 7).
-  4. Byte 0 (hoặc Byte cuối tùy cấu hình) là nơi chứa Checksum để so khớp.
+#### Thuật toán CRC-8 SAE J1850:
+```text
+Đa thức chuẩn: P(x) = x^8 + x^4 + x^3 + x^2 + 1 (Mã Hex: 0x1D)
+Giá trị khởi tạo (Seed): 0xFF
+Giá trị XOR cuối cùng:   0xFF
+```
+
+```c
+uint8_t E2E_P01_CalculateCRC8(const uint8_t *data, uint8_t length, uint16_t data_id)
+{
+    uint8_t crc = 0xFF; /* Seed */
+
+    /* 1. Nạp Byte thấp của Data ID */
+    crc ^= (uint8_t)(data_id & 0xFF);
+    for (int i = 0; i < 8; i++) {
+        crc = (crc & 0x80) ? ((crc << 1) ^ 0x1D) : (crc << 1);
+    }
+
+    /* 2. Nạp Byte cao của Data ID */
+    crc ^= (uint8_t)((data_id >> 8) & 0xFF);
+    for (int i = 0; i < 8; i++) {
+        crc = (crc & 0x80) ? ((crc << 1) ^ 0x1D) : (crc << 1);
+    }
+
+    /* 3. Nạp lần lượt các Byte Payload (Từ Byte 1 đến Byte 7, bỏ qua Byte 0 CRC) */
+    for (uint8_t idx = 1; idx < length; idx++) {
+        crc ^= data[idx];
+        for (int i = 0; i < 8; i++) {
+            crc = (crc & 0x80) ? ((crc << 1) ^ 0x1D) : (crc << 1);
+        }
+    }
+
+    return (crc ^ 0xFF); /* XOR Out */
+}
+```
 
 ---
 
 ### 2.4. Máy Trạng Thái Quản Lý Lỗi CAN (Fault Confinement - ISO 11898-1)
 
-Mỗi node CAN tích hợp 2 bộ đếm lỗi bằng phần cứng: **TEC (Transmit Error Counter)** và **REC (Receive Error Counter)**:
+Giao thức CAN sử dụng cơ chế đếm lỗi bằng phần cứng để tự cách ly các node hỏng hóc, tránh làm tê liệt toàn mạng:
+* **TEC (Transmit Error Counter):** Tăng 8 khi phát lỗi truyền; giảm 1 khi phát thành công.
+* **REC (Receive Error Counter):** Tăng 1 khi nhận lỗi; giảm 1 khi nhận thành công.
 
 ```text
-       ┌──────────────────────────────┐
-       │   ERROR ACTIVE (Mặc định)    │ ◄── Node hoạt động bình thường,
-       │   (TEC < 96 && REC < 96)     │     phát Active Error Flag (6 bit Dominant liên tiếp).
-       └──────────────┬───────────────┘
-                      │ TEC >= 96 || REC >= 96 (Cảnh báo: Warning Status)
-                      │ TEC > 127 || REC > 127
-                      ▼
-       ┌──────────────────────────────┐
-       │        ERROR PASSIVE         │ ◄── Node bị nghi ngờ hỏng,
-       │  (128 <= TEC/REC <= 255)     │     chỉ được phát Passive Error Flag (6 bit Recessive),
-       └──────────────┬───────────────┘     phải đợi thêm 8 bit Suspend Transmission trước khi gửi.
-                      │
-                      │ TEC > 255 (Bộ phát làm bẩn bus quá nhiều lần)
-                      ▼
-       ┌──────────────────────────────┐
-       │          BUS-OFF             │ ◄── Node bị cách ly hoàn toàn khỏi mạng!
-       │         (TEC > 255)          │     Ngắt mở chân TX, không thể truyền hay nhận.
-       └──────────────────────────────┘
+       ┌─────────────────────────────────────────────────────────────┐
+       │                 ERROR ACTIVE (Bình thường)                  │
+       │                 TEC < 96  &&  REC < 96                      │
+       │ - Tham gia phân xử trọng tài bình thường                    │
+       │ - Khi phát hiện lỗi: Phát ACTIVE ERROR FLAG (6 bit Dominant)│
+       └──────────────────────────────┬──────────────────────────────┘
+                                      │ TEC >= 96 || REC >= 96 (Cảnh báo Error Warning)
+                                      │ TEC > 127 || REC > 127
+                                      ▼
+       ┌─────────────────────────────────────────────────────────────┐
+       │                 ERROR PASSIVE (Cảnh báo hỏng)               │
+       │                 128 <= TEC/REC <= 255                       │
+       │ - Bị nghi ngờ hỏng: Chỉ được phát PASSIVE ERROR FLAG        │
+       │   (6 bit Recessive) để không phá hỏng bus của các node khác │
+       │ - Phải đợi thêm 8 bit Suspend Transmission trước khi gửi    │
+       └──────────────────────────────┬──────────────────────────────┘
+                                      │ TEC > 255 (Bộ phát liên tục gây lỗi)
+                                      ▼
+       ┌─────────────────────────────────────────────────────────────┐
+       │                     BUS-OFF (Bị cách ly)                    │
+       │                     TEC > 255                               │
+       │ - Chân TX bị ngắt lái hoàn toàn (Mức Recessive vĩnh viễn)   │
+       │ - Node không thể truyền hoặc nhận bất kỳ gói tin nào        │
+       │ - Kích hoạt ngắt trạng thái lỗi SCE trên vi điều khiển      │
+       └─────────────────────────────────────────────────────────────┘
 ```
 
-* **Cơ chế tự phục hồi chuẩn ISO 11898-1:** Node phải giám sát bus vật lý và đợi đủ **128 lần xuất hiện của chuỗi 11 bit Recessive liên tiếp** (tương đương 128 khung rảnh không có xung nhiễu) thì mới được phép reset $TEC = 0, REC = 0$ và quay lại trạng thái `Error Active`.
+#### Quy trình phục hồi an toàn ISO 11898-1:
+Để quay trở lại trạng thái `Error Active`, phần cứng bắt buộc phải giám sát đường bus vật lý và đếm đủ **128 lần xuất hiện của chuỗi 11 bit Recessive liên tiếp** (tương đương 128 khung rảnh liên tục không có xung nhiễu). Sau khi hoàn tất, phần cứng tự động reset `TEC = 0, REC = 0`.
 
 ---
 
 # 3. SƠ ĐỒ TUẦN TỰ HOẠT ĐỘNG (MERMAID SEQUENCE DIAGRAMS)
 
-### 3.1. Quy Trình Cấu Hình Tuần Tự (Peripheral Configuration Pipeline)
+### 3.1. Quy Trình Cấu Hình Khởi Động Phần Cứng (Peripheral Configuration Pipeline)
 
-Quy trình từ lúc hệ điều hành Zephyr nạp cấu hình DeviceTree đến khi khối phần cứng bxCAN thức dậy sẵn sàng truyền nhận:
+Quy trình chi tiết bắt tay thanh ghi phần cứng từ khi hệ điều hành Zephyr nạp cấu hình DeviceTree đến khi bxCAN1 kết nối đường truyền vật lý:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant App as Application / Main
-    participant Z_CAN as Zephyr CAN Driver Subsystem
-    participant HW_RCC as RCC Hardware (APB1 Clock)
-    participant HW_GPIO as GPIO Hardware (PB8/PB9)
-    participant HW_bxCAN as bxCAN1 Hardware Controller
+    participant App as Ứng Dụng Zephyr
+    participant Z_CAN as Zephyr CAN Driver
+    participant RCC as Khối Clock RCC
+    participant GPIO as Khối Chân GPIO (PB8/PB9)
+    participant bxCAN as Khối Ngoại Vi bxCAN1
+    participant NVIC as Bộ Ngắt NVIC Cortex-M7
 
-    App->>Z_CAN: can_init() [Gọi từ init sequence]
-    Z_CAN->>HW_RCC: Bật RCC_APB1ENR bit CAN1EN (Cấp xung 54 MHz)
-    HW_RCC-->>Z_CAN: Clock Ready
-    Z_CAN->>HW_GPIO: Cấu hình PB8 (RX), PB9 (TX) -> Mode Alternate Function AF9
+    App->>Z_CAN: can_init() [Khởi tạo tầng ngoại vi]
+    Z_CAN->>RCC: Bật RCC_APB1ENR bit CAN1EN = 1 (Cấp xung 54 MHz)
+    RCC-->>Z_CAN: Clock Ready
     
-    Z_CAN->>HW_bxCAN: Đặt bit INRQ = 1 trong thanh ghi CAN_MCR (Xin vào Initialization Mode)
-    loop Đợi phần cứng Handshake
-        HW_bxCAN-->>Z_CAN: Cờ INAK = 1 (Xác nhận đã vào Init Mode an toàn)
+    Z_CAN->>GPIO: Cấu hình PB8 (CAN1_RX) & PB9 (CAN1_TX) sang AF9, Speed High
+    
+    Note over Z_CAN,bxCAN: BƯỚC BẮT TAY: Vào Chế Độ Khởi Tạo (Initialization Mode)
+    Z_CAN->>bxCAN: Ghi bit INRQ = 1 trong thanh ghi CAN_MCR
+    loop Polling phần cứng xác nhận
+        bxCAN-->>Z_CAN: Cờ INAK = 1 trong CAN_MSR (Đã vào Init Mode)
     end
     
-    Z_CAN->>HW_bxCAN: Ghi thanh ghi CAN_BTR (BRP=6, TS1=15, TS2=2, SJW=1 -> 500 kbps)
-    Z_CAN->>HW_bxCAN: Cấu hình CAN_FMR (Thoát Filter Init, nạp 6 Filter Banks 32-bit Mask)
-    Z_CAN->>HW_bxCAN: Xóa bit INRQ = 0 trong CAN_MCR (Xin thoát Init Mode sang Normal Mode)
+    Note over Z_CAN,bxCAN: NẠP THÔNG SỐ ĐỊNH THỜI VÀ BỘ LỌC PHẦN CỨNG
+    Z_CAN->>bxCAN: Ghi CAN_BTR = 0x011E0005 (BRP=6, TS1=15, TS2=2, SJW=1 -> 500 kbps)
+    Z_CAN->>bxCAN: Ghi CAN_FMR (Bật FINIT=1, nạp 6 Filter Banks 32-bit Mask gán FIFO0)
+    Z_CAN->>bxCAN: Ghi CAN_FA1R (Kích hoạt bộ lọc FACTx = 1, FINIT = 0)
     
+    Note over Z_CAN,bxCAN: BƯỚC BẮT TAY: Rời Khỏi Init Mode Sang Normal Mode
+    Z_CAN->>bxCAN: Xóa bit INRQ = 0 trong thanh ghi CAN_MCR
     loop Đợi đồng bộ 11 bit Recessive
-        HW_bxCAN-->>Z_CAN: Cờ INAK = 0 (bxCAN chính thức kết nối Bus vật lý)
+        bxCAN-->>Z_CAN: Cờ INAK = 0 (bxCAN1 chính thức kết nối Bus vật lý)
     end
     
-    Z_CAN->>HW_bxCAN: Bật cờ ngắt FMPIE0 (FIFO Message Pending Interrupt Enable)
+    Z_CAN->>bxCAN: Bật ngắt FMPIE0 (FIFO Message Pending) trong CAN_IER
+    Z_CAN->>NVIC: Kích hoạt NVIC_EnableIRQ(CAN1_RX0_IRQn), Priority = 1
     App->>Z_CAN: can_start()
-    Z_CAN-->>App: CAN Gateway Ready (Running at 500 kbps)
+    Z_CAN-->>App: CAN Gateway sẵn sàng vận hành (Running at 500 kbps)
 ```
 
 ---
 
 ### 3.2. Quy Trình Vận Hành & Bắt Tay Dữ Liệu Thời Gian Thực (Runtime Dataflow)
 
-Luồng nhận gói tin CAN, trích xuất hàng đợi phi khóa an toàn và thẩm định an toàn chức năng E2E:
+Luồng dữ liệu thời gian thực từ lúc khung tin chạm chân transceiver đến khi được trích xuất an toàn và hiển thị ra màn hình:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Bus as CAN Physical Bus
-    participant HW as bxCAN1 Hardware (FIFO0)
-    participant ISR as CAN_RX0_IRQHandler (Zephyr ISR)
-    participant Queue as Zephyr k_msgq (32 Frames Buffer)
-    participant Thread as DBC & E2E Worker Thread
-    participant Shell as Zephyr Shell CLI
+    participant Bus as Đường Dây CAN Bus
+    participant bxCAN as Khối Phần Cứng bxCAN1
+    participant ISR as CAN_RX0_IRQHandler (ISR)
+    participant Queue as Hàng Đợi k_msgq (32 Frames)
+    participant Worker as Thread 2: DBC & E2E Worker
+    participant Shell as Thread 3: Shell Diagnostic
 
-    Bus->>HW: Truyền khung CAN 2.0B (ID: 0x201, Len: 8, Data...)
-    HW->>HW: Lọc phần cứng: Khớp Filter Bank 0 -> Đẩy vào RxFIFO0
-    HW->>ISR: Kích hoạt ngắt phần cứng NVIC (CAN1_RX0_IRQn)
+    Bus->>bxCAN: Bản tin CAN 2.0B tới (ID: 0x201, DLC: 8, Data: [CRC, Alive, Speed, RPM...])
+    bxCAN->>bxCAN: Bộ lọc phần cứng khớp Bank 0 -> Nạp vào Hardware RxFIFO0
+    bxCAN->>ISR: Kích hoạt ngắt phần cứng NVIC (CAN1_RX0_IRQn)
     
-    Note over ISR: Đọc khung tin mà không tốn CPU chờ đợi
-    ISR->>HW: Đọc thanh ghi CAN_RI0R, CAN_RDT0R, CAN_RDL0R, CAN_RDH0R
-    ISR->>HW: Ghi bit RFOM0 = 1 vào thanh ghi CAN_RF0R (Giải phóng FIFO0 ngay)
+    Note over ISR: TRÌNH PHỤC VỤ NGẮT THỰC HIỆN TRONG DƯỚI 5 MICRO-GIÂY
+    ISR->>bxCAN: Đọc ID từ CAN_RI0R, DLC từ CAN_RDT0R, Payload từ CAN_RDL0R & CAN_RDH0R
+    ISR->>bxCAN: Ghi 1 vào bit RFOM0 trong CAN_RF0R (Giải phóng FIFO0 ngay lập tức)
     ISR->>Queue: k_msgq_put(&can_rx_msgq, &frame, K_NO_WAIT)
-    ISR-->>HW: Thoát ngắt ISR về luồng thực thi
+    ISR-->>bxCAN: Thoát ngắt ISR về mức thực thi luồng
     
-    Queue->>Thread: Đánh thức Thread (k_msgq_get blocking timeout: K_FOREVER)
-    Thread->>Thread: Trích xuất Data ID & Alive Counter từ Payload
-    Thread->>Thread: Tính CRC-8 SAE J1850 trên 7 bytes payload
+    Queue->>Worker: Đánh thức Worker Thread (k_msgq_get blocking chờ bản tin)
+    Note over Worker: THẨM ĐỊNH AN TOÀN CHỨC NĂNG AUTOSAR E2E PROFILE 1
+    Worker->>Worker: Tách trường Alive Counter 4-bit và so khớp tính liên tục
+    Worker->>Worker: Tính toán mã CRC-8 SAE J1850 với Data ID = 0x1001
     
-    alt CRC Khớp & Alive Counter Đúng Thứ Tự
-        Thread->>Thread: DBC Engine: Unpack Vehicle_Speed = (Raw * 0.01) km/h
-        Thread->>Thread: DBC Engine: Unpack Engine_RPM = (Raw * 0.25) rpm
-        Thread->>Shell: Cập nhật giá trị hiển thị thời gian thực
-    else CRC Không Khớp HOẶC Lặp Alive Counter (Lỗi E2E)
-        Thread->>Thread: Tăng biến đếm g_e2e_error_count
-        Thread->>Shell: Ghi log cảnh báo an toàn: "E2E Failure Detected on Node 0x201!"
+    alt CRC-8 Khớp 100% VÀ Alive Counter Tăng Đúng Thứ Tự
+        Note over Worker: GIẢI MÃ TÍN HIỆU THEO VECTOR DBC ENGINE
+        Worker->>Worker: Vehicle_Speed = (Raw_Speed * 0.01) km/h
+        Worker->>Worker: Engine_RPM = (Raw_RPM * 0.25) rpm
+        Worker->>Shell: Cập nhật biến trạng thái hệ thống (Atomic Update)
+    else Sai Lệch CRC HOẶC Lặp Alive Counter (Lỗi Mất An Toàn E2E)
+        Worker->>Worker: Tăng biến đếm g_e2e_fault_count
+        Worker->>Shell: Ghi log cảnh báo khẩn: "E2E Integrity Violation Detected!"
     end
 ```
 
@@ -277,31 +416,31 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Bus as CAN Bus (Bị chạm chập / Nhiễu lớn)
-    participant HW as bxCAN1 Controller
-    participant Z_CB as Zephyr State Change Callback
-    participant App as CAN Gateway Recovery Task
+    participant Bus as Dây CAN (Bị chập ngắn mạch / Nhiễu cao)
+    participant bxCAN as Phần Cứng bxCAN1
+    participant ISR_SCE as CAN_SCE_IRQHandler
+    participant Mon as Thread 1: State Monitor
+    participant Z_CAN as Zephyr CAN Subsystem
 
-    Bus->>HW: Nhiễu truyền dẫn liên tục -> ACK Error / Bit Error
-    Note over HW: Bộ đếm TEC tăng vọt: +8 sau mỗi lần gửi lỗi
-    HW->>HW: TEC > 255 -> Phần cứng tự động chuyển sang trạng thái BUS-OFF!
-    HW->>Z_CB: Kích hoạt ngắt SCE (Status Change Error) -> Gọi Callback
+    Bus->>bxCAN: Nhiễu điện áp cao liên tục gây Bit Error / ACK Error
+    Note over bxCAN: Bộ đếm lỗi phát TEC tăng vọt: +8 sau mỗi lần gửi hỏng
+    bxCAN->>bxCAN: TEC > 255 -> Phần cứng lập tức rơi vào trạng thái BUS-OFF!
+    bxCAN->>ISR_SCE: Kích hoạt ngắt trạng thái lỗi Status Change Error
     
-    Z_CB->>App: Gửi Event: CAN_STATE_BUS_OFF
-    Note over App: Cách ly ngay lập tức các tác vụ truyền tin (Prevent Babbling)
-    App->>App: Dừng Thread gửi tin, phát tín hiệu cảnh báo ra Console
+    ISR_SCE->>Mon: Bắn Semaphore đánh thức Task giám sát lỗi
+    Note over Mon: KÍCH HOẠT QUY TRÌNH AN TOÀN FAIL-SAFE (CÁCH LY)
+    Mon->>Mon: Dừng ngay toàn bộ tác vụ truyền tin để tránh làm bẩn mạng
+    Mon->>Z_CAN: can_recover(dev, K_MSEC(100)) [Yêu cầu phục hồi chuẩn ISO 11898-1]
     
-    App->>Z_CAN: can_recover(dev, K_MSEC(100)) [Yêu cầu phục hồi theo ISO 11898-1]
-    Note over HW: Lắng nghe bus vật lý tìm 128 chuỗi 11-bit Recessive liên tiếp
-    
-    alt Đường truyền vật lý đã thông suốt trở lại
-        HW-->>Z_CAN: Đủ 128 chuỗi 11 bit rảnh -> Reset TEC=0, REC=0
-        Z_CAN-->>App: Phục hồi thành công (CAN_STATE_ERROR_ACTIVE)
-        App->>App: Kích hoạt lại các tiến trình truyền dữ liệu bình thường
-    else Đường truyền vẫn bị chạm đất (Short to GND)
-        HW-->>Z_CAN: Timeout 100ms không thấy bus rảnh
-        Z_CAN-->>App: Trả về lỗi -ETIMEDOUT
-        App->>App: Kích hoạt cơ chế Exponential Backoff (Thử lại sau 500ms, 1s, 2s...)
+    Note over bxCAN: Giám sát đường bus tìm 128 chuỗi 11-bit Recessive liên tiếp
+    alt Dây dẫn đã được thông suốt trở lại
+        bxCAN-->>Z_CAN: Đủ 128 chuỗi 11-bit rảnh -> Reset TEC=0, REC=0
+        Z_CAN-->>Mon: Phục hồi thành công (CAN_STATE_ERROR_ACTIVE)
+        Mon->>Mon: Kích hoạt lại các luồng truyền nhận bình thường
+    else Đường dây vẫn bị chập mass (Short to GND)
+        bxCAN-->>Z_CAN: Quá thời gian 100ms không tìm thấy bus rảnh
+        Z_CAN-->>Mon: Báo lỗi timeout (-ETIMEDOUT)
+        Mon->>Mon: Kích hoạt thuật toán Exponential Backoff (Thử lại sau 500ms, 1s, 2s, 5s)
     end
 ```
 
@@ -311,10 +450,10 @@ sequenceDiagram
 
 ### 4.1. Nhóm Bug Phổ Biến (Common Bugs)
 
-#### 🐞 Bug 1: Thiếu trở đầu cuối 120 $\Omega$ tại hai đầu Bus vật lý
+#### 🐞 Bug 1: Thiếu trở đầu cuối 120 Ohm tại hai đầu Bus vật lý
 * **Triệu chứng:** Khi cắm máy phát CAN vào STM32, chip liên tục báo lỗi **ACK Error** (Acknowledge Error), các cờ lỗi nhảy liên tục và node bị rơi vào trạng thái Bus-Off sau vài mili-giây.
-* **Nguyên nhân vật lý:** Chuẩn CAN vật lý (ISO 11898-2) sử dụng đường truyền vi sai (Differential Pair: CAN_H và CAN_L). Hai đầu dây cáp bắt buộc phải có trở đầu cuối $120\text{ }\Omega$ (tổng trở song song toàn mạng là $60\text{ }\Omega$). Nếu không có trở, năng lượng sóng truyền tới cuối dây không bị tiêu hao mà bị dội ngược lại (sóng phản xạ - signal reflection), làm méo dạng xung logic. Đồng thời khi các transistor ngắt, đường truyền không được kéo về mức lặn Recessive ($2.5\text{ V}$) kịp thời.
-* **Cách xử lý:** Luôn kiểm tra bằng ôm-kế (multimeter) đo giữa chân CAN_H và CAN_L khi ngắt nguồn: Điện trở đo được phải xấp xỉ $60\text{ }\Omega$. Bật jumper trở $120\text{ }\Omega$ có sẵn trên module transceiver TJA1050.
+* **Nguyên nhân vật lý:** Chuẩn CAN vật lý (ISO 11898-2) sử dụng đường truyền vi sai (Differential Pair: CAN_H và CAN_L). Hai đầu dây cáp bắt buộc phải có trở đầu cuối `120 Ohm` (tổng trở song song toàn mạng là `60 Ohm`). Nếu không có trở, năng lượng sóng truyền tới cuối dây không bị tiêu hao mà bị dội ngược lại (sóng phản xạ - signal reflection), làm méo dạng xung logic. Đồng thời khi các transistor ngắt, đường truyền không được kéo về mức lặn Recessive (`2.5 V`) kịp thời.
+* **Cách xử lý:** Luôn kiểm tra bằng ôm-kế (multimeter) đo giữa chân CAN_H và CAN_L khi ngắt nguồn: Điện trở đo được phải xấp xỉ `60 Ohm`. Bật jumper trở `120 Ohm` có sẵn trên module transceiver TJA1050.
 
 #### 🐞 Bug 2: Cấu hình nhầm Bitmask trong Filter Bank làm rơi gói tin
 * **Triệu chứng:** Máy phát gửi bản tin CAN ID `0x123`, nhưng STM32 hoàn toàn im lặng, ngắt `CAN1_RX0_IRQHandler` không bao giờ nhảy.
@@ -353,7 +492,7 @@ sequenceDiagram
 #### 🐞 Bug 6: Vòng lặp Bus-Off tự sát (Bus-Off Rapid Recovery Loop)
 * **Triệu chứng:** Khi dây CAN vật lý bị chập ngắn mạch xuống đất (Short to GND), MCU nhảy vào ngắt Bus-Off liên tục hàng nghìn lần mỗi giây, vắt kiệt 100% CPU khiến toàn bộ hệ thống bị treo cứng (Watchdog reset).
 * **Nguyên nhân:** Phần mềm cấu hình tính năng `ABOM` (Automatic Bus-Off Management) trong thanh ghi `CAN_MCR` bật tự động phục hồi ngay lập tức mà không có thời gian trễ. Khi đường dây vẫn đang bị chập, MCU vừa thức dậy phát thử 1 bit là bị lỗi tiếp và lại rơi vào Bus-Off ngay lập tức.
-* **Giải pháp chuẩn Automotive:** Tắt cờ `ABOM = 0` (quản lý phục hồi bằng phần mềm). Khi xảy ra Bus-Off, chuyển sang trạng thái an toàn, khởi động một Timer trễ lũy thừa (Exponential Backoff: Thử lại sau $100\text{ ms} \to 500\text{ ms} \to 1\text{ s} \to 5\text{ s}$). Nếu thử quá 5 lần không thành công, ngắt hẳn bộ phát và báo đèn Check Engine.
+* **Giải pháp chuẩn Automotive:** Tắt cờ `ABOM = 0` (quản lý phục hồi bằng phần mềm). Khi xảy ra Bus-Off, chuyển sang trạng thái an toàn, khởi động một Timer trễ lũy thừa (Exponential Backoff: Thử lại sau `100 ms -> 500 ms -> 1 s -> 5 s`). Nếu thử quá 5 lần không thành công, ngắt hẳn bộ phát và báo đèn Check Engine.
 
 ---
 
@@ -362,12 +501,12 @@ sequenceDiagram
 #### 🐞 Bug 7: Hiện tượng Babbling Node & Chết Transceiver ở mức Dominant
 * **Triệu chứng:** Toàn bộ mạng CAN của ô tô (hàng chục hộp ECU) đột ngột tê liệt hoàn toàn, không một hộp nào truyền nhận được dữ liệu.
 * **Nguyên nhân:** Một node trên mạng bị hỏng phần cứng vi điều khiển hoặc lỗi phần mềm rơi vào vòng lặp vô tận giữ chân `CAN_TX = 0` (mức Dominant). Do tính chất của CAN Bus: **Mức Dominant luôn thắng mức Recessive**, nên khi 1 chân bị giữ mức 0, toàn bộ đường truyền vi sai bị kéo lệch điện áp vĩnh viễn, đè bẹp tất cả các node khác trên xe.
-* **Giải pháp phần cứng:** Lựa chọn các dòng chip CAN Transceiver đạt chuẩn an toàn chức năng có tích hợp tính năng **TXD Dominant Time-out Protection** (ví dụ: TJA1042 hoặc TJA1050). Nếu chân TXD bị giữ mức Dominant quá thời gian giới hạn $t_{to(dom)} \approx 1\text{ ms}$, phần cứng bên trong Transceiver sẽ tự động ngắt kết nối tầng công suất lái bus, trả lại đường bus tự do cho các node khác.
+* **Giải pháp phần cứng:** Lựa chọn các dòng chip CAN Transceiver đạt chuẩn an toàn chức năng có tích hợp tính năng **TXD Dominant Time-out Protection** (ví dụ: TJA1042 hoặc TJA1050). Nếu chân TXD bị giữ mức Dominant quá thời gian giới hạn `t_to(dom) ~ 1 ms`, phần cứng bên trong Transceiver sẽ tự động ngắt kết nối tầng công suất lái bus, trả lại đường bus tự do cho các node khác.
 
 #### 🐞 Bug 8: Lệch pha thạch anh do nhiệt độ cao gây Stuff Error ngẫu nhiên
-* **Triệu chứng:** Hệ thống chạy thử trong phòng lab thì hoàn hảo, nhưng khi đem lắp vào khoang động cơ xe chạy thử ở nhiệt độ cao ($> 85^\circ\text{C}$), thỉnh thoảng xuất hiện lỗi **Stuff Error** làm rớt khung tin.
-* **Nguyên nhân:** Bộ dao động nội hoặc thạch anh chất lượng thấp bị trôi tần số khi nhiệt độ thay đổi (Frequency Drift). Chuẩn CAN quy định sai số dao động cho phép tối đa của mạng 500 kbps là $\pm 1.58\%$. Khi nhiệt độ tăng, sai lệch vượt ngưỡng làm thời điểm Sample Point bị trượt dần về cuối bit. Khi xuất hiện chuỗi 5 bit giống nhau liên tiếp, bộ thu không kịp nhận diện bit chèn (Stuff Bit) và báo lỗi Stuff Error.
-* **Giải pháp:** Sử dụng thạch anh thạch anh ngoại vi chuẩn ô tô có bù nhiệt độ (Automotive Grade Crystal Oscillator với độ trôi sai số $< 50\text{ ppm}$) và mở rộng cửa sổ đồng bộ lại $\text{SJW} = 2\text{ }t_q$ hoặc $3\text{ }t_q$ trong cấu hình `CAN_BTR`.
+* **Triệu chứng:** Hệ thống chạy thử trong phòng lab thì hoàn hảo, nhưng khi đem lắp vào khoang động cơ xe chạy thử ở nhiệt độ cao (`> 85 °C`), thỉnh thoảng xuất hiện lỗi **Stuff Error** làm rớt khung tin.
+* **Nguyên nhân:** Bộ dao động nội hoặc thạch anh chất lượng thấp bị trôi tần số khi nhiệt độ thay đổi (Frequency Drift). Chuẩn CAN quy định sai số dao động cho phép tối đa của mạng 500 kbps là `+/- 1.58%`. Khi nhiệt độ tăng, sai lệch vượt ngưỡng làm thời điểm Sample Point bị trượt dần về cuối bit. Khi xuất hiện chuỗi 5 bit giống nhau liên tiếp, bộ thu không kịp nhận diện bit chèn (Stuff Bit) và báo lỗi Stuff Error.
+* **Giải pháp:** Sử dụng thạch anh ngoại vi chuẩn ô tô có bù nhiệt độ (Automotive Grade Crystal Oscillator với độ trôi sai số `< 50 ppm`) và mở rộng cửa sổ đồng bộ lại `SJW = 2 tq` hoặc `3 tq` trong cấu hình `CAN_BTR`.
 
 ---
 

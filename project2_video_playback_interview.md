@@ -12,12 +12,12 @@
 
 - [1. TỔNG QUAN HỆ THỐNG & BẢN ĐỒ BUS MATRIX PHẦN CỨNG](#1-tổng-quan-hệ-thống--bản-đồ-bus-matrix-phần-cứng)
   - [1.1. Mục Tiêu Kỹ Thuật & Các Con Số Định Lượng Cốt Lõi](#11-mục-tiêu-kỹ-thuật--các-con-số-định-lượng-cốt-lõi)
-  - [1.2. Sơ Đồ Kiến Trúc Bus Matrix AXI/AHB & Phân Bổ Không Gian Địa Chỉ](#12-sơ-đồ-kiến-trúc-bus-matrix-axiahb--phân-bổ-không-gian-địa-chỉ)
+  - [1.2. Sơ Đồ Kiến Trúc Ma Trận Bus AXI 64-bit Đa Tầng & Bản Đồ Phân Bổ Vùng Nhớ SDRAM 8MB](#12-sơ-đồ-kiến-trúc-ma-trận-bus-axi-64-bit-đa-tầng--bản-đồ-phân-bổ-vùng-nhớ-sdram-8mb)
 - [2. LÝ THUYẾT CỐT LÕI & CÔNG THỨC BẮT BUỘC PHẢI NHỚ](#2-lý-thuyết-cốt-lõi--công-thức-bắt-buộc-phải-nhớ)
-  - [2.1. Bài Toán Băng Thông: Phát Video 60 FPS Từ Thẻ Nhớ SDHC](#21-bài-toán-băng-thông-phát-video-60-fps-từ-thẻ-nhớ-sdhc)
-  - [2.2. FMC SDRAM: Chuỗi 5 Lệnh JEDEC & Công Thức Tính Refresh Rate Counter](#22-fmc-sdram-chuỗi-5-lệnh-jedec--công-thức-tính-refresh-rate-counter)
-  - [2.3. Chuẩn Hóa MicroSD SDHC: Block Addressing (LBA 512B) vs Byte Addressing](#23-chuẩn-hóa-microsd-sdhc-block-addressing-lba-512b-vs-byte-addressing)
-  - [2.4. Bản Chất Bất Đồng Bộ L1 D-Cache Coherency Trên Nhân Cortex-M7](#24-bản-chất-bất-đồng-bộ-l1-d-cache-coherency-trên-nhân-cortex-m7)
+  - [2.1. Bài Toán Băng Thông: Phát Video 60 FPS & Timing Quét Màn Hình LCD (LTDC Pixel Clock)](#21-bài-toán-băng-thông-phát-video-60-fps--timing-quét-màn-hình-lcd-ltdc-pixel-clock)
+  - [2.2. FMC SDRAM: Chuỗi 5 Lệnh JEDEC, Bảng Thanh Ghi Cấu Hình & Công Thức Tính Refresh Rate Counter](#22-fmc-sdram-chuỗi-5-lệnh-jedec-bảng-thanh-ghi-cấu-hình--công-thức-tính-refresh-rate-counter)
+  - [2.3. Chuẩn Hóa MicroSD SDHC: Block Addressing (LBA 512B) & Quy Trình Khởi Tạo 8 Bước SDMMC](#23-chuẩn-hóa-microsd-sdhc-block-addressing-lba-512b--quy-trình-khởi-tạo-8-bước-sdmmc)
+  - [2.4. Bản Chất Bất Đồng Bộ L1 D-Cache Coherency Trên Nhân Cortex-M7 & Kiến Trúc Zero-Copy](#24-bản-chất-bất-đồng-bộ-l1-d-cache-coherency-trên-nhân-cortex-m7--kiến-trúc-zero-copy)
 - [3. SƠ ĐỒ TUẦN TỰ HOẠT ĐỘNG (MERMAID SEQUENCE DIAGRAMS)](#3-sơ-đồ-tuần-tự-hoạt-động-mermaid-sequence-diagrams)
   - [3.1. Quy Trình Cấu Hình Khởi Động Phần Cứng (Peripheral Init Pipeline)](#31-quy-trình-cấu-hình-khởi-động-phần-cứng-peripheral-init-pipeline)
   - [3.2. Quy Trình Vận Hành Streaming Video Zero-Copy (Runtime Dataflow)](#32-quy-trình-vận-hành-streaming-video-zero-copy-runtime-dataflow)
@@ -38,133 +38,225 @@ Dự án hiện thực một **Trình Phát Video và Đồ Họa 60 FPS Tốc �
 
 | Khối Phần Cứng | Thông Số Vận Hành Định Lượng | Cơ Sở Kỹ Thuật & Vai Trò Trong Dự Án |
 | :--- | :--- | :--- |
-| **Lõi MCU** | ARM Cortex-M7 @ $216\text{ MHz}$ | Kích hoạt L1 I-Cache ($16\text{ KB}$), D-Cache ($16\text{ KB}$), bộ bảo vệ MPU. |
-| **Màn hình LCD** | TFT 4.3 inch ($480 \times 272$) | Chuẩn màu RGB565 (16-bit, 2 bytes/pixel). Điểm quét pixel clock $f_{PCLK} \approx 9.5\text{ MHz}$. |
-| **Bộ nhớ ngoài FMC** | Micron SDRAM 8MB (32-bit bus) | Xung nhịp bus $f_{SDCLK} = 108\text{ MHz}$ (từ $f_{HCLK} / 2$). Chứa Double Framebuffer. |
-| **Ngoại vi SDMMC1** | MicroSD SDHC (4GB - 32GB) | Bus 4-bit, xung nhịp $f_{SDCLK} = 48\text{ MHz}$ (từ `PLL48CLK`), đọc thực tế $\approx 18\text{ MB/s}$. |
-| **Băng thông Video** | $15.66\text{ MB/s}$ liên tục | Phát liên tục 60 FPS chuẩn không giật lag ($18\text{ MB/s} > 15.66\text{ MB/s}$). |
-| **Tải chiếm dụng CPU** | $\approx 0\%$ khi phát video | Nhờ kiến trúc Zero-Copy đọc thẳng từ SDMMC nạp vào SDRAM ngoài và LTDC tự quét. |
-| **Hiện tượng xé hình** | Triệt tiêu hoàn toàn ($0\text{ tearing}$) | Kỹ thuật Double Framebuffer kết hợp đồng bộ ngắt dập đứng `VSYNC` (`VBR` bit). |
+| **Lõi MCU** | ARM Cortex-M7 @ `216 MHz` | Kích hoạt L1 I-Cache (`16 KB`), D-Cache (`16 KB`), bộ bảo vệ MPU. |
+| **Màn hình LCD** | TFT 4.3 inch (`480 x 272`) | Chuẩn màu RGB565 (16-bit, 2 bytes/pixel). Điểm quét pixel clock `f_PCLK ~ 9.0 MHz`. |
+| **Bộ nhớ ngoài FMC** | Micron SDRAM 8MB (32-bit bus) | Xung nhịp bus `f_SDCLK = 108 MHz` (từ `f_HCLK / 2`). Chứa Double Framebuffer. |
+| **Ngoại vi SDMMC1** | MicroSD SDHC (4GB - 32GB) | Bus 4-bit, xung nhịp `f_SDCLK = 48 MHz` (từ `PLL48CLK`), đọc thực tế `~ 18 MB/s`. |
+| **Băng thông Video** | `15.66 MB/s` liên tục | Phát liên tục 60 FPS chuẩn không giật lag (`18 MB/s > 15.66 MB/s`). |
+| **Tải chiếm dụng CPU** | `~ 0%` khi phát video | Nhờ kiến trúc Zero-Copy đọc thẳng từ SDMMC nạp vào SDRAM ngoài và LTDC tự quét. |
+| **Hiện tượng xé hình** | Triệt tiêu hoàn toàn (`0 tearing`) | Kỹ thuật Double Framebuffer kết hợp đồng bộ ngắt dập đứng `VSYNC` (`VBR` bit). |
 
 ---
 
-### 1.2. Sơ Đồ Kiến Trúc Bus Matrix AXI/AHB & Phân Bổ Không Gian Địa Chỉ
+### 1.2. Sơ Đồ Kiến Trúc Ma Trận Bus AXI 64-bit Đa Tầng & Bản Đồ Phân Bổ Vùng Nhớ SDRAM 8MB
+
+Trên STM32F746, ma trận Bus AXI 64-bit liên kết nhiều Master với nhiều Slave độc lập, cho phép **truy xuất đồng thời (Concurrent Access)** giữa các khối ngoại vi mà không làm nghẽn lõi CPU:
 
 ```text
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                                 MA TRẬN BUS AXI / AHB                                 │
-│                                                                                        │
-│   ┌────────────────────┐   ┌────────────────────┐   ┌──────────────────────────────┐   │
-│   │ Cortex-M7 Core CPU │   │   LTDC Display     │   │     DMA2D Chrom-ART          │   │
-│   │ (AXI Master M0/M1) │   │ (AXI Master M3)    │   │     (AXI Master M4)          │   │
-│   └─────────┬──────────┘   └─────────┬──────────┘   └──────────────┬───────────────┘   │
-│             │                        │                             │                   │
-│   ══════════╪════════════════════════╪═════════════════════════════╪════════════════   │
-│             │                        │                             │   AXI BUS INTERCONNECT
-│             ▼                        ▼                             ▼                   │
-│   ┌────────────────────────────────────────────────────────────────────────────────┐   │
-│   │               BỘ ĐIỀU KHIỂN BỘ NHỚ NGOÀI FMC (Flexible Memory Controller)       │   │
-│   │               - Địa chỉ cơ sở SDRAM Bank 1: 0xC0000000 (Dung lượng 8MB)        │   │
-│   │                 • 0xC0000000 -> 0xC003FFFF: Framebuffer 0 (261,120 bytes)      │   │
-│   │                 • 0xC0040000 -> 0xC007FFFF: Framebuffer 1 (261,120 bytes)      │   │
-│   │                 • 0xC0080000 -> 0xC07FFFFF: Vùng nhớ đồ họa, Icon, Sprites      │   │
-│   └────────────────────────────────────────┬───────────────────────────────────────┘   │
-│                                            ▼                                           │
-│                       CHIP PHẦN CỨNG SDRAM NGOÀI 8MB (MT48LC4M32B2)                    │
-│                                                                                        │
-│   ══════════════════════════════════════════════════════════════════════════════════   │
-│             ▲                                                      ▲                   │
-│             │ AHB-to-APB Bridge 2                                  │ AHB-to-APB Bridge 2
-│   ┌─────────┴────────────────────────┐                   ┌─────────┴───────────────┐   │
-│   │ Ngoại vi SDMMC1 (Base: 0x40012C00│                   │ Ngoại vi LTDC           │   │
-│   │ - Bus APB2 @ 108 MHz / 48 MHz Clk│                   │ (Base: 0x40016800)      │   │
-│   └──────────────────────────────────┘                   └─────────────────────────┘   │
-└────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                               MA TRẬN BUS AXI 64-BIT ĐA TẦNG (STM32F746)                        │
+│                                                                                                  │
+│   ┌────────────────────────┐  ┌────────────────────────┐  ┌──────────────────────────────────┐   │
+│   │  Cortex-M7 Core CPU    │  │   LTDC Display Master  │  │      DMA2D Chrom-ART Master      │   │
+│   │  (Master M0: D-Cache)  │  │   (Master M3: LCD FIFO)│  │      (Master M4: Graphics)       │   │
+│   └───────────┬────────────┘  └───────────┬────────────┘  └────────────────┬─────────────────┘   │
+│               │                           │                                │                     │
+│   ════════════╪═══════════════════════════╪════════════════════════════════╪════════════════    │
+│               │                           │                                │  AXI CROSSBAR MATRIX
+│               ▼                           ▼                                ▼                     │
+│   ┌──────────────────────────────────────────────────────────────────────────────────────────┐   │
+│   │            BỘ ĐIỀU KHIỂN BỘ NHỚ NGOÀI FMC (Flexible Memory Controller - Slave S3)        │   │
+│   │            - Địa chỉ vật lý cơ sở SDRAM Bank 1: 0xC0000000 (Dung lượng 8MB, 32-bit Bus)  │   │
+│   └───────────────────────────────────────────┬──────────────────────────────────────────────┘   │
+│                                               ▼                                                  │
+│   ┌──────────────────────────────────────────────────────────────────────────────────────────┐   │
+│   │                        BẢN ĐỒ BỘ NHỚ CHI TIẾT CỦA CHIP SDRAM 8MB                         │   │
+│   │  • 0xC0000000 -> 0xC003FFFF (256 KB): Framebuffer 0 (Front-Buffer: 480x272 RGB565)       │   │
+│   │  • 0xC0040000 -> 0xC007FFFF (256 KB): Framebuffer 1 (Back-Buffer: 480x272 RGB565)        │   │
+│   │  • 0xC0080000 -> 0xC01FFFFF (1.5 MB): Sprite Sheet, Font chữ & Asset đồ họa tĩnh        │   │
+│   │  • 0xC0200000 -> 0xC07FFFFF (6.0 MB): Bộ đệm DMA2D Blending & Vùng nhớ ứng dụng mở rộng  │   │
+│   └──────────────────────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                                  │
+│   ═══════════════════════════════════════════════════════════════════════════════════════════    │
+│               ▲                                                              ▲                   │
+│               │ Cầu nối AHB-to-APB2                                          │ Cầu nối AHB-to-APB2
+│   ┌───────────┴────────────────────────┐                         ┌───────────┴───────────────┐   │
+│   │ Ngoại vi SDMMC1 (Base: 0x40012C00) │                         │ Ngoại vi LTDC Controller  │   │
+│   │ - Bus APB2 @ 108 MHz / 48 MHz Clk  │                         │ (Base: 0x40016800)        │   │
+│   └────────────────────────────────────┘                         └───────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 # 2. LÝ THUYẾT CỐT LÕI & CÔNG THỨC BẮT BUỘC PHẢI NHỚ
 
-### 2.1. Bài Toán Băng Thông: Phát Video 60 FPS Từ Thẻ Nhớ SDHC
+### 2.1. Bài Toán Băng Thông: Phát Video 60 FPS & Timing Quét Màn Hình LCD (LTDC Pixel Clock)
 
-Để chứng minh hệ thống STM32F746 hoàn toàn đủ khả năng phát video 60 FPS mượt mà bằng phần cứng mà không bị gián đoạn, ta thực hiện bài toán tính toán băng thông vật lý:
+Để hệ thống phát video 60 FPS mượt mà không bị xé hình hay chớp tắt, ta cần giải bài toán tính toán băng thông trên hai mặt trận: **Băng thông nạp từ thẻ nhớ** và **Băng thông quét màn hình LCD**:
 
-* **Độ phân giải hiển thị LCD:** $480 \times 272 = 130,560\text{ pixels}$.
-* **Định dạng màu RGB565:** Mỗi điểm ảnh chiếm 16-bit ($2\text{ bytes}$).
-  $$\text{Dung lượng 1 khung hình (Frame Size)} = 130,560 \times 2 = 261,120\text{ bytes} \approx 255\text{ KB}$$
-* **Băng thông yêu cầu để duy trì tốc độ 60 khung hình/giây:**
-  $$\text{Băng thông cần} = 261,120\text{ bytes} \times 60\text{ frames/s} = 15,667,200\text{ bytes/s} \approx 15.66\text{ MB/s}$$
-* **Năng lực truyền dẫn phần cứng của khối SDMMC1 trên STM32F7:**
-  * Khối ngoại vi sử dụng xung nhịp cấp chuyên dụng $f_{SDCLK} = 48\text{ MHz}$ (từ khối `PLL48CLK`).
+#### A. Bài toán nạp Video 60 FPS từ Thẻ Nhớ SDHC:
+* **Kích thước khung hình LCD 4.3 inch:** `480 x 272 = 130,560 pixels`.
+* **Định dạng màu RGB565:** Mỗi điểm ảnh chiếm 16-bit (`2 bytes`).
+  ```text
+  Dung lượng 1 khung hình (Frame Size) = 130,560 * 2 = 261,120 bytes (~ 255 KB)
+  ```
+* **Băng thông yêu cầu liên tục để phát đủ 60 FPS:**
+  ```text
+  Băng thông cần = 261,120 bytes * 60 frames/s = 15,667,200 bytes/s (~ 15.66 MB/s)
+  ```
+* **Năng lực truyền dẫn phần cứng của SDMMC1 trên STM32F7:**
+  * Khối ngoại vi sử dụng xung nhịp cấp chuyên dụng `f_SDCLK = 48 MHz` (từ khối `PLL48CLK`).
   * Giao tiếp qua bus dữ liệu **4-bit** song song:
-    $$\text{Băng thông tối đa lý thuyết} = 48\text{ MHz} \times 4\text{ bits} = 192\text{ Mbps} = 24.0\text{ MB/s}$$
-  * Trong thực tế, sau khi trừ đi độ trễ giao thức lệnh FAT32 và độ trễ chuyển sector (Seek Latency), tốc độ đọc tuần tự thực đo của thẻ SDHC Class 10 / UHS-I đạt **$\approx 18.0\text{ MB/s}$**.
-* **Kết luận khoa học:**
-  $$18.0\text{ MB/s} > 15.66\text{ MB/s} \implies \text{Hệ thống dư sức đáp ứng 60 FPS mượt mà tuyệt đối!}$$
+    ```text
+    Băng thông tối đa lý thuyết = 48 MHz * 4 bits = 192 Mbps = 24.0 MB/s
+    ```
+  * Tốc độ đọc tuần tự thực đo của thẻ SDHC Class 10 / UHS-I qua FatFs đạt **`~ 18.0 MB/s`**.
+  * Kết luận: `18.0 MB/s > 15.66 MB/s` -> Đáp ứng hoàn hảo 60 FPS!
+
+#### B. Bài toán Timing quét màn hình LCD (LTDC Pixel Clock):
+Một chu kỳ quét toàn bộ màn hình 480x272 ở tần số làm tươi `60 Hz` đòi hỏi phải cấu hình các khoảng dập xung ngang (Horizontal Blanking) và dập xung dọc (Vertical Blanking) để tấm nền LCD kịp ổn định điện áp điểm ảnh:
+* **Thông số quét ngang (Horizontal Timings):**
+  * `HSYNC (Độ rộng xung đồng bộ ngang)` = 41 pixels.
+  * `HBP (Horizontal Back Porch)` = 13 pixels.
+  * `Active Width (Vùng hiển thị hoạt động)` = 480 pixels.
+  * `HFP (Horizontal Front Porch)` = 32 pixels.
+  * `Tổng chu kỳ ngang: H_TOTAL = 41 + 13 + 480 + 32 = 566 pixels`.
+* **Thông số quét dọc (Vertical Timings):**
+  * `VSYNC (Độ rộng xung đồng bộ dọc)` = 10 lines.
+  * `VBP (Vertical Back Porch)` = 2 lines.
+  * `Active Height (Vùng hiển thị hoạt động)` = 272 lines.
+  * `VFP (Vertical Front Porch)` = 2 lines.
+  * `Tổng chu kỳ dọc: V_TOTAL = 10 + 2 + 272 + 2 = 286 lines`.
+* **Tần số xung nhịp điểm ảnh Pixel Clock (f_PCLK):**
+  ```text
+  f_PCLK = H_TOTAL * V_TOTAL * Tần số làm tươi
+         = 566 pixels * 286 lines * 60 Hz
+         = 9,712,560 Hz ~ 9.7 MHz
+  ```
+  *(Cấu hình nguồn xung `PLLSAI` trên STM32F7 để chia ra xung nhịp `f_PCLK ~ 9.5 MHz - 9.7 MHz`).*
+* **Băng thông kéo dữ liệu liên tục của LTDC từ SDRAM:**
+  ```text
+  Băng thông kéo LTDC = 9.7 MHz * 2 bytes/pixel = 19.4 MB/s
+  ```
+* **Năng lực đáp ứng của bộ nhớ ngoài SDRAM 32-bit @ 108 MHz:**
+  ```text
+  Băng thông cực đại của SDRAM = 108 MHz * 4 bytes (32-bit) = 432.0 MB/s
+  ```
+  Tổng băng thông hệ thống cần lúc cao điểm: `19.4 MB/s (LTDC đọc) + 15.66 MB/s (SDMMC nạp vào) + 20 MB/s (DMA2D blend) = ~ 55 MB/s`. Con số này chỉ chiếm khoảng **12.7% băng thông của SDRAM**, hoàn toàn không xảy ra hiện tượng nghẽn bus!
 
 ---
 
-### 2.2. FMC SDRAM: Chuỗi 5 Lệnh JEDEC & Công Thức Tính Refresh Rate Counter
+### 2.2. FMC SDRAM: Chuỗi 5 Lệnh JEDEC, Bảng Thanh Ghi Cấu Hình & Công Thức Tính Refresh Rate Counter
 
-#### A. Chuỗi 5 Lệnh Khởi Động Bắt Buộc Theo Chuẩn JEDEC:
+#### A. Chuỗi 5 Lệnh Khởi Động Bắt Buộc Theo Chuẩn JEDEC (RM0385 Section 13.7.4):
 Khối ngoại vi FMC không tự động kích hoạt SDRAM khi bật nguồn mà bắt buộc CPU phải phát tuần tự chuỗi 5 lệnh điều khiển thông qua thanh ghi `FMC_SDCMR`:
-1. **Clock Configuration Enable:** Bật bộ phát xung cấp nhịp $f_{SDCLK}$ cho SDRAM.
-2. **PALL (Precharge All):** Đưa toàn bộ 4 banks nội của SDRAM về trạng thái nghỉ ban đầu.
-3. **Auto-Refresh Command:** Phát liên tiếp ít nhất **8 chu kỳ Auto-Refresh** để định hình điện tích cho các tụ điện lưu trữ cell nhớ.
-4. **Load Mode Register (LMR):** Nạp thanh ghi cấu hình nội của chip SDRAM (Đặt Burst Length = 1, Burst Type = Sequential, **CAS Latency = 2 chu kỳ**).
-5. **Normal Mode:** Đưa chip SDRAM vào trạng thái vận hành bình thường sẵn sàng đọc ghi.
+1. **Clock Configuration Enable:** Bật bộ phát xung cấp nhịp `f_SDCLK` cho SDRAM (Lệnh `SDCMR[2:0] = 001`).
+2. **PALL (Precharge All):** Đưa toàn bộ 4 banks nội của SDRAM về trạng thái nghỉ ban đầu (Lệnh `SDCMR[2:0] = 010`).
+3. **Auto-Refresh Command:** Phát liên tiếp ít nhất **8 chu kỳ Auto-Refresh** để định hình điện tích cho các tụ điện lưu trữ cell nhớ (Lệnh `SDCMR[2:0] = 011`, nạp số chu kỳ `NRFS[3:0] = 7` tương đương 8 lần).
+4. **Load Mode Register (LMR):** Nạp thanh ghi cấu hình nội của chip SDRAM thông qua trường `MRD[12:0]` (Lệnh `SDCMR[2:0] = 100`):
+   - Đặt Burst Length = 1.
+   - Burst Type = Sequential.
+   - **CAS Latency = 2 chu kỳ clock** (Độ trễ từ khi phát lệnh đọc đến khi dữ liệu xuất hiện trên bus).
+   - Write Burst Mode = Single Bit.
+5. **Normal Mode:** Đưa chip SDRAM vào trạng thái vận hành bình thường sẵn sàng đọc ghi (Lệnh `SDCMR[2:0] = 000`).
 
-#### B. Công Thức Tính Thanh Ghi Tốc Độ Làm Tươi (FMC_SDRTR):
-Chip SDRAM MT48LC4M32B2 có $4,096\text{ rows}$ và yêu cầu phải được làm tươi toàn bộ trong khoảng thời gian $T_{REFRESH} = 64\text{ ms}$.
-* Thời gian làm tươi cho từng dòng riêng biệt:
-  $$t_{ROW\_REFRESH} = \frac{64\text{ ms}}{4,096\text{ rows}} = 15.625\text{ }\mu\text{s}$$
-* Tần số xung nhịp bus SDRAM: $f_{HCLK} = 216\text{ MHz} \implies f_{SDCLK} = \frac{216\text{ MHz}}{2} = 108\text{ MHz}$.
-* Chu kỳ của 1 xung nhịp SDRAM:
-  $$t_{CK} = \frac{1}{108\text{ MHz}} \approx 9.26\text{ ns}$$
-* Công thức nạp thanh ghi `FMC_SDRTR` theo Reference Manual RM0385 (trừ 20 chu kỳ dự phòng an toàn):
-  $$\text{COUNT} = (t_{ROW\_REFRESH} \times f_{SDCLK}) - 20 = (15.625\text{ }\mu\text{s} \times 108\text{ MHz}) - 20 = 1,687.5 - 20 = 1,667.5 \implies \mathbf{1,667}$$
-* Nạp giá trị: `FMC->SDRTR |= (1667 << 1);`
+#### B. Các Tham Số Định Thời Trong Thanh Ghi FMC_SDCR1 & FMC_SDTR1:
+* **Thanh ghi điều khiển `FMC_SDCR1`:**
+  * `NC[1:0] = 00`: 8 bit địa chỉ cột (Column Address Bits).
+  * `NR[1:0] = 01`: 12 bit địa chỉ hàng (Row Address Bits -> 4,096 rows).
+  * `MWID[1:0] = 10`: Độ rộng bus dữ liệu 32-bit.
+  * `NB = 1`: 4 internal memory banks.
+  * `CAS[1:0] = 10`: CAS Latency = 2 clock cycles.
+  * `SDCLK[1:0] = 10`: Xung nhịp bus SDRAM = `f_HCLK / 2 = 216 MHz / 2 = 108 MHz`.
+* **Thanh ghi định thời `FMC_SDTR1` (Tính theo chu kỳ clock 9.26 ns):**
+  * `TMRD = 2`: Load Mode Register to Active delay.
+  * `TXSR = 7`: Exit Self-refresh delay.
+  * `TRAS = 4`: Self refresh time.
+  * `TRC = 7`: Row cycle delay.
+  * `TWR = 2`: Write recovery time.
+  * `TRP = 2`: Row precharge delay.
+  * `TRCD = 2`: Row to column delay.
+
+#### C. Công Thức Tính Thanh Ghi Tốc Độ Làm Tươi (FMC_SDRTR):
+Chip SDRAM MT48LC4M32B2 có `4,096 rows` và yêu cầu phải được làm tươi toàn bộ trong khoảng thời gian `T_REFRESH = 64 ms`.
+```text
+1. Thời gian làm tươi cho từng dòng riêng biệt:
+   t_ROW_REFRESH = 64 ms / 4,096 rows = 15.625 us
+
+2. Tần số xung nhịp bus SDRAM:
+   f_SDCLK = f_HCLK / 2 = 216 MHz / 2 = 108 MHz
+
+3. Chu kỳ 1 xung nhịp bus SDRAM:
+   t_CK = 1 / 108 MHz ~ 9.26 ns
+
+4. Công thức nạp thanh ghi FMC_SDRTR theo Reference Manual RM0385:
+   COUNT = (t_ROW_REFRESH * f_SDCLK) - 20
+         = (15.625 us * 108 MHz) - 20
+         = 1,687.5 - 20
+         = 1667.5 -> Nạp giá trị 1667
+
+5. Lệnh ghi vào thanh ghi:
+   FMC_Bank5_6->SDRTR |= (1667 << 1); /* Nạp vào trường COUNT[13:0] */
+```
 
 ---
 
-### 2.3. Chuẩn Hóa MicroSD SDHC: Block Addressing (LBA 512B) vs Byte Addressing
+### 2.3. Chuẩn Hóa MicroSD SDHC: Block Addressing (LBA 512B) & Quy Trình Khởi Tạo 8 Bước SDMMC
 
-| Tiêu Chí So Sánh | Thẻ SDSC Cũ ($\le 2\text{ GB}$) | Thẻ Chuẩn Hóa SDHC ($4\text{ GB} - 32\text{ GB}$) |
+| Tiêu Chí So Sánh | Thẻ SDSC Cũ (`<= 2 GB`) | Thẻ Chuẩn Hóa SDHC (`4 GB - 32 GB`) |
 | :--- | :--- | :--- |
 | **Cơ chế định chỉ** | **Byte Addressing** | **Block Addressing (LBA 512 Bytes)** |
-| **Tham số lệnh CMD17/18** | Địa chỉ Byte tuyệt đối ($\text{LBA} \times 512$) | Số thứ tự Block/Sector nguyên bản ($\text{LBA}$) |
-| **Giới hạn 32-bit Address** | Bị kịch trần tại $2^{32} = 4\text{ GB}$ (Thực tế chỉ dùng $\le 2\text{ GB}$). | Quản lý tới $2^{32} \text{ blocks} \times 512\text{ B} = \mathbf{2\text{ TB}}$. |
+| **Tham số lệnh CMD17/18** | Địa chỉ Byte tuyệt đối (`LBA * 512`) | Số thứ tự Block/Sector nguyên bản (`LBA`) |
+| **Giới hạn 32-bit Address** | Bị kịch trần tại `2^32 = 4 GB` (Thực tế chỉ dùng `<= 2 GB`). | Quản lý tới `2^32 blocks * 512 B = 2 TB`. |
 | **Khởi tạo ACMD41** | Bit HCS = 0 | **Bit HCS = 1 (Host Capacity Support)** |
 | **Cờ kiểm tra OCR** | Bit CCS = 0 | **Bit CCS = 1 (Card Capacity Status)** |
 
-> **Cảnh Báo Sống Còn Khi Đi Phỏng Vấn:**  
-> Trong hàm `SDMMC_ReadBlock(uint32_t sector, ...)`: Nếu dùng thẻ SDHC, tham số truyền vào lệnh CMD17/CMD18 **bắt buộc là `sector` nguyên bản**. Tuyệt đối không được viết `sector * 512` vì sẽ làm tràn biến số nguyên `uint32_t` ngay khi đọc quá sector thứ 8,388,608 (tức sau 4GB đầu tiên)!
+#### Quy Trình Handshake 8 Bước Khởi Tạo Thẻ SDHC Chuẩn Công Nghiệp:
+1. **Cấp xung khởi tạo chậm (Identification Phase):** Đặt xung `f_SDCLK = 400 kHz` trong `SDMMC_CLKCR` để tương thích với mọi loại thẻ nhớ khi mới cấp nguồn.
+2. **CMD0 (GO_IDLE_STATE, Arg: `0x00000000`):** Đưa thẻ về trạng thái Idle, reset toàn bộ logic nội bộ của thẻ.
+3. **CMD8 (SEND_IF_COND, Arg: `0x000001AA`):** Kiểm tra dải điện áp làm việc (2.7V - 3.6V) và kiểm tra mẫu thử Check Pattern `0xAA`. Nếu thẻ trả về đúng `0x000001AA` -> Xác nhận thẻ tuân thủ chuẩn SD Version 2.0 trở lên.
+4. **Vòng lặp CMD55 + ACMD41 (SD_SEND_OP_COND, Arg: `0x40100000`):**
+   - Bit 30 (`HCS = 1`): Báo cho thẻ biết Vi điều khiển hỗ trợ chế độ dung lượng cao SDHC.
+   - Thẻ thực hiện quá trình khởi tạo điện áp nội bộ. Ta polling đọc thanh ghi OCR cho đến khi bit 31 (`Busy = 0`) báo hiệu hoàn tất.
+   - Kiểm tra bit 30 của OCR (`CCS - Card Capacity Status`): Nếu `CCS = 1` -> **Xác nhận 100% là thẻ SDHC Block Addressing**!
+5. **CMD2 (ALL_SEND_CID):** Yêu cầu thẻ gửi toàn bộ chuỗi 128-bit thông tin nhận dạng (Card Identification Data: Mã nhà sản xuất, Serial number).
+6. **CMD3 (SET_RELATIVE_ADDR):** Yêu cầu thẻ tự phát sinh địa chỉ tương đối **RCA (Relative Card Address)** 16-bit dùng cho việc chọn thẻ sau này.
+7. **CMD7 (SELECT_CARD, Arg: `RCA << 16`):** Chọn thẻ có địa chỉ RCA tương ứng, chuyển thẻ từ trạng thái Standby sang **Transfer State**.
+8. **Chuyển Bus 4-bit & Tăng Tốc Độ Cực Đại:**
+   - Phát chuỗi `CMD55` + `ACMD6` với tham số `0x02` để chuyển bus dữ liệu từ 1-bit sang **4-bit song song**.
+   - Ghi thanh ghi `SDMMC_CLKCR` nâng tần số phát xung lên tốc độ tối đa **`f_SDCLK = 48 MHz`**.
 
 ---
 
-### 2.4. Bản Chất Bất Đồng Bộ L1 D-Cache Coherency Trên Nhân Cortex-M7
+### 2.4. Bản Chất Bất Đồng Bộ L1 D-Cache Coherency Trên Nhân Cortex-M7 & Kiến Trúc Zero-Copy
 
-Nhân Cortex-M7 sở hữu bộ đệm dữ liệu L1 Data Cache ($16\text{ KB}$, chia thành các dòng Cache Line dài $32\text{ bytes}$). Khi DMA của ngoại vi SDMMC đọc dữ liệu từ thẻ nhớ nạp thẳng vào ô nhớ SDRAM ngoài:
-1. Dữ liệu mới đã nằm dưới chip SDRAM, nhưng **hoàn toàn không đi qua lõi CPU**.
-2. Nếu trước đó CPU đã từng đọc qua vùng địa chỉ này, dòng dữ liệu cũ vẫn đang nằm lưu cữu trong L1 D-Cache.
-3. Khi ngoại vi LTDC hoặc CPU đọc lại Framebuffer, CPU lấy dữ liệu cũ từ D-Cache thay vì dữ liệu mới dưới SDRAM, gây ra hiện tượng **màn hình bị vỡ nát, sọc ngang và xuất hiện rác đồ họa (Visual Artifacts)**.
+Nhân Cortex-M7 là nhân vi xử lý có hiệu năng cực cao nhờ tích hợp hai khối bộ đệm L1 riêng biệt:
+* **I-Cache (Instruction Cache):** `16 KB`, bộ đệm lệnh nạp từ Flash/RAM.
+* **D-Cache (Data Cache):** `16 KB`, tổ chức thành các dòng **Cache Line dài đúng 32 bytes**.
 
-#### Quy Trình 3 Bước Xử Lý Triệt Để D-Cache Coherency:
-1. **Căn lề bộ đệm đúng $32\text{ bytes}$:** Khớp chính xác với độ dài 1 dòng Cache Line để tránh việc xóa nhầm biến lân cận (False Sharing):
+#### Nguyên nhân gây ra lỗi vỡ hình D-Cache Coherency:
+* Trong kiến trúc máy tính, ngoại vi SDMMC là một **AXI Bus Master độc lập**. Khi đọc dữ liệu từ thẻ nhớ, DMA của SDMMC đẩy các khối byte trực tiếp qua ma trận Bus AXI vào thẳng chip nhớ SDRAM ngoài (`0xC0000000`) mà **hoàn toàn không đi qua lõi CPU**.
+* Trong khi đó, L1 D-Cache nằm gắn liền bên trong lõi CPU. Nếu trước thời điểm DMA nạp dữ liệu, CPU đã từng truy cập vào vùng nhớ này, các ô nhớ cũ vẫn đang được lưu giữ trong L1 D-Cache.
+* Khi ứng dụng hoặc khối hiển thị đọc lại vùng Framebuffer, CPU lấy dữ liệu cũ từ D-Cache thay vì nạp dữ liệu mới từ SDRAM ngoài, khiến cho khung hình hiển thị bị vỡ vụn, các đường sọc ngang xuất hiện và hình ảnh bị giật lùi về quá khứ!
+
+#### Quy Trình 3 Bước Xử Lý Triệt Để Bằng Phần Cứng:
+1. **Căn lề bộ đệm đúng 32 bytes (Cache Line Boundary):**
    ```c
-   __attribute__((aligned(32))) static uint8_t s_dma_buffer[BUFFER_SIZE];
+   /* Bắt buộc căn lề 32 bytes để không làm ảnh hưởng các biến nằm liền kề */
+   __attribute__((aligned(32))) static uint8_t s_frame_buffer[261120];
    ```
-2. **Xóa hiệu lực Cache (Cache Invalidation):** Ngay trước khi CPU hoặc ứng dụng truy xuất dữ liệu do DMA nạp vào, gọi hàm:
+2. **Hủy hiệu lực bộ đệm Cache (Cache Invalidation):**
    ```c
+   /* Xóa hiệu lực Cache Line ứng với dải địa chỉ Framebuffer */
    SCB_InvalidateDCache_by_Addr((uint32_t *)frame_addr, LCD_FRAME_SIZE);
    ```
-   Lệnh này ép nhân CPU đánh dấu dữ liệu trong Cache là "vô giá trị", bắt buộc lần đọc tiếp theo phải nạp trực tiếp từ SDRAM ngoài.
-3. **Rào cản bộ nhớ phần cứng (Data Synchronization Barrier):**
+   Lệnh này ép nhân Cortex-M7 đánh dấu toàn bộ các dòng Cache chứa dải địa chỉ này là "Dirty/Invalid", bắt buộc lần đọc tiếp theo CPU phải kéo dữ liệu mới nhất từ SDRAM ngoài.
+3. **Chèn rào cản đồng bộ bộ nhớ phần cứng (Data Synchronization Barrier):**
    ```c
    __asm volatile ("dsb 0xF" ::: "memory");
    ```
-   Đảm bảo toàn bộ thao tác đường ống bộ nhớ (Bus Pipeline) đã hoàn tất triệt để trước khi chuyển đổi khung hình.
+   Chỉ thị `DSB` đảm bảo toàn bộ các giao dịch bus bộ nhớ trong đường ống (Store Buffers & AXI Pipeline) đã hoàn tất 100% trước khi câu lệnh tiếp theo được phép thực thi.
 
 ---
 
@@ -186,25 +278,26 @@ sequenceDiagram
     Main->>RCC: Kích hoạt AHB3 (FMC), AHB1 (GPIO), APB2 (LTDC, SDMMC1)
     Main->>GPIO: Cấu hình chân FMC (AF12), LCD RGB (AF14), SDMMC 4-bit (AF12)
     
-    Note over FMC: Thực hiện chuỗi 5 lệnh JEDEC
+    Note over FMC: BƯỚC KHỞI ĐỘNG SDRAM CHUẨN JEDEC (5 LỆNH)
     Main->>FMC: 1. Phát xung Clock -> 2. Lệnh PALL (Precharge All)
     Main->>FMC: 3. Auto-Refresh (8 chu kỳ) -> 4. LMR (CAS=2) -> 5. Normal Mode
     Main->>FMC: Nạp thanh ghi SDRTR = 1667 (Refresh Rate 15.625 us)
     
-    Main->>LTDC: Cấu hình Timing: HSYNC, HBP, VSYNC, VBP, Active 480x272
+    Note over LTDC: CẤU HÌNH TIMING MÀN HÌNH LCD 480x272 @ 60Hz
+    Main->>LTDC: Nạp HSYNC=41, HBP=13, VSYNC=10, VBP=2, Active 480x272
     Main->>LTDC: Gán địa chỉ Layer 0 vào SDRAM (0xC0000000), bật bit LTDC_EN
     
-    Note over SD: Khởi tạo thẻ SDHC qua giao thức chuẩn
-    Main->>SD: Phát CMD0 (Reset thẻ) -> CMD8 (Kiểm tra 3.3V)
-    loop Lặp bắt tay ACMD41
+    Note over SD: KHỞI TẠO THẺ SDHC QUA GIAO THỨC 8 BƯỚC
+    Main->>SD: Phát CMD0 (Reset thẻ) -> CMD8 (Kiểm tra 3.3V và mẫu 0xAA)
+    loop Bắt tay ACMD41
         Main->>SD: Gửi ACMD41 với cờ HCS=1 (Yêu cầu hỗ trợ SDHC)
         SD-->>Main: Trả về OCR bit Busy=0 & bit CCS=1 (Xác nhận đúng thẻ SDHC)
     end
     Main->>SD: Gửi CMD2 (CID) -> CMD3 (Lấy RCA) -> CMD7 (Select Card)
-    Main->>SD: Chuyển bus 4-bit, nâng xung nhịp lên f_SDCLK = 48 MHz
+    Main->>SD: Chuyển bus 4-bit qua ACMD6, nâng xung nhịp lên f_SDCLK = 48 MHz
     
-    Main->>FAT: Gọi f_mount(&s_fs, "", 1) -> Đọc Boot Sector & FAT32 Table
-    FAT-->>Main: Mount Thẻ Thành Công (Sẵn sàng phát Video)
+    Main->>FAT: Gọi f_mount(&s_fs, "", 1) -> Đọc Boot Sector & Bảng FAT32
+    FAT-->>Main: Mount Thẻ Thành Công (Sẵn sàng phát Video 60 FPS)
 ```
 
 ---
@@ -225,7 +318,7 @@ sequenceDiagram
     
     loop Chu Kỳ Phát Khung Hình 60 FPS (Mỗi 16.6 ms)
         CPU->>SDMMC: f_read(&fil, active_buf, 261120 bytes)
-        SDMMC->>SD_Card: Phát lệnh CMD18 (Read Multiple Block LBA)
+        SDMMC->>SD_Card: Phát lệnh CMD18 (Read Multiple Block LBA 512B)
         SD_Card-->>SDMMC: Truyền luồng dữ liệu 4-bit @ 48 MHz
         
         Note over SDMMC,SDRAM: ZERO-COPY: Nạp thẳng vào SDRAM qua Bus AXI (Không qua RAM nội)
@@ -291,7 +384,7 @@ sequenceDiagram
 
 #### 🐞 Bug 2: Nhân nhầm hệ số 512 khi đọc thẻ SDHC (Lỗi tràn số nguyên 32-bit)
 * **Triệu chứng:** Thẻ nhớ SDHC 16GB nạp video đọc bình thường trong vài phút đầu tiên; nhưng khi video chạy đến phân đoạn lớn hơn 4GB thì toàn bộ dữ liệu trả về đều bằng 0 hoặc hàm `f_read()` báo lỗi `FR_DISK_ERR`.
-* **Nguyên nhân:** Lập trình viên bê nguyên mã nguồn của thẻ SDSC cũ: `uint32_t byte_addr = sector * 512;`. Khi thẻ đọc tới Sector thứ `8,388,608` ($8,388,608 \times 512 = 4,294,967,296 = 2^{32}$), biến `byte_addr` bị tràn về 0. Lệnh CMD17 truyền tham số 0 khiến thẻ quay lại đọc Sector 0 của Master Boot Record thay vì đọc dữ liệu video.
+* **Nguyên nhân:** Lập trình viên bê nguyên mã nguồn của thẻ SDSC cũ: `uint32_t byte_addr = sector * 512;`. Khi thẻ đọc tới Sector thứ `8,388,608` (`8,388,608 * 512 = 4,294,967,296 = 2^32`), biến `byte_addr` bị tràn về 0. Lệnh CMD17 truyền tham số 0 khiến thẻ quay lại đọc Sector 0 của Master Boot Record thay vì đọc dữ liệu video.
 * **Cách xử lý:** Trong driver SDMMC chuẩn hóa cho SDHC, tham số của CMD17/CMD18 chính là số thứ tự `sector` (Block Addressing). Tuyệt đối không nhân 512!
 
 #### 🐞 Bug 3: Hiện tượng xé hình (Screen Tearing) khi đổi Framebuffer
@@ -305,22 +398,22 @@ sequenceDiagram
 
 #### 🐞 Bug 4: Bất đồng bộ D-Cache Coherency gây sọc rác và vỡ nát hình ảnh
 * **Triệu chứng:** Tốc độ đọc từ thẻ nhớ báo về rất cao, nhưng hình ảnh trên LCD bị nhòe màu, các mảng điểm ảnh bị xô lệch hoặc hiển thị lại các khung hình của vài giây trước đó.
-* **Nguyên nhân:** Khối SDMMC DMA nạp thẳng dữ liệu điểm ảnh vào SDRAM ngoài. Nhưng Cortex-M7 có bộ đệm L1 D-Cache $16\text{ KB}$. Lõi CPU và bộ điều khiển hiển thị đọc dữ liệu từ Cache cũ thay vì đọc dữ liệu mới dưới SDRAM.
+* **Nguyên nhân:** Khối SDMMC DMA nạp thẳng dữ liệu điểm ảnh vào SDRAM ngoài. Nhưng Cortex-M7 có bộ đệm L1 D-Cache `16 KB`. Lõi CPU và bộ điều khiển hiển thị đọc dữ liệu từ Cache cũ thay vì đọc dữ liệu mới dưới SDRAM.
 * **Giải pháp 3 bước:**
-  1. Đảm bảo mảng bộ đệm căn lề $32\text{ bytes}$ bằng `__attribute__((aligned(32)))`.
+  1. Đảm bảo mảng bộ đệm căn lề `32 bytes` bằng `__attribute__((aligned(32)))`.
   2. Gọi lệnh Invalidate Cache: `SCB_InvalidateDCache_by_Addr((uint32_t *)addr, size)` để ép xóa dữ liệu Cache cũ trước khi hiển thị.
   3. Gọi chỉ thị rào cản phần cứng `__asm volatile ("dsb 0xF" ::: "memory");` để đồng bộ toàn bộ chuỗi bus bộ nhớ.
 
 #### 🐞 Bug 5: Tranh chấp Bus Matrix AXI / FMC SDRAM Contention
 * **Triệu chứng:** Khi chạy video 60 FPS kết hợp với việc gọi hàm `DMA2D` để fill màu hoặc vẽ icon đè lên màn hình, màn hình LCD thỉnh thoảng bị chớp đen một khung hình hoặc nháy sọc trắng.
-* **Nguyên nhân:** Cả 3 Master gồm CPU, LTDC và DMA2D cùng truy cập vào bộ nhớ ngoài SDRAM 8MB thông qua một bộ điều khiển FMC duy nhất chạy ở xung nhịp $108\text{ MHz}$. Nếu DMA2D chiếm giữ bus AXI quá lâu, FIFO nội của ngoại vi LTDC bị rỗng (FIFO Underflow Error cờ `FEIF` trong `LTDC_ISR`) do không kịp lấy dữ liệu bắn ra màn hình LCD đúng thời gian thực của điểm ảnh.
+* **Nguyên nhân:** Cả 3 Master gồm CPU, LTDC và DMA2D cùng truy cập vào bộ nhớ ngoài SDRAM 8MB thông qua một bộ điều khiển FMC duy nhất chạy ở xung nhịp `108 MHz`. Nếu DMA2D chiếm giữ bus AXI quá lâu, FIFO nội của ngoại vi LTDC bị rỗng (FIFO Underflow Error cờ `FEIF` trong `LTDC_ISR`) do không kịp lấy dữ liệu bắn ra màn hình LCD đúng thời gian thực của điểm ảnh.
 * **Cách xử lý:**
   1. Cấu hình độ ưu tiên trọng tài Bus Matrix (Bus Matrix GPV): Nâng quyền ưu tiên của LTDC (Master 3) lên cao nhất, hạ quyền của DMA2D xuống thấp hơn.
   2. Bật cờ ngắt `TERRIE` và `FUIE` của LTDC để phát hiện FIFO Underflow và tự động reload.
 
 #### 🐞 Bug 6: Sụt giảm FPS do hiện tượng phân mảnh tập tin (File Fragmentation) trên FAT32
 * **Triệu chứng:** Video phát rất mượt trong 10 giây đầu (đủ 60 FPS), nhưng sau đó đột ngột bị giật cục, FPS tụt xuống còn 30 - 40 FPS rồi lại tăng lên.
-* **Nguyên nhân:** File video trên thẻ nhớ bị lưu trữ rải rác trên các Cluster không liên tục do thẻ đã từng xóa ghi nhiều lần. Khi đọc qua ranh giới cụm phân mảnh, ngoại vi SDMMC phải kết thúc lệnh đọc liên tục CMD18, phát lệnh dừng CMD12, rồi phát lệnh CMD18 mới tại địa chỉ Cluster khác. Độ trễ tìm kiếm (Seek Latency) của chip nhớ NAND Flash làm sụt băng thông tức thời từ $18\text{ MB/s}$ xuống còn $< 8\text{ MB/s}$.
+* **Nguyên nhân:** File video trên thẻ nhớ bị lưu trữ rải rác trên các Cluster không liên tục do thẻ đã từng xóa ghi nhiều lần. Khi đọc qua ranh giới cụm phân mảnh, ngoại vi SDMMC phải kết thúc lệnh đọc liên tục CMD18, phát lệnh dừng CMD12, rồi phát lệnh CMD18 mới tại địa chỉ Cluster khác. Độ trễ tìm kiếm (Seek Latency) của chip nhớ NAND Flash làm sụt băng thông tức thời từ `18 MB/s` xuống còn `< 8 MB/s`.
 * **Cách xử lý:** 
   1. Khi format thẻ FAT32 trên máy tính, chọn kích thước cụm phân bổ lớn: **Allocation Unit Size = 32 KB hoặc 64 KB**.
   2. Sử dụng công cụ ghi file liên tục (Contiguous File Pre-allocation) để đảm bảo file video nằm trọn vẹn trên các sector vật lý liền kề nhau 100%.
@@ -331,15 +424,15 @@ sequenceDiagram
 
 #### 🐞 Bug 7: SDMMC FIFO Overrun / Underrun ở rìa tần số 48 MHz
 * **Triệu chứng:** Trong quá trình đọc dữ liệu nặng, thẻ nhớ thỉnh thoảng trả về cờ lỗi `RXOVERR` (Receive FIFO Overrun) trong thanh ghi `SDMMC_STA`, làm dừng đột ngột quá trình truyền dữ liệu.
-* **Nguyên nhân:** Khi chạy ở tốc độ cực đại $48\text{ MHz}$, cứ mỗi $20.8\text{ ns}$ có một nibble (4-bit) dữ liệu đi vào FIFO. Nếu tại đúng thời điểm đó, bus AHB nội bị tạm giữ bởi một tác vụ ưu tiên khác, bộ đệm FIFO 32 words ($128\text{ bytes}$) của SDMMC bị đầy tràn trước khi kịp xả vào DMA.
+* **Nguyên nhân:** Khi chạy ở tốc độ cực đại `48 MHz`, cứ mỗi `20.8 ns` có một nibble (4-bit) dữ liệu đi vào FIFO. Nếu tại đúng thời điểm đó, bus AHB nội bị tạm giữ bởi một tác vụ ưu tiên khác, bộ đệm FIFO 32 words (`128 bytes`) của SDMMC bị đầy tràn trước khi kịp xả vào DMA.
 * **Giải pháp phần cứng:** Kích hoạt tính năng **Hardware Flow Control** bằng cách bật bit `HWFC_EN` trong thanh ghi cấu hình `SDMMC_CLKCR`. Khi tính năng này được bật, nếu FIFO còn dưới 2 words trống, phần cứng SDMMC sẽ chủ động tạm dừng phát xung clock `SDMMC_CK` cho thẻ nhớ, ép thẻ nhớ tạm ngưng đẩy dữ liệu ra cho đến khi FIFO có chỗ trống trở lại mà không làm mất mát dữ liệu!
 
 #### 🐞 Bug 8: Glitch chân CKE (Clock Enable) SDRAM khi Reset ấm (Soft-Reset)
 * **Triệu chứng:** Mạch nạp code chạy lần đầu khi cấp nguồn thì hoạt động hoàn hảo; nhưng khi ấn nút Reset trên mạch hoặc nạp code mới qua ST-LINK (Warm Reset), hệ thống treo cứng ở bước khởi tạo SDRAM, không thể đọc ghi được ô nhớ nào.
 * **Nguyên nhân:** Khi nhấn nút Reset, các chân GPIO của vi điều khiển bị đưa về trạng thái mặc định Input Floating (thả nổi). Chân tín hiệu **CKE (Clock Enable)** của chip SDRAM bị trôi điện áp lơ lửng, khiến chip SDRAM hiểu nhầm là tín hiệu rơi vào chế độ tự làm tươi (Self-Refresh Mode) hoặc Power-Down Mode. Khi vi điều khiển khởi động lại và phát lệnh JEDEC, chip SDRAM từ chối phản hồi.
 * **Giải pháp phần cứng & phần mềm:** 
-  * Về phần cứng: Thiết kế thêm một điện trở kéo xuống đất **Pull-Down $10\text{ k}\Omega$ ngoại vi** tại chân CKE để đảm bảo chân luôn ở mức 0 an toàn khi vi điều khiển đang reset.
-  * Về phần mềm: Đầu hàm `FMC_SDRAM_Init()`, kéo chân CKE xuống mức Low thủ công, tạo trễ $1\text{ ms}$ cho điện áp ổn định trước khi bàn giao quyền điều khiển cho khối FMC.
+  * Về phần cứng: Thiết kế thêm một điện trở kéo xuống đất **Pull-Down `10 kOhm` ngoại vi** tại chân CKE để đảm bảo chân luôn ở mức 0 an toàn khi vi điều khiển đang reset.
+  * Về phần mềm: Đầu hàm `FMC_SDRAM_Init()`, kéo chân CKE xuống mức Low thủ công, tạo trễ `1 ms` cho điện áp ổn định trước khi bàn giao quyền điều khiển cho khối FMC.
 
 ---
 

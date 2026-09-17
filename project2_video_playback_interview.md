@@ -546,6 +546,45 @@ sequenceDiagram
   * Về phần cứng: Thiết kế thêm một điện trở kéo xuống đất **Pull-Down `10 kOhm` ngoại vi** tại chân CKE để đảm bảo chân luôn ở mức 0 an toàn khi vi điều khiển đang reset.
   * Về phần mềm: Đầu hàm `FMC_SDRAM_Init()`, kéo chân CKE xuống mức Low thủ công, tạo trễ `1 ms` cho điện áp ổn định trước khi bàn giao quyền điều khiển cho khối FMC.
 
+#### 🐞 Bug 9: Màn hình LCD chỉ sáng đèn nền màu trắng xóa (White Blank Screen) do đảo ngược Pitch/Line Length trong `LTDC_LxCFBLR` & vi phạm chu trình cấp nguồn Panel
+* **Triệu chứng:** Sau khi nạp firmware, đèn nền màn hình LCD sáng bình thường nhưng toàn bộ màn hình chỉ hiển thị một màu trắng xóa thuần túy, không thấy đồ họa khởi động (Splash Screen) hay dải màu Color Bar chuyển động dù lõi CPU và khối SDRAM vẫn đang chạy bình thường.
+* **Nguyên nhân gốc rễ (Root Causes):**
+  1. **Nghịch đảo thanh ghi bước nhảy dòng và độ dài dòng `LTDC_LxCFBLR` (RM0385 Section 18.7.16):**
+     * Trong thanh ghi cấu hình lớp `LTDC_LxCFBLR`, bit `[28:16]` quy định **CFBP (Color Frame Buffer Pitch)** – khoảng cách giữa điểm bắt đầu của hai dòng liên tiếp tính theo bytes:
+       $$\text{CFBP} = \text{LCD\_WIDTH} \times \text{BytesPerPixel} = 480 \times 2 = 960\text{ bytes (0x03C0)}$$
+     * Bit `[12:0]` quy định **CFBLL (Color Frame Buffer Line Length)** – độ dài dữ liệu dòng tính theo bytes cộng thêm 3:
+       $$\text{CFBLL} = (\text{LCD\_WIDTH} \times \text{BytesPerPixel}) + 3 = 480 \times 2 + 3 = 963\text{ bytes (0x03C3)}$$
+     * Khi lập trình viên gán nhầm hai trường này (`963` vào Pitch và `960` vào Line Length), bộ sinh địa chỉ DMA của LTDC sẽ nhận diện chiều dài dòng không hợp lệ, lập tức ngắt quá trình đọc (fetch) dữ liệu từ SDRAM vào FIFO nội của lớp hiển thị.
+  2. **Đặc tính quang học của tấm nền LCD TN Transmissive (Normally White):**
+     * Màn hình Rocktech RK043FN48H trên kit Discovery là loại tấm nền tinh thể lỏng xoắn TN dẫn sáng tự nhiên (Normally White). Khi đèn nền LED (`PK3 = LCD_BL_CTRL`) được cấp nguồn nhưng các điểm ảnh chưa nhận được điện áp điều khiển từ tín hiệu quét LTDC, các phân tử tinh thể lỏng ở trạng thái nghỉ sẽ cho toàn bộ ánh sáng đèn nền xuyên qua, tạo ra hiện tượng **màn hình trắng xóa toàn phần**.
+  3. **Lệch chu trình cấp nguồn (Power-On Sequence) phần cứng:**
+     * Kéo chân đèn nền `PK3 (LCD_BL_CTRL)` lên mức cao trước khi cấp nguồn cho panel qua chân `PI12 (LCD_DISP)` và trước khi xung nhịp quét điểm ảnh `LTDC_CLK (9.6 MHz)` cùng các tín hiệu đồng bộ `DE/HSYNC/VSYNC` đạt trạng thái ổn định.
+* **Giải pháp Bare-Metal 3 bước triệt để:**
+  * **Bước 1: Sửa đúng công thức thanh ghi `LTDC_LxCFBLR`:**
+    ```c
+    LTDC_Layer1->CFBLR = ((LCD_WIDTH * 2U) << 16) | (LCD_WIDTH * 2U + 3U);
+    ```
+  * **Bước 2: Cấu hình hệ số hòa trộn Alpha hoàn toàn đục (Opaque):**
+    ```c
+    LTDC_Layer1->CACR = 255U; /* Constant Alpha = 255 */
+    LTDC_Layer1->BFCR = (4U << 8) | 5U; /* BF1 = Constant Alpha, BF2 = 1 - Constant Alpha */
+    LTDC_Layer1->CR  |= LTDC_LxCR_LEN;  /* Kích hoạt Layer 1 */
+    ```
+  * **Bước 3: Chuẩn hóa chu trình cấp nguồn theo tài liệu Rocktech:**
+    ```c
+    /* 1. Bật nguồn panel LCD */
+    GPIOI->BSRR = (1U << 12); /* LCD_DISP = 1 */
+    for (volatile int i = 0; i < 50000; i++);
+
+    /* 2. Kích hoạt bộ phát xung quét LTDC */
+    LTDC->GCR |= LTDC_GCR_LTDCEN;
+    LTDC->SRCR = LTDC_SRCR_IMR;
+    for (volatile int i = 0; i < 50000; i++);
+
+    /* 3. Bật đèn nền LED sau khi tín hiệu quét đã ổn định */
+    GPIOK->BSRR = (1U << 3);  /* LCD_BL_CTRL = 1 */
+    ```
+
 ---
 
 # 5. BỘ CÂU HỎI PHỎNG VẤN & KỊCH BẢN TRẢ LỜI MẪU (FRESHER LEVEL)
@@ -611,4 +650,15 @@ sequenceDiagram
   > *"Dạ, AXI (Advanced eXtensible Interface) là bus truyền thông hiệu năng cao 64-bit của ARM, vượt trội hơn chuẩn AHB nhờ sở hữu 5 kênh vật lý hoàn toàn độc lập, cho phép kênh đọc và kênh ghi chạy song công toàn phần (Full-Duplex) cùng một lúc.  
   > Trong khi APB dùng cho ngoại vi chậm như UART, I2C; AHB dùng cho DMA và SRAM nội; thì AXI là xương sống kết nối lõi Cortex-M7, bộ nhớ ngoài SDRAM và các Master đồ họa.  
   > Trong dự án Video Playback của em, AXI Bus kết hợp ma trận Crossbar Matrix đóng vai trò sống còn: Nó cho phép khối LTDC liên tục kéo luồng dữ liệu 19.4 MB/s từ SDRAM ngoài để quét ra màn hình LCD, trong khi CPU và DMA vẫn hoạt động song song độc lập, giúp hệ thống đạt 60 FPS mượt mà tuyệt đối mà CPU load gần như bằng 0."*
+
+---
+
+### ❓ Câu 8: "Tại sao khi khởi động bo mạch, màn hình LCD chỉ sáng đèn nền màu trắng xóa mà không hiển thị đồ họa? Bạn đã debug và khắc phục lỗi này ở tầng thanh ghi Bare-Metal như thế nào?"
+* **🗣️ Kịch bản trả lời mẫu (45 - 55 giây):**
+  > *"Dạ, hiện tượng màn hình chỉ sáng đèn nền màu trắng xóa (White Blank Screen) là một bẫy phần cứng kinh điển khi phát triển driver hiển thị bare-metal trên STM32F7.  
+  > Khi gặp lỗi này trên thực tế, em đã tiến hành kết nối qua công cụ STM32_Programmer_CLI ở chế độ HotPlug để đọc trực tiếp các thanh ghi phần cứng và phát hiện 2 nguyên nhân gốc rễ:  
+  > Thứ nhất là lỗi cấu hình thanh ghi LTDC_LxCFBLR: Thanh ghi này yêu cầu bit [28:16] là bước nhảy dòng Pitch bằng 960 bytes (480 x 2) và bit [12:0] là Line Length bằng 963 bytes (480 x 2 + 3). Việc đảo ngược 2 giá trị này khiến bộ DMA nội của LTDC không fetch được dữ liệu từ SDRAM ngoài.  
+  > Thứ hai là đặc tính quang học của tấm nền: Màn hình Rocktech RK043FN48H trên kit Discovery là loại TN Transmissive (Normally White). Khi đèn nền LED được cấp nguồn bởi chân PK3 mà tinh thể lỏng chưa nhận được xung quét đồng bộ, trạng thái mặc định của nó là cho toàn bộ ánh sáng xuyên qua gây trắng màn hình.  
+  > Em đã khắc phục triệt để bằng cách chuẩn hóa lại công thức nạp thanh ghi CFBLR, thiết lập hệ số hòa trộn Alpha đục tuyệt đối BFCR = (4 << 8) | 5, đồng thời tuân thủ nghiêm ngặt chu trình cấp nguồn: Kéo chân nguồn panel LCD_DISP (PI12) lên cao -> Kích hoạt xung quét LTDCEN -> Chờ tín hiệu 9.6 MHz ổn định rồi mới bật chân đèn nền LCD_BL_CTRL (PK3). Sau khi sửa, màn hình lập tức hiển thị dải màu Color Bar và video 60 FPS mượt mà."*
+
 

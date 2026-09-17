@@ -10,6 +10,10 @@
 
 ## MỤC LỤC TỔNG QUAN
 
+- [0. DANH MỤC TÀI LIỆU GỐC & HƯỚNG DẪN TRA CỨU RM/DATASHEET (LOOKUP GUIDE)](#0-danh-mục-tài-liệu-gốc--hướng-dẫn-tra-cứu-rmdatasheet-lookup-guide)
+  - [0.1. Danh Mục Tài Liệu Gốc Trọng Tâm (Official Documents)](#01-danh-mục-tài-liệu-gốc-trọng-tâm-official-documents)
+  - [0.2. Hướng Dẫn Từng Bước Tra Cứu Reference Manual (RM0385)](#02-hướng-dẫn-từng-bước-tra-cứu-reference-manual-rm0385)
+  - [0.3. Hướng Dẫn Từng Bước Tra Cứu Datasheet (DS10610) & Ghép Kênh Pinmux](#03-hướng-dẫn-từng-bước-tra-cứu-datasheet-ds10610--ghép-kênh-pinmux)
 - [1. TỔNG QUAN HỆ THỐNG & BẢN ĐỒ BUS MATRIX PHẦN CỨNG](#1-tổng-quan-hệ-thống--bản-đồ-bus-matrix-phần-cứng)
   - [1.1. Mục Tiêu Kỹ Thuật & Các Con Số Định Lượng Cốt Lõi](#11-mục-tiêu-kỹ-thuật--các-con-số-định-lượng-cốt-lõi)
   - [1.2. Sơ Đồ Kiến Trúc Ma Trận Bus AXI 64-bit Đa Tầng & Bản Đồ Phân Bổ Vùng Nhớ SDRAM 8MB](#12-sơ-đồ-kiến-trúc-ma-trận-bus-axi-64-bit-đa-tầng--bản-đồ-phân-bổ-vùng-nhớ-sdram-8mb)
@@ -18,6 +22,7 @@
   - [2.2. FMC SDRAM: Chuỗi 5 Lệnh JEDEC, Bảng Thanh Ghi Cấu Hình & Công Thức Tính Refresh Rate Counter](#22-fmc-sdram-chuỗi-5-lệnh-jedec-bảng-thanh-ghi-cấu-hình--công-thức-tính-refresh-rate-counter)
   - [2.3. Chuẩn Hóa MicroSD SDHC: Block Addressing (LBA 512B) & Quy Trình Khởi Tạo 8 Bước SDMMC](#23-chuẩn-hóa-microsd-sdhc-block-addressing-lba-512b--quy-trình-khởi-tạo-8-bước-sdmmc)
   - [2.4. Bản Chất Bất Đồng Bộ L1 D-Cache Coherency Trên Nhân Cortex-M7 & Kiến Trúc Zero-Copy](#24-bản-chất-bất-đồng-bộ-l1-d-cache-coherency-trên-nhân-cortex-m7--kiến-trúc-zero-copy)
+  - [2.5. Bản Chất Kiến Trúc Bus AXI vs AHB vs APB & Cơ Chế 5 Kênh Độc Lập](#25-bản-chất-kiến-trúc-bus-axi-vs-ahb-vs-apb--cơ-chế-5-kênh-độc-lập)
 - [3. SƠ ĐỒ TUẦN TỰ HOẠT ĐỘNG (MERMAID SEQUENCE DIAGRAMS)](#3-sơ-đồ-tuần-tự-hoạt-động-mermaid-sequence-diagrams)
   - [3.1. Quy Trình Cấu Hình Khởi Động Phần Cứng (Peripheral Init Pipeline)](#31-quy-trình-cấu-hình-khởi-động-phần-cứng-peripheral-init-pipeline)
   - [3.2. Quy Trình Vận Hành Streaming Video Zero-Copy (Runtime Dataflow)](#32-quy-trình-vận-hành-streaming-video-zero-copy-runtime-dataflow)
@@ -27,6 +32,72 @@
   - [4.2. Nhóm Bug Phức Tạp (Complex Architectural Bugs)](#42-nhóm-bug-phức-tạp-complex-architectural-bugs)
   - [4.3. Nhóm Bug Hiếm Gặp & Góc Khuất Phần Cứng (Rare / Edge-Case Bugs)](#43-nhóm-bug-hiếm-gặp--góc-khuất-phần-cứng-rare--edge-case-bugs)
 - [5. BỘ CÂU HỎI PHỎNG VẤN & KỊCH BẢN TRẢ LỜI MẪU (FRESHER LEVEL)](#5-bộ-câu-hỏi-phỏng-vấn--kịch-bản-trả-lời-mẫu-fresher-level)
+
+---
+
+# 0. DANH MỤC TÀI LIỆU GỐC & HƯỚNG DẪN TRA CỨU RM/DATASHEET (LOOKUP GUIDE)
+
+### 0.1. Danh Mục Tài Liệu Gốc Trọng Tâm (Official Documents)
+
+| Tên Tài Liệu | Mã Hiệu / Phiên Bản | File Trong Thư Mục Dự Án | Nội Dung Tra Cứu Trọng Tâm |
+| :--- | :--- | :--- | :--- |
+| **STM32F7 Reference Manual** | `RM0385` (DocID027589 Rev 8) | [`RM.pdf`](file:///d:/Project/STM32F7/RM.pdf) | **Chương 13 (FMC SDRAM):** 5 lệnh JEDEC, thanh ghi `SDCR`, `SDTR`, `SDCMR`, `SDRTR`.<br>**Chương 29 (SDMMC1):** Lệnh CMD/RESP, FIFO, thanh ghi `CLKCR`, `DTIMER`, `STA`.<br>**Chương 18 (LTDC):** Timing màn hình, `SRCR` (VBR reload), `L1CFBAR`.<br>**Chương 19 (DMA2D):** Mode PFC, R2M, Blending. |
+| **STM32F746 Datasheet** | `DS10610` (DocID027590 Rev 7) | [`STM32F745XX.PDF`](file:///d:/Project/STM32F7/STM32F745XX.PDF) | **Table 9 (Alternate functions):** Ghép kênh chân FMC (`AF12`), SDMMC1 (`AF12`), LTDC (`AF14`). Giới hạn xung nhịp APB2 tối đa 108 MHz, HCLK 216 MHz. |
+| **Chip SDRAM Datasheet** | Micron `MT48LC4M32B2` | Tài liệu hãng Micron | Chu kỳ làm tươi `64 ms / 4096 rows`, CAS Latency 2 chu kỳ, các thông số tRAS, tRP, tRCD. |
+| **Chuẩn Thẻ Nhớ SD Physical Layer** | SD Association `Version 4.10` | `Part1_Physical_Layer_Simplified` | Quy trình bắt tay 8 bước, cơ chế Block Addressing LBA 512B của thẻ SDHC (cờ HCS/CCS trong ACMD41 & OCR). |
+| **ChaN FatFs Generic File System** | ChaN FatFs Module `R0.12c` | Thư viện nguồn `ff.c` / `diskio.c` | Hàm cầu nối tầng vật lý `disk_initialize`, `disk_read`, `disk_write`, `disk_ioctl` (hỗ trợ `GET_SECTOR_SIZE = 512`). |
+
+---
+
+### 0.2. Hướng Dẫn Từng Bước Tra Cứu Reference Manual (RM0385)
+
+#### Bước 1: Tra cứu Địa chỉ Cơ sở (Base Address) các khối ngoại vi
+1. Mở file [`RM.pdf`](file:///d:/Project/STM32F7/RM.pdf).
+2. Nhấn `Ctrl + F` tìm: **`Memory map and register boundary addresses`** (Section 2.2.2).
+3. Ghi nhận các địa chỉ cơ sở:
+   * **FMC Controller:** `0xA0000000` (Thanh ghi điều khiển) | Vùng nhớ SDRAM Bank 1: **`0xC0000000`** (Dung lượng 8MB).
+   * **SDMMC1 (APB2):** **`0x40012C00`**.
+   * **LTDC (APB2):** **`0x40016800`**.
+   * **DMA2D (AHB1):** **`0x4002B000`**.
+
+#### Bước 2: Bảng Thanh Ghi Cốt Lõi Từng Khối Ngoại Vi (Register Map & Offsets)
+
+##### 1. Khối FMC SDRAM (RM0385 Section 13.7):
+* `FMC_SDCR1` (Offset `0x140`, Địa chỉ `0xA0000140`): Cấu hình độ rộng bus 32-bit, số bank, CAS Latency = 2, chia nhịp 108 MHz.
+* `FMC_SDTR1` (Offset `0x144`, Địa chỉ `0xA0000144`): Nạp thời gian định thời tRCD, tRP, tRAS, tRC.
+* `FMC_SDCMR` (Offset `0x150`, Địa chỉ `0xA0000150`): Phát chuỗi 5 lệnh JEDEC (Clock -> PALL -> Auto-Refresh -> LMR -> Normal).
+* `FMC_SDRTR` (Offset `0x154`, Địa chỉ `0xA0000154`): Nạp giá trị bộ đếm làm tươi **`1667`**.
+* `FMC_SDSR`  (Offset `0x158`, Địa chỉ `0xA0000158`): Polling cờ bận `BUSY = 0` sau mỗi lệnh JEDEC.
+
+##### 2. Khối SDMMC1 (RM0385 Section 29.9):
+* `SDMMC_POWER` (Offset `0x00`, Địa chỉ `0x40012C00`): Cấp nguồn bus (bit `PWRCTRL = 11`).
+* `SDMMC_CLKCR` (Offset `0x04`, Địa chỉ `0x40012C04`): Chia tần số xung clock (400 kHz -> 48 MHz), chọn bus 4-bit (`WIDBUS`), bật `HWFC_EN`.
+* `SDMMC_ARG`   (Offset `0x08`, Địa chỉ `0x40012C08`): Chứa tham số của lệnh CMD (số thứ tự Sector LBA khi đọc thẻ SDHC).
+* `SDMMC_CMD`   (Offset `0x0C`, Địa chỉ `0x40012C0C`): Chứa mã lệnh Index (CMD0, CMD8, CMD18...) và loại phản hồi Response.
+* `SDMMC_DTIMER`(Offset `0x24`, Địa chỉ `0x40012C24`): Bộ đếm thời gian timeout dữ liệu.
+* `SDMMC_DLEN`  (Offset `0x28`, Địa chỉ `0x40012C28`): Số byte dữ liệu cần truyền (261,120 bytes cho 1 frame).
+* `SDMMC_DCTRL` (Offset `0x2C`, Địa chỉ `0x40012C2C`): Bật khối truyền dữ liệu `DTEN = 1`, hướng đọc từ thẻ nhớ vào vi điều khiển.
+* `SDMMC_STA`   (Offset `0x34`, Địa chỉ `0x40012C34`): Cờ trạng thái phần cứng (`DATAEND`, `DTIMEOUT`, `RXOVERR`).
+* `SDMMC_ICR`   (Offset `0x38`, Địa chỉ `0x40012C38`): **Thanh ghi xóa cờ W1C** (Ghi 1 để xóa cờ ngắt).
+* `SDMMC_FIFO`  (Offset `0x80`, Địa chỉ `0x40012C80`): Bộ đệm dữ liệu FIFO 32 words.
+
+##### 3. Khối LTDC (RM0385 Section 18.7):
+* `LTDC_SSCR`   (Offset `0x08`, Địa chỉ `0x40016808`): Cấu hình độ rộng đồng bộ HSYNC (41) và VSYNC (10).
+* `LTDC_BPCR`   (Offset `0x0C`, Địa chỉ `0x4001680C`): Cấu hình Back Porch tích lũy: `HBP` và `VBP`.
+* `LTDC_AWCR`   (Offset `0x10`, Địa chỉ `0x40016810`): Cấu hình vùng hoạt động tích lũy (Active Width 480, Active Height 272).
+* `LTDC_TWCR`   (Offset `0x14`, Địa chỉ `0x40016814`): Cấu hình tổng chu kỳ quét tích lũy (Total Width 566, Total Height 286).
+* `LTDC_SRCR`   (Offset `0x24`, Địa chỉ `0x40016824`): **Ghi bit `VBR = 1` để kích hoạt nạp dập đứng VSYNC Reload chống xé hình**.
+* `LTDC_L1CFBAR`(Offset `0xAC`, Địa chỉ `0x400168AC`): Nạp địa chỉ Framebuffer lớp 1 (`0xC0000000` hoặc `0xC0040000`).
+
+---
+
+### 0.3. Hướng Dẫn Từng Bước Tra Cứu Datasheet (DS10610) & Pinmux
+
+1. Mở file [`STM32F745XX.PDF`](file:///d:/Project/STM32F7/STM32F745XX.PDF).
+2. Nhấn `Ctrl + F` tìm: **`Table 9. Alternate function mapping`**:
+   * **Ngoại vi FMC SDRAM:** Kéo đến cột **`AF12`** -> Tra cứu các chân dữ liệu D0-D31 (PD0, PD1, PD8..10, PD14..15, PE0..1, PE7..15, PF0..5, PF11..15, PG0..2, PG4..5, PG8..10, PG15), chân điều khiển SDCKE0 (PC3), SDCLK (PG8), SDNE0 (PC2), SDNRAS (PF11), SDNCAS (PG15), SDNWE (PC0).
+   * **Ngoại vi SDMMC1:** Kéo đến cột **`AF12`** -> Chân SDMMC1_D0 (PC8), D1 (PC9), D2 (PC10), D3 (PC11), CK (PC12), CMD (PD2).
+   * **Ngoại vi LTDC:** Kéo đến cột **`AF14`** -> Chân Pixel Clock CLK (PE14), DE (PK7), HSYNC (PI10), VSYNC (PI9), các đường màu R0-R7, G0-G7, B0-B7.
 
 ---
 
@@ -257,6 +328,47 @@ Nhân Cortex-M7 là nhân vi xử lý có hiệu năng cực cao nhờ tích h�
    __asm volatile ("dsb 0xF" ::: "memory");
    ```
    Chỉ thị `DSB` đảm bảo toàn bộ các giao dịch bus bộ nhớ trong đường ống (Store Buffers & AXI Pipeline) đã hoàn tất 100% trước khi câu lệnh tiếp theo được phép thực thi.
+
+---
+
+### 2.5. Bản Chất Kiến Trúc Bus AXI vs AHB vs APB & Cơ Chế 5 Kênh Độc Lập
+
+Trong kiến trúc chip ARM Cortex-M, hệ thống bus truyền dẫn thuộc họ **AMBA (Advanced Microcontroller Bus Architecture)** được tổ chức phân cấp rõ rệt:
+
+#### A. So Sánh 3 Chuẩn Bus: APB vs AHB vs AXI:
+
+| Tiêu Chí So Sánh | **APB (Peripheral Bus)** | **AHB (High-performance Bus)** | **AXI (eXtensible Interface)** |
+| :--- | :--- | :--- | :--- |
+| **Phân cấp tầng** | Tầng thấp nhất (Ngoại vi chậm) | Tầng trung gian (DMA, SRAM nội) | **Tầng cao nhất (CPU Cache, SDRAM, LCD)** |
+| **Độ rộng Bus** | 16-bit hoặc 32-bit | 32-bit | **64-bit** (Băng thông gấp đôi AHB) |
+| **Cơ chế đọc/ghi** | Bán song công (Half-Duplex) | Bán song công (Chia sẻ đường truyền) | **Song công toàn phần (Full-Duplex): Đọc & Ghi đồng thời** |
+| **Kiểu truyền** | Từng từ đơn lẻ, có chu kỳ chờ | Đường ống (Pipelined), truyền Burst | **5 Kênh truyền tín hiệu hoàn toàn độc lập** |
+| **Tốc độ xung nhịp** | Max 54 MHz (APB1) / 108 MHz (APB2) | Max 216 MHz (HCLK) | **Max 216 MHz (HCLK)** |
+| **Ngoại vi tiêu biểu**| UART, I2C, SPI, CAN, Timer | SDMMC1, USB, SRAM1/2 nội | **Cortex-M7, FMC SDRAM, LTDC, DMA2D** |
+
+#### B. Cơ Chế 5 Kênh Tín Hiệu Độc Lập Của AXI Bus:
+Trong khi AHB bắt mọi giao dịch đọc và ghi phải tuần tự chen chúc nhau trên cùng một cặp bus địa chỉ/dữ liệu, AXI chia thành **5 kênh vật lý độc lập**:
+1. **AR (Read Address Channel):** Master gửi địa chỉ và thông tin điều khiển muốn đọc.
+2. **R (Read Data Channel):** Slave gửi dữ liệu đọc được về cho Master (kèm tín hiệu kết thúc `RLAST`).
+3. **AW (Write Address Channel):** Master gửi địa chỉ và thông tin điều khiển muốn ghi.
+4. **W (Write Data Channel):** Master đẩy luồng dữ liệu cần ghi sang Slave (kèm tín hiệu `WLAST`).
+5. **B (Write Response Channel):** Slave phản hồi xác nhận ghi thành công (`BRESP`).
+
+```text
+MASTER (CPU / LTDC / DMA2D)                                  SLAVE (FMC SDRAM / Flash)
+┌────────────────────────────────┐                           ┌─────────────────────────────┐
+│ 1. Read Address Channel (AR)   │ ═════════════════════════►│ Gửi địa chỉ cần đọc         │
+│ 2. Read Data Channel (R)       │ ◄═════════════════════════│ Đẩy dữ liệu đọc về          │
+│                                │                           │                             │
+│ 3. Write Address Channel (AW)  │ ═════════════════════════►│ Gửi địa chỉ cần ghi         │
+│ 4. Write Data Channel (W)      │ ═════════════════════════►│ Đẩy dữ liệu cần ghi         │
+│ 5. Write Response Channel (B)  │ ◄═════════════════════════│ Phản hồi ghi thành công (OK)│
+└────────────────────────────────┘                           └─────────────────────────────┘
+```
+
+#### C. Hai Tính Năng Đột Phá Khác Của AXI:
+* **Multiple Outstanding Addresses:** Master có thể phát liên tiếp nhiều yêu cầu đọc trước mà không cần chờ dữ liệu của yêu cầu đầu tiên trả về, giúp triệt tiêu độ trễ nạp dòng CAS của chip nhớ ngoài SDRAM.
+* **Out-of-Order Completion:** Mỗi gói tin đều gắn thẻ Transaction ID (`ARID`, `RID`). Các Slave nhanh (như SRAM nội) có thể trả kết quả trước các Slave chậm (như SDRAM ngoài) mà không gây tắc nghẽn hàng đợi (Head-of-Line Blocking).
 
 ---
 
@@ -491,3 +603,12 @@ sequenceDiagram
   > Trong khi LTDC đang quét hiển thị từ Framebuffer 0 ra màn hình LCD, khối SDMMC sẽ nạp dữ liệu khung hình mới vào Framebuffer 1.  
   > Khi nạp xong, em ghi địa chỉ Framebuffer 1 vào thanh ghi cấu hình lớp LTDC_L1CFBAR và kích hoạt bit nạp dập đứng VBR trong thanh ghi LTDC_SRCR.  
   > Nhờ bit VBR, phần cứng LTDC sẽ không đổi bộ đệm ngay lập tức mà đợi quét hết dòng 272 cuối cùng; chỉ khi chùm tia quay về đỉnh màn hình trong khoảng thời gian Vertical Blanking thì địa chỉ mới mới có hiệu lực. Nhờ đó khung hình chuyển đổi mượt mà tuyệt đối không có vết xé."*
+
+---
+
+### ❓ Câu 7: "AXI Bus là gì? So sánh AXI vs AHB vs APB và vai trò của nó trong dự án?"
+* **🗣️ Kịch bản trả lời mẫu (35 - 45 giây):**
+  > *"Dạ, AXI (Advanced eXtensible Interface) là bus truyền thông hiệu năng cao 64-bit của ARM, vượt trội hơn chuẩn AHB nhờ sở hữu 5 kênh vật lý hoàn toàn độc lập, cho phép kênh đọc và kênh ghi chạy song công toàn phần (Full-Duplex) cùng một lúc.  
+  > Trong khi APB dùng cho ngoại vi chậm như UART, I2C; AHB dùng cho DMA và SRAM nội; thì AXI là xương sống kết nối lõi Cortex-M7, bộ nhớ ngoài SDRAM và các Master đồ họa.  
+  > Trong dự án Video Playback của em, AXI Bus kết hợp ma trận Crossbar Matrix đóng vai trò sống còn: Nó cho phép khối LTDC liên tục kéo luồng dữ liệu 19.4 MB/s từ SDRAM ngoài để quét ra màn hình LCD, trong khi CPU và DMA vẫn hoạt động song song độc lập, giúp hệ thống đạt 60 FPS mượt mà tuyệt đối mà CPU load gần như bằng 0."*
+

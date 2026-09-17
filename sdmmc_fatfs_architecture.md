@@ -38,7 +38,7 @@
 | STT | Quy tắc Kỹ thuật Lưu trữ | Thể hiện cụ thể trong SDMMC & FatFs |
 | :---: | :--- | :--- |
 | **1** | **Frequency Staging Rule** | Quá trình nhận diện thẻ SD BẮT BUỘC khởi động ở xung nhịp thấp (`f_OD <= 400 kHz`) để mọi dòng thẻ tương thích điện áp. Chỉ sau khi thẻ trả về địa chỉ RCA mới được tăng tốc lên chế độ Data Transfer (`24 MHz` hoặc `48 MHz`). |
-| **2** | **SDSC vs SDHC Addressing** | Thẻ SDSC (dung lượng nhỏ hơn hoặc bằng 2GB) dùng **Byte Addressing** (địa chỉ nhân với 512). Thẻ SDHC/SDXC (từ 4GB đến 32GB/2TB) dùng **Block/Sector Addressing** (địa chỉ chính là số thứ tự Sector). Gửi nhầm sẽ gây lỗi đọc sai vùng nhớ hoặc tràn số 32-bit! |
+| **2** | **SDHC Block Addressing (LBA)** | Dự án chuẩn hóa 100% thẻ nhớ **SDHC (4GB - 32GB)** dùng **Block/Sector Addressing (LBA)**: Tham số đọc/ghi truyền trực tiếp số thứ tự Sector, tuyệt đối không nhân với 512, loại bỏ hoàn toàn nguy cơ tràn biến 32-bit. |
 | **3** | **W1C Interrupt Flags** | Các cờ ngắt và trạng thái trong thanh ghi `SDMMC_STA` phải được xóa bằng thanh ghi `SDMMC_ICR` bằng phép gán trực tiếp: `SDMMC1->ICR = 0x00FFFFFF;` (Tuyệt đối không dùng `|=`). |
 | **4** | **D-Cache 32-Byte Alignment** | Bộ đệm đọc/ghi khối thẻ nhớ phải được căn lề 32 bytes (`__attribute__((aligned(32)))`) và gọi `SCB_InvalidateDCache_by_Addr()` để chống lỗi đọc dữ liệu rác từ L1 Cache Cortex-M7. |
 | **5** | **Power-Fail Resilience** | Khi ghi dữ liệu vào tệp tin (CAN Logger / Hộp đen EDR), bắt buộc phải định kỳ gọi `f_sync(&fil)` để đẩy toàn bộ dữ liệu từ RAM Cache xuống Sector vật lý của thẻ, chống mất mát dữ liệu khi xe tắt khóa điện đột ngột. |
@@ -51,37 +51,24 @@
 
 ---
 
-### 1.1. Bản Chất Phân Loại Thẻ Nhớ: Tại Sao Dự Án Chuẩn Hóa Dùng Thẻ SDHC?
+### 1.1. Bản Chất Thẻ Nhớ MicroSD SDHC: Chuẩn Hóa Duy Nhất Cho Dự Án
 
 > [!NOTE]
 > **🎯 LÝ DO DỰ ÁN CHỌN VÀ CHUẨN HÓA 100% TRÊN THẺ MICROSD SDHC (4GB - 32GB):**
-> 1. **Tính sẵn có ngoài thị trường:** Thẻ SDSC cổ điển (<= 2GB) hiện nay đã ngừng sản xuất. Thẻ SDHC là dòng thẻ phổ biến nhất, giá rẻ và tương thích hoàn hảo với khe cắm thẻ microSD trên bo mạch STM32F746G-Discovery.
-> 2. **Tương thích gốc với FAT32:** Thẻ SDHC mặc định được định dạng chuẩn FAT32, khớp 100% với kiến trúc của thư viện ChaN FatFs mà không cần cấu hình exFAT phức tạp.
-> 3. **Dung lượng tối ưu cho Automotive & Media:** Dung lượng 8GB - 32GB đủ chứa hàng triệu bản tin CAN ghi sự cố (Blackbox EDR) hoặc hàng chục video nén dung lượng cao phát 60 FPS.
-> 4. **Cơ chế Block Addressing (LBA):** SDHC chuyển từ đánh địa chỉ Byte sang đánh địa chỉ Block (512 bytes/block), loại bỏ hoàn toàn nguy cơ tràn biến 32-bit khi truy cập dung lượng lớn hơn 4GB.
+> 1. **Tính sẵn có ngoài thị trường:** Thẻ SDHC là dòng thẻ phổ biến nhất hiện nay, giá rẻ và tương thích hoàn hảo với khe cắm thẻ microSD trên bo mạch STM32F746G-Discovery.
+> 2. **Tương thích gốc với FAT32:** Thẻ SDHC mặc định được định dạng chuẩn FAT32, khớp 100% với kiến trúc của thư viện ChaN FatFs mà không cần cấu hình phức tạp.
+> 3. **Dung lượng tối ưu cho Automotive & Media:** Dung lượng 8GB - 32GB đáp ứng hoàn hảo cho hàng triệu bản tin CAN ghi sự cố (Blackbox EDR) hoặc hàng chục video nén dung lượng cao phát 60 FPS.
+> 4. **Cơ chế Block Addressing (LBA):** Chuẩn SDHC dùng cơ chế đánh địa chỉ theo Block/Sector (512 bytes/block), truyền thẳng số thứ tự Sector thay vì địa chỉ byte.
 
-Hiệp hội Thẻ nhớ Quốc tế (SD Association) phân định rõ các thế hệ thẻ nhớ:
-
-| Tiêu Chí Kỹ Thuật | 1. SDSC (Standard Capacity) | 2. SDHC (High Capacity) — [DỰ ÁN SỬ DỤNG] | 3. SDXC (eXtended Capacity) |
-| :--- | :--- | :--- | :--- |
-| **Dung lượng hỗ trợ** | Nhỏ hơn hoặc bằng **2 GB** (Đã lỗi thời) | **Từ 4 GB đến 32 GB (Chuẩn của dự án)** | Từ **64 GB đến 2 TB** (Cần exFAT) |
-| **Chuẩn SD Version** | SD Version 1.0 đến 1.10 | **SD Version 2.00** | SD Version 3.00 |
-| **Chế độ đánh địa chỉ (Addressing Mode)** | **Byte Addressing** (Địa chỉ Byte) | **Block / Sector Addressing (LBA)** | **Block / Sector Addressing (LBA)** |
-| **Tham số lệnh CMD17/CMD18/CMD24** | `Argument = Sector_Number * 512` | `Argument = Sector_Number (Truyền thẳng)` | `Argument = Sector_Number` |
-| **Hệ thống tệp tin chuẩn** | FAT12 / FAT16 | **FAT32 (100% khớp với FatFs)** | exFAT (hoặc format lại FAT32) |
-| **Bit CCS trong phản hồi ACMD41** | `Bit 30 (CCS) = 0` | **Bit 30 (CCS) = 1 (Xác nhận SDHC)** | `Bit 30 (CCS) = 1` |
-
-#### Bẫy Bug Địa Chỉ Kinh Điển Giữa SDSC và SDHC:
-* Giả sử bạn muốn đọc **Sector số 100**:
-  * Nếu thẻ là **SDSC**: Lệnh `CMD17` yêu cầu tham số là địa chỉ byte: `100 * 512 = 51200` (`0x0000C800`).
-  * Nếu thẻ là **SDHC**: Lệnh `CMD17` yêu cầu tham số là số thứ tự block: `100` (`0x00000064`).
-* **Hậu quả nếu code không phân biệt:** Nếu bạn cắm thẻ SDHC 16GB vào mà code driver vẫn nhân với 512, khi đọc sector lớn (ví dụ Sector số 10,000,000), phép tính `10,000,000 * 512 = 5,120,000,000` sẽ **tràn biến 32-bit (`uint32_t`)**, dẫn đến việc vi điều khiển đọc sai sector hoặc thẻ báo lỗi `ADDR_OUT_OF_RANGE` ngay lập tức!
-* **Quy trình nhận diện tự động của Driver:**
-  1. Gửi lệnh `CMD8` với tham số `0x000001AA` (Kiểm tra xem thẻ có hỗ trợ chuẩn SD Version 2.0 hay không).
-  2. Gửi lệnh `ACMD41` với bit `HCS (Host Capacity Support - Bit 30) = 1`.
-  3. Đọc thanh ghi `OCR` (Operation Conditions Register) do thẻ trả về:
-     * Nếu **Bit 30 (`CCS - Card Capacity Status`) = 1**: Lưu cờ `CardType = SDHC` (Đánh địa chỉ Block).
-     * Nếu **Bit 30 (`CCS`) = 0**: Lưu cờ `CardType = SDSC` (Đánh địa chỉ Byte).
+#### Đặc Tính Kỹ Thuật Chuẩn Của Thẻ SDHC Trong Dự Án:
+* **Chuẩn thẻ:** SD Version 2.00 High Capacity (SDHC).
+* **Dung lượng:** 4 GB đến 32 GB (Định dạng FAT32).
+* **Chế độ đánh địa chỉ (Addressing Mode):** **Block / Sector Addressing (LBA)** cố định 512 bytes.
+* **Tham số lệnh CMD17 / CMD18 / CMD24:** `Argument = Sector_Number` (Truyền thẳng số thứ tự Sector, ví dụ muốn đọc Sector 100 thì truyền `Argument = 100`).
+* **Đàm phán năng lực phần cứng:**
+  1. Gửi lệnh `CMD8` với tham số `0x000001AA` (Xác thực thẻ hỗ trợ giao thức SD V2.0).
+  2. Gửi lệnh `ACMD41` kèm cờ `HCS (Host Capacity Support - Bit 30) = 1` để thông báo vi điều khiển hỗ trợ thẻ dung lượng cao SDHC.
+  3. Đọc thanh ghi `OCR` (Operation Conditions Register) do thẻ trả về: Khi Bit 31 (`Ready`) = 1, kiểm tra tiếp **Bit 30 (`CCS - Card Capacity Status`) = 1** để xác nhận thẻ là SDHC hợp lệ. Nếu `CCS = 0`, driver từ chối khởi tạo nhằm đảm bảo tính toàn vẹn và chuẩn hóa của hệ thống.
 
 ---
 
@@ -210,7 +197,7 @@ Tra cứu sơ đồ nguyên lý bo mạch Discovery (UM1907 Section 7.7 & Table 
 
 ---
 
-### 2.3. Sơ Đồ Tuần Tự 1: Khởi Tạo Thẻ Nhớ & Đàm Phán SDSC vs SDHC (Initialization Pipeline)
+### 2.3. Sơ Đồ Tuần Tự 1: Khởi Tạo Thẻ Nhớ SDHC (Initialization Pipeline)
 
 Sơ đồ tuần tự thể hiện chính xác 8 bước bắt tay theo tiêu chuẩn SD Physical Layer Specification:
 
@@ -218,7 +205,7 @@ Sơ đồ tuần tự thể hiện chính xác 8 bước bắt tay theo tiêu ch
 sequenceDiagram
     autonumber
     participant Host as STM32F7 SDMMC1
-    participant Card as Thẻ Nhớ MicroSD
+    participant Card as Thẻ Nhớ MicroSD SDHC
 
     Note over Host: Bước 1: Cấp nguồn & Xung nhịp thấp (f_CLK <= 400 kHz)
     Host->>Host: Bật SDMMC_POWER = 3, CLKDIV = 118 (f = 400 kHz)
@@ -228,13 +215,13 @@ sequenceDiagram
     Host->>Card: CMD8 (SEND_IF_COND, Arg: 0x1AA) - Kiểm tra dải điện áp 2.7V - 3.6V
     Card-->>Host: Phản hồi R7 (Trả về đúng mẫu 0x1AA -> Xác nhận hỗ trợ SD V2.0)
 
-    loop Vòng lặp ACMD41 (Đàm phán năng lực và chờ thẻ sẵn sàng)
+    loop Vòng lặp ACMD41 (Đàm phán năng lực thẻ SDHC)
         Host->>Card: CMD55 (APP_CMD, Báo lệnh kế tiếp là lệnh ứng dụng)
         Card-->>Host: Phản hồi R1
         Host->>Card: ACMD41 (SD_SEND_OP_COND, Arg: HCS bit 30 = 1)
         Card-->>Host: Phản hồi R3 (Thanh ghi OCR 32-bit)
     end
-    Note over Host,Card: Kiểm tra Bit 31 (Ready) = 1. Kiểm tra Bit 30 (CCS):<br/>Nếu CCS = 1 -> Thẻ SDHC/SDXC (Block Addressing)<br/>Nếu CCS = 0 -> Thẻ SDSC (Byte Addressing)
+    Note over Host,Card: Kiểm tra Bit 31 (Ready) = 1 và Bit 30 (CCS) = 1:<br/>Xác nhận thẻ SDHC chuẩn (Block Addressing LBA)
 
     Host->>Card: CMD2 (ALL_SEND_CID) - Yêu cầu thẻ gửi mã nhận dạng 128-bit
     Card-->>Host: Phản hồi R2 (Mã CID: Hãng SX, Serial Number)
@@ -269,7 +256,7 @@ sequenceDiagram
     participant Card as Thẻ Nhớ SD
 
     App->>Host: Yêu cầu đọc khối: disk_read(sector, buffer, count)
-    Note over Host: Kiểm tra kiểu thẻ: Nếu SDSC -> Arg = sector * 512<br/>Nếu SDHC -> Arg = sector
+    Note over Host: Chuẩn SDHC LBA: Truyền thẳng số thứ tự Sector (Arg = sector)
     Host->>Host: Cấu hình DTIMER, DLEN = 512, DCTRL (DTDIR=1, DBLOCKSIZE=9, DTEN=1)
     Host->>Card: Gửi CMD17 (READ_SINGLE_BLOCK) hoặc CMD18 (READ_MULTIPLE_BLOCK)
     Card-->>Host: Gói dữ liệu 512 bytes truyền qua 4 đường DAT0..DAT3
@@ -298,7 +285,7 @@ sequenceDiagram
 drivers/
 ├── inc/
 │   ├── Reg.h          <-- Định nghĩa con trỏ thanh ghi SDMMC1
-│   ├── sdmmc.h        <-- Giao diện driver phần cứng thẻ nhớ (Hỗ trợ SDSC & SDHC)
+│   ├── sdmmc.h        <-- Giao diện driver phần cứng thẻ nhớ SDHC (Block Addressing)
 │   └── diskio.h       <-- Tầng định nghĩa cầu nối của ChaN FatFs
 └── src/
     ├── sdmmc.c        <-- Khởi tạo bus 4-bit, nhận diện SDHC và đọc ghi Sector
@@ -334,17 +321,16 @@ typedef enum {
     SD_NOT_PRESENT
 } SD_Status_t;
 
-/* Kiểu loại thẻ nhận diện được */
+/* Kiểu loại thẻ nhớ (Dự án chuẩn hóa duy nhất SDHC) */
 typedef enum {
     CARD_TYPE_UNKNOWN = 0,
-    CARD_TYPE_SDSC,     /* Standard Capacity: <= 2GB (Đánh địa chỉ Byte) */
-    CARD_TYPE_SDHC      /* High Capacity: 4GB - 32GB (Đánh địa chỉ Block/Sector) */
+    CARD_TYPE_SDHC      /* High Capacity: 4GB - 32GB (Đánh địa chỉ Block/Sector LBA) */
 } SD_CardType_t;
 
-/* Khởi tạo phần cứng SDMMC1, phát hiện thẻ và đàm phán bus 4-bit 48 MHz */
+/* Khởi tạo phần cứng SDMMC1, phát hiện thẻ SDHC và đàm phán bus 4-bit 48 MHz */
 SD_Status_t SDMMC_Init(void);
 
-/* Lấy loại thẻ nhớ hiện tại để phục vụ tính toán địa chỉ */
+/* Lấy thông tin trạng thái thẻ SDHC */
 SD_CardType_t SDMMC_GetCardType(void);
 
 /* Đọc một khối Sector (512 bytes) */
@@ -367,7 +353,7 @@ SD_Status_t SDMMC_WriteSingleBlock(uint32_t sector_addr, const uint8_t *pBuffer)
 /**
  * ==============================================================================
  * File: drivers/src/sdmmc.c
- * Mục đích: Hiện thực hóa 8 bước khởi tạo thẻ SD, phân biệt SDSC/SDHC và đọc FIFO
+ * Mục đích: Hiện thực hóa 8 bước khởi tạo thẻ SDHC chuẩn LBA và đọc FIFO
  * ==============================================================================
  */
 
@@ -469,13 +455,13 @@ SD_Status_t SDMMC_Init(void)
 
         /* Kiểm tra Bit 31 của thanh ghi OCR (Card Power Up Status Bit) */
         if (SDMMC1_RESP1 & (1U << 31)) {
-            /* Thẻ đã thoát trạng thái bận. Kiểm tra bit 30 (CCS - Card Capacity Status) */
+            /* Kiểm tra bit 30 (CCS - Card Capacity Status): Bắt buộc là SDHC */
             if (SDMMC1_RESP1 & (1U << 30)) {
-                s_CardType = CARD_TYPE_SDHC; /* Thẻ dung lượng cao (Block-addressed) */
+                s_CardType = CARD_TYPE_SDHC; /* Xác nhận đúng thẻ SDHC (Block-addressed LBA) */
+                break;
             } else {
-                s_CardType = CARD_TYPE_SDSC; /* Thẻ tiêu chuẩn (Byte-addressed) */
+                return SD_ERROR; /* Từ chối: Dự án chuẩn hóa 100% thẻ nhớ SDHC */
             }
-            break;
         }
         SDMMC_Delay(10000);
     }
@@ -516,8 +502,8 @@ SD_Status_t SDMMC_ReadSingleBlock(uint32_t sector_addr, uint8_t *pBuffer)
     /* DTDIR = 1 (Card to Host), DBLOCKSIZE = 9 (2^9 = 512 bytes), DTEN = 1 */
     SDMMC1_DCTRL = (9U << 4) | (1U << 1) | (1U << 0);
 
-    /* QUY TẮC SỐNG CÒN SDSC vs SDHC: Chuyển đổi địa chỉ */
-    uint32_t final_addr = (s_CardType == CARD_TYPE_SDHC) ? sector_addr : (sector_addr * SD_BLOCK_SIZE);
+    /* CHUẨN THẺ SDHC: Đánh địa chỉ Block LBA (Truyền trực tiếp số thứ tự Sector) */
+    uint32_t final_addr = sector_addr;
 
     if (SDMMC_SendCommand(17, final_addr, 1) != SD_OK) return SD_ERROR;
 
@@ -606,7 +592,8 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void *buff)
         case CTRL_SYNC:
             return RES_OK;
         case GET_SECTOR_COUNT:
-            *(DWORD *)buff = (SDMMC_GetCardType() == CARD_TYPE_SDHC) ? 15500000UL : 3900000UL;
+            /* Chuẩn hóa thẻ SDHC (ví dụ 8GB - 32GB): Trả về số sector LBA */
+            *(DWORD *)buff = 15500000UL;
             return RES_OK;
         case GET_SECTOR_SIZE:
             *(WORD *)buff = 512;
@@ -695,9 +682,9 @@ void MediaPlayer_PlayVideo(const char *filename)
 ├───────────────────┬───────────────────────────────────────────┬─────────────────────────────────┤
 │ HIỆN TƯỢNG BUG    │ NGUYÊN NHÂN SÂU XA PHẦN CỨNG / FILE SYSTEM│ GIẢI PHÁP SỬA CODE CHUẨN XÁC    │
 ├───────────────────┼───────────────────────────────────────────┼─────────────────────────────────┤
-│ 1. Tràn số địa chỉ│ Thẻ SDHC yêu cầu số thứ tự Block, nhưng   │ Kiểm tra cờ CCS lúc nhận diện:  │
-│    làm đứng máy   │ code lại lấy sector nhân 512 khiến biến   │ Nếu SDHC -> gửi sector;         │
-│    (SDSC vs SDHC) │ uint32_t bị tràn vượt quá ngưỡng 4GB.     │ Nếu SDSC -> gửi sector * 512.   │
+│ 1. Quên chuẩn LBA │ Thẻ SDHC dùng Block Addressing (truyền    │ Luôn truyền trực tiếp số thứ tự │
+│    của thẻ SDHC   │ thẳng sector), nếu nhân 512 sẽ làm tràn   │ Sector (final_addr = sector),   │
+│    gây tràn số    │ biến uint32_t vượt ngưỡng 4GB gây lỗi thẻ.│ tuyệt đối không nhân với 512.   │
 ├───────────────────┼───────────────────────────────────────────┼─────────────────────────────────┤
 │ 2. D-Cache        │ Cortex-M7 có L1 D-Cache. Khi DMA/FIFO nạp │ Căn lề buffer 32 bytes          │
 │    Coherency Bug  │ dữ liệu vào RAM, CPU đọc trúng cache cũ   │ __attribute__((aligned(32))) và │
@@ -723,11 +710,12 @@ void MediaPlayer_PlayVideo(const char *filename)
 
 ---
 
-### ❓ Câu 1: "Sự khác biệt cốt tử giữa thẻ SDSC và thẻ SDHC là gì? Nếu lập trình viên không xử lý sự khác biệt này trong Driver, lỗi nghiêm trọng nào sẽ xảy ra?"
+### ❓ Câu 1: "Tại sao thẻ nhớ SDHC bắt buộc phải sử dụng cơ chế Block/Sector Addressing (LBA), và quy trình xác thực cờ HCS/CCS trong Driver diễn ra như thế nào?"
 * **Trả lời chuẩn Kỹ sư Nhúng:**
-  * **SDSC (Standard Capacity, dung lượng <= 2GB):** Sử dụng cơ chế đánh địa chỉ theo Byte (**Byte Addressing**). Tham số truyền vào trong các lệnh đọc ghi (`CMD17`, `CMD18`, `CMD24`) là địa chỉ byte thực tế (`Sector_Number * 512`).
-  * **SDHC (High Capacity, dung lượng 4GB - 32GB):** Do dung lượng vượt quá giới hạn 4GB của con số 32-bit, chuẩn SD 2.0 chuyển sang dùng cơ chế đánh địa chỉ theo Khối (**Block/Sector Addressing**). Tham số truyền vào chính là số thứ tự của Sector (`Sector_Number`).
-  * **Lỗi xảy ra:** Nếu cắm thẻ SDHC mà driver vẫn nhân với 512, khi đọc các sector nằm ở vị trí cao trên thẻ (vượt quá 4GB / 512 = 8,388,608), phép tính `sector * 512` sẽ bị **tràn số nguyên 32-bit**, quay vòng về địa chỉ rác ở đầu thẻ, gây hỏng dữ liệu hoặc thẻ từ chối thực thi với lỗi `ADDR_OUT_OF_RANGE`.
+  * **Bản chất Block Addressing (LBA):** Với dung lượng từ 4GB đến 32GB, nếu đánh địa chỉ theo Byte như các chuẩn thẻ cũ, địa chỉ sẽ vượt quá 4GB, gây tràn biến số nguyên 32-bit trong tham số lệnh (`CMD17`, `CMD18`, `CMD24`). Do đó, chuẩn SDHC bắt buộc sử dụng **Block Addressing (LBA)** cố định 512 bytes: tham số truyền vào chính là số thứ tự của Sector (`Sector_Number`).
+  * **Quy trình xác thực HCS/CCS trong Driver:**
+    1. Khi gửi `ACMD41`, vi điều khiển bật bit `HCS (Host Capacity Support - Bit 30) = 1` để báo cho thẻ biết Host hỗ trợ chế độ dung lượng cao.
+    2. Trong phản hồi `OCR` (R3), khi thẻ báo hoàn tất khởi tạo (`Bit 31 = 1`), Driver kiểm tra cờ `CCS (Card Capacity Status - Bit 30)`: Nếu `CCS = 1`, thẻ được xác nhận là thẻ chuẩn SDHC và hệ thống tiến hành vận hành ở chế độ Block Addressing LBA.
 
 ---
 
@@ -749,11 +737,12 @@ void MediaPlayer_PlayVideo(const char *filename)
 
 ---
 
-### ❓ Câu 4: "Tại sao trong dự án em lại quyết định chuẩn hóa sử dụng thẻ nhớ SDHC (4GB - 32GB) thay vì thẻ SDSC hay SDXC?"
+### ❓ Câu 4: "Tại sao trong dự án em lại quyết định chuẩn hóa duy nhất thẻ nhớ SDHC (4GB - 32GB)?"
 * **Trả lời chuẩn Kỹ sư Nhúng:**
-  * **So với SDSC (<= 2GB):** Thẻ SDSC hiện đã ngừng sản xuất, không còn thực tế ngoài thị trường và dung lượng quá nhỏ (không đủ lưu trữ log CAN dài ngày hay video lớn). Ngoài ra, SDSC dùng Byte Addressing dễ gây tràn biến số nguyên.
-  * **So với SDXC (> 32GB):** Thẻ SDXC mặc định định dạng bằng hệ thống tệp tin **exFAT** (yêu cầu bản quyền phần mềm độc quyền từ Microsoft và thư viện FatFs phải bật cấu hình phức tạp tốn RAM).
-  * **Lý do chọn SDHC:** Thẻ SDHC (4GB đến 32GB) là "điểm ngọt ngào nhất" (Sweet Spot) trong công nghiệp nhúng: định dạng mặc định là **FAT32** tương thích 100% với mã nguồn mở ChaN FatFs, cơ chế **Block Addressing LBA** cố định 512 bytes cực kỳ trực quan cho vi điều khiển, và dung lượng 16GB - 32GB đáp ứng hoàn hảo cho cả bài toán Hộp đen ô tô EDR lẫn phát video 60 FPS.
+  * Thẻ nhớ SDHC (4GB đến 32GB) là chuẩn công nghiệp phổ biến và tối ưu nhất cho thiết bị nhúng:
+    1. **Tương thích gốc với FAT32:** Thẻ SDHC mặc định định dạng chuẩn FAT32, tương thích hoàn toàn với thư viện ChaN FatFs mà không cần cấu hình phức tạp.
+    2. **Đánh địa chỉ Block LBA:** Cố định kích thước Sector 512 bytes, truyền thẳng số thứ tự Sector giúp code driver đơn giản, tối ưu tốc độ và không có nguy cơ tràn số.
+    3. **Dung lượng lý tưởng:** Thẻ 8GB đến 32GB cung cấp không gian thoải mái cho cả hệ thống Hộp đen ô tô (CAN EDR) lẫn trình phát video đồ họa 60 FPS mà không gặp vấn đề bản quyền file system như các dòng thẻ lớn.
 
 ---
 

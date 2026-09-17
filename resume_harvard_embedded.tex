@@ -1,0 +1,163 @@
+%-------------------------
+% Resume in LaTeX - Harvard Style
+% Tailored for Fresher Zephyr RTOS and Embedded Firmware Engineer
+% Target: Automotive and Non-Automotive Embedded Systems
+% Style: Clean, B1/B2 English, No Parentheses, Metrics-Driven, Exactly 1 Page
+%-------------------------
+
+\documentclass[letterpaper,9.2pt]{article}
+
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{marvosym}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{verbatim}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\usepackage{charter}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% Adjust margins to fit Education, Experience, and 3 Projects on exactly 1 page
+\addtolength{\oddsidemargin}{-0.58in}
+\addtolength{\evensidemargin}{-0.58in}
+\addtolength{\textwidth}{1.16in}
+\addtolength{\topmargin}{-.62in}
+\addtolength{\textheight}{1.24in}
+
+\urlstyle{same}
+
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+
+% Sections formatting
+\titleformat{\section}{
+  \vspace{-7pt}\scshape\raggedright\large
+}{}{0em}{}[\color{black}\titlerule \vspace{-4pt}]
+
+% Custom commands
+\newcommand{\resumeItem}[1]{
+  \item\small{
+    {#1 \vspace{-2.8pt}}
+  }
+}
+
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-3pt}\item
+    \begin{tabular*}{0.98\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & #2 \\
+      \textit{\small#3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-6pt}
+}
+
+\newcommand{\resumeProjectHeading}[2]{
+    \vspace{-3pt}\item
+    \begin{tabular*}{0.98\textwidth}{l@{\extracolsep{\fill}}r}
+      \small#1 & #2 \\
+    \end{tabular*}\vspace{-6pt}
+}
+
+\renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
+
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.15in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}\vspace{-5pt}}
+\newcommand{\resumeItemListStart}{\begin{itemize}[leftmargin=0.15in]}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-3pt}}
+
+%-------------------------------------------
+%%%%%%  RESUME STARTS HERE  %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{document}
+
+%----------HEADING----------
+\begin{center}
+    \textbf{\Large \scshape NGUYEN VAN A} \\ \vspace{1pt}
+    \small Ho Chi Minh City, Vietnam $|$ +84 901-234-567 $|$ \href{mailto:yourname@email.com}{\underline{yourname@email.com}} $|$
+    \href{https://linkedin.com/in/yourprofile}{\underline{linkedin.com/in/yourprofile}} $|$
+    \href{https://github.com/yourusername}{\underline{github.com/yourusername}}
+\end{center}
+\vspace{-9pt}
+
+%-----------EDUCATION-----------
+\section{Education}
+  \resumeSubHeadingListStart
+    \resumeSubheading
+      {Ho Chi Minh City University of Technology and Education}{Ho Chi Minh City, Vietnam}
+      {Bachelor of Engineering in Computer Engineering Technology}{2022 -- 2026}
+      \resumeItemListStart
+        \resumeItem{Cumulative GPA: 3.02 / 4.0 -- Graduated}
+        \resumeItem{TOEIC Listening and Reading: 785 / 990}
+      \resumeItemListEnd
+  \resumeSubHeadingListEnd
+
+%-----------TECHNICAL SKILLS-----------
+\section{Technical Skills}
+ \begin{itemize}[leftmargin=0.15in, label={}]
+    \small{\item{
+     \textbf{Languages:} C, Dart, Python, PowerShell, ARM Assembly \\
+     \textbf{RTOS and Kernels:} Zephyr RTOS with DeviceTree and Kconfig, FreeRTOS \\
+     \textbf{Hardware Platforms:} STM32F7, ARM Cortex-M7, ESP32-S3, ESP32, ST-LINK, Logic Analyzer, Oscilloscope \\
+     \textbf{Peripherals and Buses:} CAN 2.0B, UART DMA, SPI, I2C, RS485, Modbus, SDMMC, SDHC, FMC SDRAM, LTDC, DMA2D \\
+     \textbf{Protocols and Standards:} Vector DBC, AUTOSAR E2E Profile 1 with CRC-8, ISO 11898-1, FAT32 ChaN FatFs, BLE NimBLE, MQTT \\
+     \textbf{Toolchains and Frameworks:} West CLI, CMake, Ninja, Kconfig, DeviceTree Compiler, ESP-IDF, Flutter, Git
+    }}
+ \end{itemize}
+ \vspace{-6pt}
+
+%-----------PROFESSIONAL EXPERIENCE-----------
+\section{Professional Experience}
+  \resumeSubHeadingListStart
+    \resumeSubheading
+      {Tep Bac Joint Stock Company}{Ho Chi Minh City, Vietnam}
+      {Embedded Firmware Intern and Collaborator}{Jan 2026 -- Jul 2026}
+      \resumeItemListStart
+        \resumeItem{Assembled, calibrated, and deployed 10 ENVISOR E7 monitoring stations using ESP32 and FreeRTOS. Transmitted pH and Dissolved Oxygen telemetry to cloud servers via RS485 Modbus, I2C, and MQTT with 99.8\% uptime.}
+        \resumeItem{Developed embedded C drivers for 2 industrial sensors: Water Level and Turbidity. Implemented moving average digital filters to cut signal noise by 40\% in real shrimp pond environments.}
+        \resumeItem{Collaborated in a 2-member team to verify RS485 bus timing with oscilloscopes, calibrated 10 sensor sets in saltwater, and reduced FreeRTOS task latency to under 50 ms.}
+      \resumeItemListEnd
+  \resumeSubHeadingListEnd
+
+%-----------TECHNICAL PROJECTS-----------
+\section{Technical Projects}
+    \resumeSubHeadingListStart
+
+      % PROJECT 1: ZEPHYR CAN GATEWAY
+      \resumeProjectHeading
+          {\textbf{Automotive CAN Gateway and Telematics Node} $|$ \href{https://github.com/yourusername/stm32f7-zephyr-can-gateway}{\underline{GitHub}} $|$ \emph{Zephyr RTOS, West, CMake, DeviceTree, C}}{Sep 2026}
+          \resumeItemListStart
+            \resumeItem{Built an Automotive CAN Gateway on STM32F746 Cortex-M7 running at 216 MHz using Zephyr RTOS and DeviceTree. Processed over 1000 CAN frames per second at 500 kbps with under 2\% CPU load.}
+            \resumeItem{Configured asynchronous CAN 2.0B reception with 6 hardware filter banks into Zephyr k\_msgq. Built a DBC decoding engine parsing 12 vehicle signals in under 15 microseconds using fixed-point integer math.}
+            \resumeItem{Implemented AUTOSAR E2E Profile 1 CRC-8 validation, automatic ISO 11898-1 Bus-Off recovery within 100 ms, and a 115200 baud Zephyr Shell CLI verified with a 24 MHz logic analyzer.}
+          \resumeItemListEnd
+
+      % PROJECT 2: STM32F7 BARE-METAL TFT & SDHC
+      \resumeProjectHeading
+          {\textbf{High-Speed Bare-Metal TFT Display and SDHC Subsystem} $|$ \href{https://github.com/yourusername/stm32f7-baremetal-tft-sdhc}{\underline{GitHub}} $|$ \emph{STM32F7, C, FMC, SDMMC, DMA2D}}{Aug 2026 -- Sep 2026}
+          \resumeItemListStart
+            \resumeItem{Developed bare-metal register drivers in C and Assembly for 8MB FMC SDRAM at 108 MHz and 480x272 LTDC LCD. Achieved constant 60 FPS video playback with 0 dropped frames and no tearing via VSYNC reload.}
+            \resumeItem{Built a bare-metal storage driver for 16GB MicroSD SDHC cards over 4-bit 48 MHz SDMMC bus with 512-byte LBA addressing, achieving 18 MB/s read speed with ChaN FatFs FAT32.}
+            \resumeItem{Accelerated frame rendering with DMA2D Chrom-ART to reduce CPU utilization from 85\% to 0\%. Configured MPU non-cacheable memory regions to eliminate D-Cache visual artifacts, and wrote Python and PowerShell video tools.}
+          \resumeItemListEnd
+
+      % PROJECT 3: ESP32-S3 SMARTWATCH IOT SYSTEM
+      \resumeProjectHeading
+          {\textbf{Wearable IoT Smartwatch and Sensor Hub System} $|$ \href{https://github.com/yourusername/esp32s3-smartwatch-flutter}{\underline{GitHub}} $|$ \emph{ESP32-S3, FreeRTOS, I2C, SPI, UART, BLE, Flutter}}{Jan 2026 -- Jul 2026}
+          \resumeItemListStart
+            \resumeItem{Developed a wearable system on dual-core 240 MHz ESP32-S3 with 2MB PSRAM using ESP-IDF and FreeRTOS. Allocated two 150 KB LVGL v8 framebuffers in PSRAM, saving over 300 KB of internal SRAM for RTOS tasks.}
+            \resumeItem{Wrote peripheral drivers for MAX30102 heart rate sensor at 100 Hz, BMI270 pedometer, and GT-U8 GPS at 9600 baud. Optimized 32.768 kHz RTC deep sleep to reduce standby current to 25 microamps.}
+            \resumeItem{Connected the watch to a Flutter mobile app over NimBLE Bluetooth with 20 ms sync latency. Mirrored real-time Google Maps navigation instructions and supported 1.2 MB firmware updates via Wi-Fi HTTPS OTA.}
+          \resumeItemListEnd
+
+    \resumeSubHeadingListEnd
+
+%-------------------------------------------
+\end{document}

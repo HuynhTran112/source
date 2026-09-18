@@ -28,10 +28,16 @@
   - [3.1. Quy Trình Cấu Hình Khởi Động Phần Cứng (Peripheral Configuration Pipeline)](#31-quy-trình-cấu-hình-khởi-động-phần-cứng-peripheral-configuration-pipeline)
   - [3.2. Quy Trình Vận Hành & Bắt Tay Dữ Liệu Thời Gian Thực (Runtime Dataflow)](#32-quy-trình-vận-hành--bắt-tay-dữ-liệu-thời-gian-thực-runtime-dataflow)
   - [3.3. Quy Trình Xử Lý Sự Cố & Phục Hồi An Toàn (Fault & Recovery Pipeline)](#33-quy-trình-xử-lý-sự-cố--phục-hồi-an-toàn-fault--recovery-pipeline)
-- [4. PHÂN LOẠI BUG THỰC TẾ & BẪY PHẦN CỨNG KINH ĐIỂN](#4-phân-loại-bug-thực-tế--bẫy-phần-cứng-kinh-điển)
-  - [4.1. Nhóm Bug Phổ Biến (Common Bugs)](#41-nhóm-bug-phổ-biến-common-bugs)
-  - [4.2. Nhóm Bug Phức Tạp (Complex Architectural Bugs)](#42-nhóm-bug-phức-tạp-complex-architectural-bugs)
-  - [4.3. Nhóm Bug Hiếm Gặp & Góc Khuất Phần Cứng (Rare / Edge-Case Bugs)](#43-nhóm-bug-hiếm-gặp--góc-khuất-phần-cứng-rare--edge-case-bugs)
+- [4. PHÂN LOẠI LỖI THỰC TẾ VÀ ĐẶC THÙ PHẦN CỨNG](#4-phân-loại-lỗi-thực-tế-và-đặc-thù-phần-cứng)
+  - [4.1. Nhóm Lỗi Phổ Biến (Common Bugs)](#41-nhóm-lỗi-phổ-biến-common-bugs)
+  - [4.2. Nhóm Lỗi Kiến Trúc (Architectural Bugs)](#42-nhóm-lỗi-kiến-trúc-architectural-bugs)
+  - [4.3. Nhóm Lỗi Ngoại Lệ và Góc Khuất Phần Cứng (Edge-Case Bugs)](#43-nhóm-lỗi-ngoại-lệ-và-góc-khuất-phần-cứng-edge-case-bugs)
+  - [4.4. Nhóm Lỗi Khi Triển Khai Trên Zephyr RTOS và STM32F7](#44-nhóm-lỗi-khi-triển-khai-trên-zephyr-rtos-và-stm32f7)
+    - [Bug 9: Thiếu khai báo Pin Control (pinctrl-0) trong Devicetree khiến Zephyr chặn biên dịch CAN](#bug-9-thiếu-khai-báo-pin-control-pinctrl-0-trong-devicetree-khiến-zephyr-chặn-biên-dịch-can)
+    - [Bug 10: Lỗi Linker undefined reference to 'z_impl_can_recover' do STM32 bxCAN không hỗ trợ Manual Recovery](#bug-10-lỗi-linker-undefined-reference-to-z_impl_can_recover-do-stm32-bxcan-không-hỗ-trợ-manual-recovery)
+    - [Bug 11: Lỗi Acknowledge Error (-EIO / Mã -5) khi phát bản tin CAN trên bo mạch độc lập không có Transceiver ngoài](#bug-11-lỗi-acknowledge-error--eio--mã--5-khi-phát-bản-tin-can-trên-bo-mạch-độc-lập-không-có-transceiver-ngoài)
+    - [Bug 12: Báo động giả mất tín hiệu CAN (DTC_U0100) khi khởi động mà không có luồng phát định kỳ](#bug-12-báo-động-giả-mất-tín-hiệu-can-dtc_u0100-khi-khởi-động-mà-không-có-luồng-phát-định-kỳ)
+    - [Bug 13: Xung đột độ ưu tiên ngắt NVIC giữa CAN và UART làm trễ chu kỳ xử lý gói tin an toàn](#bug-13-xung-đột-độ-ưu-tiên-ngắt-nvic-giữa-can-và-uart-làm-trễ-chu-kỳ-xử-lý-gói-tin-an-toàn)
 - [5. BỘ CÂU HỎI PHỎNG VẤN & KỊCH BẢN TRẢ LỜI MẪU (FRESHER LEVEL)](#5-bộ-câu-hỏi-phỏng-vấn--kịch-bản-trả-lời-mẫu-fresher-level)
 
 ---
@@ -520,31 +526,31 @@ sequenceDiagram
 
 ---
 
-# 4. PHÂN LOẠI BUG THỰC TẾ & BẪY PHẦN CỨNG KINH ĐIỂN
+# 4. PHÂN LOẠI LỖI THỰC TẾ VÀ ĐẶC THÙ PHẦN CỨNG
 
-### 4.1. Nhóm Bug Phổ Biến (Common Bugs)
+### 4.1. Nhóm Lỗi Phổ Biến (Common Bugs)
 
-#### 🐞 Bug 1: Thiếu trở đầu cuối 120 Ohm tại hai đầu Bus vật lý
+#### Bug 1: Thiếu trở đầu cuối 120 Ohm tại hai đầu Bus vật lý
 * **Triệu chứng:** Khi cắm máy phát CAN vào STM32, chip liên tục báo lỗi **ACK Error** (Acknowledge Error), các cờ lỗi nhảy liên tục và node bị rơi vào trạng thái Bus-Off sau vài mili-giây.
 * **Nguyên nhân vật lý:** Chuẩn CAN vật lý (ISO 11898-2) sử dụng đường truyền vi sai (Differential Pair: CAN_H và CAN_L). Hai đầu dây cáp bắt buộc phải có trở đầu cuối `120 Ohm` (tổng trở song song toàn mạng là `60 Ohm`). Nếu không có trở, năng lượng sóng truyền tới cuối dây không bị tiêu hao mà bị dội ngược lại (sóng phản xạ - signal reflection), làm méo dạng xung logic. Đồng thời khi các transistor ngắt, đường truyền không được kéo về mức lặn Recessive (`2.5 V`) kịp thời.
 * **Cách xử lý:** Luôn kiểm tra bằng ôm-kế (multimeter) đo giữa chân CAN_H và CAN_L khi ngắt nguồn: Điện trở đo được phải xấp xỉ `60 Ohm`. Bật jumper trở `120 Ohm` có sẵn trên module transceiver TJA1050.
 
-#### 🐞 Bug 2: Cấu hình nhầm Bitmask trong Filter Bank làm rơi gói tin
+#### Bug 2: Cấu hình nhầm Bitmask trong Filter Bank làm rơi gói tin
 * **Triệu chứng:** Máy phát gửi bản tin CAN ID `0x123`, nhưng STM32 hoàn toàn im lặng, ngắt `CAN1_RX0_IRQHandler` không bao giờ nhảy.
 * **Nguyên nhân:** Lập trình viên nhầm lẫn giữa **ID Register** và **Mask Register**. Ví dụ: Muốn nhận chính xác ID `0x123`, nhưng lại cấu hình `Mask = 0x000` (nghĩa là chấp nhận mọi ID) hoặc cấu hình `Mask = 0x123` (sai nguyên lý vì Mask phải là các bit 1 ở các vị trí cần so khớp).
 * **Cách xử lý chuẩn:**
   * Nếu nhận duy nhất ID `0x123`: Cấu hình `ID = 0x123`, `Mask = 0x7FF` (tất cả 11 bit chuẩn đều phải so khớp chính xác).
   * Trong Zephyr: Sử dụng struct `struct can_filter my_filter = { .id = 0x123, .mask = 0x7FF, .flags = 0 };`.
 
-#### 🐞 Bug 3: Sai cấu hình GPIO Pin Multiplexing (AF9 trên STM32F7)
+#### Bug 3: Sai cấu hình GPIO Pin Multiplexing (AF9 trên STM32F7)
 * **Triệu chứng:** Khởi tạo bxCAN không báo lỗi nhưng không thấy xung điện áp trên chân vi điều khiển.
 * **Nguyên nhân:** Trên STM32F746, CAN1 có nhiều chân ánh xạ khác nhau (PA11/PA12, PB8/PB9, PD0/PD1). Nếu dùng chân PB8/PB9 mà quên cấu hình thanh ghi Alternate Function sang `AF9` (hoặc cấu hình thiếu thuộc tính `pull-up` cho chân RX), chân sẽ ở trạng thái Input Floating và tín hiệu RX không đi vào được khối ngoại vi.
 
 ---
 
-### 4.2. Nhóm Bug Phức Tạp (Complex Architectural Bugs)
+### 4.2. Nhóm Lỗi Kiến Trúc (Architectural Bugs)
 
-#### 🐞 Bug 4: Tràn hàng đợi k_msgq khi gặp hiện tượng Burst Traffic (1,000 frames/s)
+#### Bug 4: Tràn hàng đợi k_msgq khi gặp hiện tượng Burst Traffic (1,000 frames/s)
 * **Triệu chứng:** Mạng CAN chạy bình thường khi lưu lượng thấp. Khi trên xe có nhiều hộp điều khiển cùng phát dữ liệu đồng thời (Burst Traffic), hệ thống bắt đầu làm rơi rụng bản tin, biến đếm lỗi mất gói tăng vọt.
 * **Nguyên nhân:** 
   1. Trong ngắt ISR, việc đẩy dữ liệu vào Queue bắt buộc phải dùng cờ không chờ: `k_msgq_put(&can_rx_msgq, &frame, K_NO_WAIT)`. Nếu Queue bị đầy, `k_msgq_put` trả về lỗi `-ENOMSG` và gói tin mới nhất bị vứt bỏ.
@@ -555,7 +561,7 @@ sequenceDiagram
   3. Cấm tuyệt đối việc gọi hàm in UART `printk()` trực tiếp trong vòng lặp giải mã dữ liệu; chỉ cập nhật biến trạng thái hoặc gửi qua ring buffer UART DMA.
   4. Tận dụng đồng thời cả 2 bộ đệm phần cứng **FIFO0** và **FIFO1** của bxCAN bằng cách cấu hình bộ lọc phân bổ: Gói tin khẩn cấp ưu tiên cao vào FIFO0, gói telemetry định kỳ vào FIFO1.
 
-#### 🐞 Bug 5: Sai lệch Endianness (Intel vs Motorola) khi giải mã DBC qua Byte Boundary
+#### Bug 5: Sai lệch Endianness (Intel vs Motorola) khi giải mã DBC qua Byte Boundary
 * **Triệu chứng:** Cùng một tín hiệu điện áp xe hơi (12-bit), khi đọc trên phần mềm PC thì ra `12.5V`, nhưng thuật toán C trên STM32 giải mã ra con số rác khổng lồ hoặc số âm.
 * **Nguyên nhân:** Định dạng Vector DBC phân chia tín hiệu thành 2 dạng:
   * **Intel (Little-Endian):** Byte thấp nằm trước, bit có trọng số thấp nhất nằm ở byte đầu.
@@ -563,39 +569,130 @@ sequenceDiagram
   * Nếu dùng phép dịch bit thông thường `(buf[0] | (buf[1] << 8))` cho tín hiệu kiểu Motorola, kết quả sẽ hoàn toàn sai lệch.
 * **Giải pháp khắc phục:** Xây dựng hàm trích xuất bit chuyên dụng `can_dbc_unpack_motorola()` sử dụng bảng dịch bit đảo byte hoặc dùng công cụ sinh mã nguồn tự động `cantools` tích hợp vào build system CMake của Zephyr.
 
-#### 🐞 Bug 6: Vòng lặp Bus-Off tự sát (Bus-Off Rapid Recovery Loop)
+#### Bug 6: Vòng lặp Bus-Off tự sát (Bus-Off Rapid Recovery Loop)
 * **Triệu chứng:** Khi dây CAN vật lý bị chập ngắn mạch xuống đất (Short to GND), MCU nhảy vào ngắt Bus-Off liên tục hàng nghìn lần mỗi giây, vắt kiệt 100% CPU khiến toàn bộ hệ thống bị treo cứng (Watchdog reset).
 * **Nguyên nhân:** Phần mềm cấu hình tính năng `ABOM` (Automatic Bus-Off Management) trong thanh ghi `CAN_MCR` bật tự động phục hồi ngay lập tức mà không có thời gian trễ. Khi đường dây vẫn đang bị chập, MCU vừa thức dậy phát thử 1 bit là bị lỗi tiếp và lại rơi vào Bus-Off ngay lập tức.
 * **Giải pháp chuẩn Automotive:** Tắt cờ `ABOM = 0` (quản lý phục hồi bằng phần mềm). Khi xảy ra Bus-Off, chuyển sang trạng thái an toàn, khởi động một Timer trễ lũy thừa (Exponential Backoff: Thử lại sau `100 ms -> 500 ms -> 1 s -> 5 s`). Nếu thử quá 5 lần không thành công, ngắt hẳn bộ phát và báo đèn Check Engine.
 
 ---
 
-### 4.3. Nhóm Bug Hiếm Gặp & Góc Khuất Phần Cứng (Rare / Edge-Case Bugs)
+### 4.3. Nhóm Lỗi Ngoại Lệ và Góc Khuất Phần Cứng (Edge-Case Bugs)
 
-#### 🐞 Bug 7: Hiện tượng Babbling Node & Chết Transceiver ở mức Dominant
+#### Bug 7: Hiện tượng Babbling Node & Chết Transceiver ở mức Dominant
 * **Triệu chứng:** Toàn bộ mạng CAN của ô tô (hàng chục hộp ECU) đột ngột tê liệt hoàn toàn, không một hộp nào truyền nhận được dữ liệu.
 * **Nguyên nhân:** Một node trên mạng bị hỏng phần cứng vi điều khiển hoặc lỗi phần mềm rơi vào vòng lặp vô tận giữ chân `CAN_TX = 0` (mức Dominant). Do tính chất của CAN Bus: **Mức Dominant luôn thắng mức Recessive**, nên khi 1 chân bị giữ mức 0, toàn bộ đường truyền vi sai bị kéo lệch điện áp vĩnh viễn, đè bẹp tất cả các node khác trên xe.
 * **Giải pháp phần cứng:** Lựa chọn các dòng chip CAN Transceiver đạt chuẩn an toàn chức năng có tích hợp tính năng **TXD Dominant Time-out Protection** (ví dụ: TJA1042 hoặc TJA1050). Nếu chân TXD bị giữ mức Dominant quá thời gian giới hạn `t_to(dom) ~ 1 ms`, phần cứng bên trong Transceiver sẽ tự động ngắt kết nối tầng công suất lái bus, trả lại đường bus tự do cho các node khác.
 
-#### 🐞 Bug 8: Lệch pha thạch anh do nhiệt độ cao gây Stuff Error ngẫu nhiên
+#### Bug 8: Lệch pha thạch anh do nhiệt độ cao gây Stuff Error ngẫu nhiên
 * **Triệu chứng:** Hệ thống chạy thử trong phòng lab thì hoàn hảo, nhưng khi đem lắp vào khoang động cơ xe chạy thử ở nhiệt độ cao (`> 85 °C`), thỉnh thoảng xuất hiện lỗi **Stuff Error** làm rớt khung tin.
 * **Nguyên nhân:** Bộ dao động nội hoặc thạch anh chất lượng thấp bị trôi tần số khi nhiệt độ thay đổi (Frequency Drift). Chuẩn CAN quy định sai số dao động cho phép tối đa của mạng 500 kbps là `+/- 1.58%`. Khi nhiệt độ tăng, sai lệch vượt ngưỡng làm thời điểm Sample Point bị trượt dần về cuối bit. Khi xuất hiện chuỗi 5 bit giống nhau liên tiếp, bộ thu không kịp nhận diện bit chèn (Stuff Bit) và báo lỗi Stuff Error.
 * **Giải pháp:** Sử dụng thạch anh ngoại vi chuẩn ô tô có bù nhiệt độ (Automotive Grade Crystal Oscillator với độ trôi sai số `< 50 ppm`) và mở rộng cửa sổ đồng bộ lại `SJW = 2 tq` hoặc `3 tq` trong cấu hình `CAN_BTR`.
 
 ---
 
-# 5. BỘ CÂU HỎI PHỎNG VẤN & KỊCH BẢN TRẢ LỜI MẪU (FRESHER LEVEL)
+### 4.4. Nhóm Lỗi Khi Triển Khai Trên Zephyr RTOS và STM32F7
 
-### ❓ Câu 1: "Tại sao trong mạng CAN, ID có giá trị số nhỏ hơn lại có mức độ ưu tiên cao hơn?"
-* **🗣️ Kịch bản trả lời mẫu (30 - 45 giây):**
-  > *"Dạ, điều này xuất phát từ nguyên lý phân xử trọng tài bằng phần cứng (Arbitration) dựa trên cơ chế 'Wired-AND' của bus CAN.  
-  > Trên đường bus vi sai, bit logic 0 là mức Trội (Dominant) và bit logic 1 là mức Lặn (Recessive). Khi hai hay nhiều node cùng phát tín hiệu đồng thời, nếu một node phát bit 1 nhưng phát hiện đường bus bị kéo xuống mức 0 (do node khác đang phát bit 0), node phát bit 1 sẽ lập tức nhận biết mình bị thua trong cuộc phân xử trọng tài và tự động rút lui về chế độ nhận mà không phá hủy khung dữ liệu.  
-  > Vì bit 0 là mức Trội, nên bản tin nào có các bit 0 xuất hiện sớm hơn — tức là có giá trị ID nhỏ hơn theo hệ nhị phân — sẽ giành chiến thắng quyền ưu tiên phát trên đường truyền."*
+#### Bug 9: Thiếu khai báo Pin Control (pinctrl-0) trong Devicetree khiến Zephyr chặn biên dịch CAN
+* **Triệu chứng:** Khi biên dịch ứng dụng Zephyr 3.7+ cho bo mạch STM32F746G-Discovery, công cụ `west build` dừng lại ngay tại bước phân tích Devicetree với thông báo lỗi nghiêm trọng:  
+  `devicetree error: 'pinctrl-0' is marked as required in 'properties:' in st,stm32-bxcan.yaml, but does not appear in node /soc/can@40006400`. Đồng thời xuất hiện cảnh báo: `'bus-speed' is marked as deprecated in properties`.
+* **Nguyên nhân gốc rễ (Mô hình Pinctrl trong Zephyr RTOS hiện đại):**
+  * Trong các phiên bản Zephyr RTOS trước đây, cấu hình chân pinmux thường được viết thông qua driver pinmux riêng. Kể từ Zephyr v3.x, toàn bộ kiến trúc phần cứng chuyển sang mô hình **Pinctrl thống nhất (Unified Pinctrl Framework)**.
+  * File ràng buộc phần cứng `st,stm32-bxcan.yaml` quy định thuộc tính `pinctrl-0` là thuộc tính **BẮT BUỘC (required: true)**.
+  * Nếu trong file `app.overlay`, lập trình viên chỉ khai báo bật ngoại vi:
+    `&can1 { status = "okay"; bus-speed = <500000>; };` mà không chỉ định chân ghép kênh phần cứng `pinctrl-0` trỏ tới `can1_rx_pb8` và `can1_tx_pb9`, bộ tiền xử lý `gen_defines.py` sẽ từ chối sinh file `devicetree_generated.h` và hủy toàn bộ tiến trình biên dịch.
+  * Đồng thời, thuộc tính `bus-speed` đã bị đổi tên thành `bitrate` trong đặc tả CAN Controller DeviceTree mới.
+* **Giải pháp chuẩn hóa trong `app.overlay`:**
+  ```dts
+  &can1 {
+      pinctrl-0 = <&can1_rx_pb8 &can1_tx_pb9>;
+      pinctrl-names = "default";
+      status = "okay";
+      bitrate = <500000>;
+      sample-point = <875>;
+  };
+  ```
 
 ---
 
-### ❓ Câu 2: "Trình bày cách bạn tính toán Bit Timing cho mạng CAN 500 kbps trên STM32F746?"
-* **🗣️ Kịch bản trả lời mẫu (35 - 45 giây):**
+#### Bug 10: Lỗi Linker undefined reference to 'z_impl_can_recover' do STM32 bxCAN không hỗ trợ Manual Recovery
+* **Triệu chứng:** Mã nguồn C biên dịch thành công 100% nhưng đến bước liên kết (Linker) thì báo lỗi:  
+  `d:/zephyr-sdk-0.16.8/.../ld.bfd.exe: app/libapp.a(can_gateway.c.obj): in function 'can_recover':`  
+  `undefined reference to 'z_impl_can_recover'`.
+* **Nguyên nhân gốc rễ:**
+  * Hàm `can_recover()` trong hệ thống API của Zephyr chỉ được hỗ trợ trên các dòng vi điều khiển có bộ điều khiển CAN cho phép can thiệp thủ công vào máy trạng thái phục hồi Bus-Off (như chip NXP SJA1000, ESP32 TWAI) thông qua cờ Kconfig `CONFIG_CAN_MANUAL_RECOVERY_MODE`.
+  * Trên dòng chip **STM32 (ngoại vi bxCAN)**, máy trạng thái phần cứng tuân thủ chuẩn ISO 11898-1 tự động quản lý quá trình phục hồi Bus-Off (thông qua bit `ABOM` trong thanh ghi `CAN_MCR`). Driver của ST trong Zephyr (`can_stm32_bxcan.c`) hoàn toàn **không cài đặt con trỏ hàm `.recover`**.
+  * Nếu mã nguồn ứng dụng gọi trực tiếp hàm `can_recover()`, bộ sinh syscall của Zephyr không tìm thấy hàm thực thi bên dưới dẫn đến lỗi thiếu ký hiệu (Undefined Reference) khi liên kết.
+* **Giải pháp kỹ thuật (Portable Multi-Platform Recovery):**
+  Bọc điều kiện macro để đảm bảo mã nguồn tương thích cả với STM32 lẫn các dòng chip khác:
+  ```c
+  #if defined(CONFIG_CAN_MANUAL_RECOVERY_MODE)
+      /* Dành cho chip hỗ trợ manual recovery (SJA1000, ESP32 TWAI) */
+      can_recover(can_dev, K_MSEC(100));
+  #else
+      /* Chuẩn phục hồi an toàn trên STM32 bxCAN: Tạm dừng và khởi động lại ngoại vi */
+      can_stop(can_dev);
+      k_msleep(100);
+      can_start(can_dev);
+  #endif
+  ```
+
+---
+
+#### Bug 11: Lỗi Acknowledge Error (-EIO / Mã -5) khi phát bản tin CAN trên bo mạch độc lập không có Transceiver ngoài
+* **Triệu chứng:** Khi chạy lệnh phát bản tin `can_send()` trên kit STM32F746G-Discovery cắm cáp USB độc lập, hàm luôn thất bại và trả về mã lỗi `-5` (`-EIO` - I/O Error).
+* **Nguyên nhân vật lý (Cơ chế ACK Slot theo chuẩn ISO 11898-1):**
+  * Giao thức CAN 2.0B bắt buộc: Sau khi node phát gửi xong 15-bit mã kiểm tra CRC, nó sẽ phát 1 bit mức Lặn (Recessive = 1) tại vị trí **`ACK Slot`**.
+  * Mọi node nhận khác đang kết nối trên bus có trách nhiệm kéo đường truyền xuống mức Trội (Dominant = 0) tại đúng chu kỳ bit này để xác nhận: "Đã có ít nhất 1 node nhận đúng khung tin!".
+  * Khi lập trình viên test trên một bo mạch đơn lẻ không cắm vào mạng xe ô tô thật và không có board thứ hai cùng lắng nghe, không có bất kỳ linh kiện nào kéo chân CAN xuống mức 0 tại ACK Slot $\implies$ Bộ điều khiển bxCAN trên chip lập tức ghi nhận lỗi **Acknowledge Error**, hủy bỏ phiên gửi và trả về mã lỗi `-EIO` cho tầng ứng dụng.
+* **Giải pháp Bare-Metal / RTOS:**
+  * Kích hoạt chế độ **CAN Hardware Loopback Mode** trước khi gọi `can_start()`:
+    ```c
+    /* Bật chế độ Loopback để tự truyền/nhận nội bộ mà không cần node thứ hai */
+    can_set_mode(can_dev, CAN_MODE_LOOPBACK);
+    can_start(can_dev);
+    ```
+  * *Nguyên lý hoạt động:* Phần cứng bxCAN bên trong vi mạch tự động bẻ hướng tín hiệu từ thanh ghi TX Mailbox truyền thẳng vào RX FIFO, đồng thời tự phát sinh xung ACK nội bộ. Nhờ đó, lập trình viên có thể kiểm thử toàn diện $100\%$ chu trình truyền nhận, hàng đợi `k_msgq`, giải mã Vector DBC và xác thực AUTOSAR E2E trên một kit duy nhất một cách hoàn hảo!
+
+---
+
+#### Bug 12: Báo động giả mất tín hiệu CAN (DTC_U0100) khi khởi động mà không có luồng phát định kỳ
+* **Triệu chứng:** Vừa nạp firmware lên kit STM32F7, đèn LED cảnh báo người dùng (PI1) lập tức nhấp nháy liên tục, gõ lệnh `dtc read` thấy mã lỗi `0x0100`, và `vehicle status` hiển thị toàn bộ giá trị 0.
+* **Nguyên nhân:**
+  * Máy trạng thái an toàn `safety_monitor` đặt ngưỡng thời gian chờ tín hiệu là $1000\text{ ms}$ (chu kỳ phát bình thường của hộp ECM là $100 - 200\text{ ms}$).
+  * Khi hệ thống khởi động nhưng chưa có nguồn phát CAN định kỳ gửi bản tin ID `0x123`, sau 1 giây bộ đếm thời gian vượt ngưỡng, hệ thống kích hoạt cơ chế phòng ngừa rủi ro ô tô: Ghi nhận mã lỗi **`DTC_U0100` (Lost Communication with ECM/PCM)** và kích hoạt đèn nhấp nháy báo lỗi động cơ (Check Engine).
+* **Giải pháp chuẩn hóa:**
+  * Xây dựng một **Luồng mô phỏng xe chạy tự động (Live Vehicle Simulator Thread)** chạy ngầm ở chu kỳ 200ms (5 Hz) phát đều đặn các thông số xe hợp lệ với mã AUTOSAR E2E CRC-8 được tính toán động theo thời gian thực.
+  * Cung cấp các lệnh kiểm soát linh hoạt trên Shell CLI:
+    * `can auto <on|off>`: Cho phép lập trình viên chủ động ngắt mạng CAN để kiểm chứng cơ chế bẫy lỗi timeout của hệ thống.
+    * `can inject <overheat|overspeed|corrupt>`: Chủ động bơm các sự cố thực tế để kiểm tra khả năng bắt mã lỗi `P0115` và `P0219` của bộ giám sát an toàn.
+
+---
+
+#### Bug 13: Xung đột độ ưu tiên ngắt NVIC giữa CAN và UART làm trễ chu kỳ xử lý gói tin an toàn
+* **Triệu chứng:** Khi cổng Shell UART in log liên tục ở tốc độ cao, gói tin CAN bị trễ nhận (độ trễ tăng từ $< 50\text{ µs}$ lên tới $> 5\text{ ms}$), thỉnh thoảng xuất hiện hiện tượng rơi rụng gói tin (Frame Dropping) trong các đợt bùng nổ lưu lượng mạng (Burst Traffic).
+* **Nguyên nhân:**
+  * Độ ưu tiên ngắt NVIC của UART1 hoặc bộ điều khiển DMA2 phục vụ console debug được cấu hình ở mức ưu tiên bằng hoặc cao hơn (số priority nhỏ hơn) ngắt `CAN1_RX0_IRQn`.
+  * Khi UART đang bận ngắt phục vụ việc truyền các chuỗi ký tự dài, ngắt nhận CAN bị CPU trì hoãn (Blocked ISR), dẫn đến việc bộ đệm FIFO 3 phần tử của bxCAN bị đầy và kích hoạt cờ tràn `FOVR0` (FIFO Overrun).
+* **Giải pháp chuẩn Automotive:**
+  * Thiết lập phân cấp độ ưu tiên ngắt NVIC rõ ràng:
+    * Ngắt mạng ô tô thời gian thực cứng (`CAN1_RX0_IRQn`): Đặt Preemption Priority cao nhất (**Priority 1 hoặc 2**).
+    * Ngắt hiển thị / Console Debug (`USART1_IRQn` / `DMA2_Stream2_IRQn`): Đặt Preemption Priority thấp hơn (**Priority 5 hoặc 6**).
+  * Đảm bảo mọi gói tin CAN tới luôn ngắt được tác vụ in chuỗi UART và được đẩy ngay vào hàng đợi `k_msgq` trong vòng dưới $5\text{ µs}$.
+
+---
+
+# 5. BỘ CÂU HỎI PHỎNG VẤN & KỊCH BẢN TRẢ LỜI MẪU (FRESHER LEVEL)
+
+### Câu 1: "Tại sao trong mạng CAN, ID có giá trị số nhỏ hơn lại có mức độ ưu tiên cao hơn?"
+* **Kịch bản trả lời mẫu:**
+  > *"Dạ, điều này xuất phát từ nguyên lý phân xử trọng tài bằng phần cứng (Arbitration) dựa trên cơ chế 'Wired-AND' của bus CAN.  
+  > Trên đường bus vi sai, bit logic 0 là mức Trội (Dominant) và bit logic 1 là mức Lặn (Recessive). Khi hai hay nhiều node cùng phát tín hiệu đồng thời, nếu một node phát bit 1 nhưng phát hiện đường bus bị kéo xuống mức 0 (do node khác đang phát bit 0), node phát bit 1 sẽ lập tức nhận biết mình bị thua trong cuộc phân xử trọng tài và tự động rút lui về chế độ nhận mà không phá hủy khung dữ liệu.  
+  > Vì bit 0 là mức Trội (Dominant), bản tin nào có các bit 0 xuất hiện sớm hơn (tương ứng với giá trị ID nhỏ hơn theo hệ nhị phân) sẽ giành quyền ưu tiên truyền dữ liệu trên bus."*
+
+---
+
+### Câu 2: "Trình bày cách bạn tính toán Bit Timing cho mạng CAN 500 kbps trên STM32F746?"
+* **Kịch bản trả lời mẫu:**
   > *"Dạ, khối ngoại vi bxCAN1 trên STM32F746 nằm trên bus APB1 với tần số xung nhịp là 54 MHz.  
   > Với tốc độ yêu cầu là 500 kbps, chu kỳ của 1 bit dữ liệu là 2,000 nano-giây. Em chia 1 bit thành tổng cộng 18 đơn vị thời gian time quanta (tq).  
   > Từ đó em tính ra hệ số chia Prescaler BRP bằng 54 MHz chia cho (500 kHz nhân 18), ra kết quả BRP chính xác bằng 6.  
@@ -603,16 +700,16 @@ sequenceDiagram
 
 ---
 
-### ❓ Câu 3: "Tại sao trong ngắt CAN RX ISR bạn lại dùng `k_msgq_put(..., K_NO_WAIT)` mà không dùng Mutex hay Semaphore?"
-* **🗣️ Kịch bản trả lời mẫu (30 - 40 giây):**
+### Câu 3: "Tại sao trong ngắt CAN RX ISR bạn lại dùng `k_msgq_put(..., K_NO_WAIT)` mà không dùng Mutex hay Semaphore?"
+* **Kịch bản trả lời mẫu:**
   > *"Dạ, đây là quy tắc sống còn trong lập trình hệ điều hành thời gian thực: Tuyệt đối không được phép thực hiện hành vi chờ đợi (Block hoặc Sleep) bên trong trình phục vụ ngắt ISR.  
   > Mutex có cơ chế chuyển quyền sở hữu và có thể khiến luồng gọi bị block để chờ nhả khóa, do đó không được phép dùng trong ISR.  
   > Em chọn `k_msgq` với cờ `K_NO_WAIT` vì hàm này hoạt động theo cơ chế phi khóa (Lock-free Ring Buffer), dữ liệu khung CAN 16 bytes được copy trực tiếp vào bộ đệm của kernel chỉ trong vài chục chu kỳ lệnh rồi thoát ngay lập tức, giải phóng CPU quay lại phục vụ các tác vụ khác. Sau đó một Thread nền với mức ưu tiên phù hợp sẽ chờ nhả dữ liệu ra để xử lý các thuật toán giải mã DBC nặng hơn."*
 
 ---
 
-### ❓ Câu 4: "AUTOSAR E2E Profile 1 bảo vệ hệ thống trước những nguy cơ mất an toàn nào trên ô tô?"
-* **🗣️ Kịch bản trả lời mẫu (30 - 40 giây):**
+### Câu 4: "AUTOSAR E2E Profile 1 bảo vệ hệ thống trước những nguy cơ mất an toàn nào trên ô tô?"
+* **Kịch bản trả lời mẫu:**
   > *"Dạ, trong tiêu chuẩn an toàn chức năng ISO 26262, bản thân tầng phần cứng CAN chỉ bảo vệ phát hiện lỗi bit thông thường mà không thể phát hiện lỗi logic hệ thống. AUTOSAR E2E Profile 1 giải quyết 3 bài toán lớn:  
   > Thứ nhất là phát hiện mất gói tin hoặc lặp lại gói tin nhờ vào trường Alive Counter 4-bit tăng liên tục từ 0 đến 15.  
   > Thứ hai là phát hiện gửi nhầm địa chỉ hoặc nạp sai buffer nhờ trường Data ID 16-bit độc nhất được đưa vào thuật toán băm CRC.  
@@ -620,8 +717,8 @@ sequenceDiagram
 
 ---
 
-### ❓ Câu 5: "Khi mạng CAN bị lỗi Bus-Off, bạn xử lý thế nào để hệ thống không bị treo?"
-* **🗣️ Kịch bản trả lời mẫu (35 - 45 giây):**
+### Câu 5: "Khi mạng CAN bị lỗi Bus-Off, bạn xử lý thế nào để hệ thống không bị treo?"
+* **Kịch bản trả lời mẫu:**
   > *"Dạ, khi bộ đếm lỗi truyền TEC vượt quá 255, phần cứng bxCAN sẽ ngắt kết nối vật lý và chuyển sang trạng thái Bus-Off.  
   > Em không bật cờ tự động phục hồi tức thì ABOM vì nếu đường dây đang bị chập mass, vi điều khiển sẽ bị ngắt liên tục gây treo hệ thống.  
   > Thay vào đó, em bắt sự kiện Bus-Off thông qua ngắt lỗi SCE của Zephyr. Lúc này, em lập tức đình chỉ các luồng gửi tin để tránh làm nghẽn bus, đồng thời kích hoạt một Timer trễ an toàn lũy thừa (Exponential Backoff).  
@@ -629,9 +726,28 @@ sequenceDiagram
 
 ---
 
-### ❓ Câu 6: "Trong Zephyr RTOS, bạn quản lý và ánh xạ phần cứng CAN thông qua DeviceTree như thế nào?"
-* **🗣️ Kịch bản trả lời mẫu (30 - 40 giây):**
+### Câu 6: "Trong Zephyr RTOS, bạn quản lý và ánh xạ phần cứng CAN thông qua DeviceTree như thế nào?"
+* **Kịch bản trả lời mẫu:**
   > *"Dạ, Zephyr tách biệt hoàn toàn giữa mã nguồn logic và phần cứng thông qua DeviceTree.  
   > Trong file overlay của board STM32F746, em kích hoạt node `&can1`, chỉ định thuộc tính `status = "okay"`, cấu hình tốc độ `bus-speed = <500000>`, và gán các chân pinctrl tương ứng là PB8 và PB9 ở chế độ AF9.  
   > Trong mã nguồn C, em truy xuất ngoại vi thông qua macro chuẩn của Zephyr: `DEVICE_DT_GET(DT_NODELABEL(can1))`.  
   > Nhờ cơ chế này, nếu sau này dự án chuyển sang chạy trên chip khác như NXP S32K hay TI Sitara, em chỉ cần sửa lại file DeviceTree mà toàn bộ mã nguồn ứng dụng giải mã DBC và E2E giữ nguyên vẹn 100% không phải viết lại."*
+
+---
+
+### Câu 7: "Tại sao khi kiểm thử mạng CAN trên một bo mạch đơn lẻ không có xe thật, lệnh gửi can_send() lại bị lỗi Acknowledge Error (-EIO)? Bạn xử lý thế nào?"
+* **Kịch bản trả lời mẫu:**
+  > *"Dạ, theo đặc tả chuẩn CAN 2.0B (ISO 11898-1), sau khi node phát gửi xong trường kiểm tra CRC, nó sẽ thả nổi đường truyền ở mức Recessive tại vị trí bit ACK Slot.  
+  > Tất cả các node nhận khác trên mạng có nhiệm vụ kéo bus xuống mức Dominant (mức 0) tại đúng chu kỳ bit này để xác nhận đã nhận đúng khung tin.  
+  > Khi ta test trên 1 bo mạch độc lập chưa cắm vào mạng xe thật, không có node thứ 2 kéo bit ACK, vi mạch bxCAN không thấy xung phản hồi sẽ lập tức báo lỗi Acknowledge Error và trả về mã lỗi -EIO.  
+  > Em giải quyết triệt để bằng cách kích hoạt chế độ CAN Hardware Loopback Mode thông qua hàm can_set_mode(). Chế độ này điều hướng nội bộ từ TX Mailbox sang RX FIFO ngay trong silicon, tự sinh xung ACK nội, giúp em kiểm thử trọn vẹn 100% logic thu phát, hàng đợi k_msgq, Vector DBC và AUTOSAR E2E trên 1 kit duy nhất mà không cần xe thật."*
+
+---
+
+### Câu 8: "Trình bày cách bạn cấu hình Pin Control (Pinctrl) và xử lý sự cố Bus-Off trong Zephyr RTOS trên vi điều khiển STM32F7?"
+* **Kịch bản trả lời mẫu:**
+  > *"Dạ, trên Zephyr RTOS phiên bản mới, ngoại vi CAN bắt buộc phải khai báo khối Pinctrl trong DeviceTree overlay.  
+  > Em liên kết thuộc tính pinctrl-0 với các macro can1_rx_pb8 và can1_tx_pb9 ở chế độ AF9, đồng thời cấu hình bitrate = 500000 và sample-point = 875.  
+  > Về xử lý lỗi Bus-Off: Vì phần cứng STM32 bxCAN tự động quản lý chu trình Bus-Off thông qua bit ABOM chứ không hỗ trợ hàm phục hồi thủ công can_recover() như chip NXP SJA1000, nên em đăng ký callback giám sát trạng thái can_set_state_change_callback().  
+  > Khi phát hiện cờ CAN_STATE_BUS_OFF, hệ thống sẽ thực hiện quy trình phục hồi an toàn bằng cách gọi can_stop(), tạo thời gian trễ an toàn 100 mili-giây, rồi mới gọi can_start() khởi động lại ngoại vi, đảm bảo không bao giờ bị lỗi Linker undefined reference và bảo vệ CPU không bị rơi vào vòng lặp Bus-Off tự sát."*
+

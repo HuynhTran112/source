@@ -1,15 +1,13 @@
-# Cẩm Nang Phỏng Vấn Toàn Diện: C Embedded, System Architecture & Project Deep-Dive
+# Cẩm Nang Phỏng Vấn Kỹ Sư Nhúng: Lập Trình C, Kiến Trúc Hệ Thống và Phân Tích Dự Án
 
-> **Bách khoa toàn thư phỏng vấn thực chiến dành riêng cho Kỹ sư Nhúng Fresher / Junior (STM32F7 / Zephyr RTOS / Automotive).**  
-> 💡 **Thiết kế chuyên biệt cho phòng phỏng vấn:**  
-> - **100% Văn bản thuần & Code inline:** Triệt tiêu hoàn toàn lỗi hiển thị công thức toán, hiển thị mượt mà trên mọi trình đọc Markdown.  
-> - **Chuyển hóa công thức thành Kịch Bản Nói Miệng (Spoken Script):** Giúp bạn biết chính xác cách dùng lời nói tự nhiên (30 - 45 giây) để thuyết phục Senior Interviewer mà không bị gượng ép hay đọc vẹt công thức toán.
+> **Đối tượng:** Kỹ sư nhúng định hướng STM32F7, Zephyr RTOS và giao thức truyền thông ô tô.  
+> **Mục tiêu:** Hệ thống hóa kiến thức lập trình C nhúng, cấu trúc vi điều khiển ARM Cortex-M, hệ điều hành thời gian thực Zephyr RTOS và kịch bản trả lời phỏng vấn kỹ thuật định lượng.
 
 ---
 
 ## MỤC LỤC TỔNG QUAN
 
-- [PHẦN 1 — LẬP TRÌNH C EMBEDDED THỰC CHIẾN (TECH TEST & LIVE-CODING)](#phần-1--lập-trình-c-embedded-thực-chiến-tech-test--live-coding)
+- [PHẦN 1: LẬP TRÌNH C EMBEDDED (TECH TEST VÀ LIVE-CODING)](#phần-1-lập-trình-c-embedded-tech-test-và-live-coding)
   - [1.1. Từ khóa `volatile` và cơ chế tối ưu của Compiler](#11-từ-khóa-volatile-và-cơ-chế-tối-ưu-của-compiler)
   - [1.2. Thao tác Bitwise, Bitmask & Clear-then-Set Pattern](#12-thao-tác-bitwise-bitmask--clear-then-set-pattern)
   - [1.3. Memory Layout của chương trình C trên MCU](#13-memory-layout-của-chương-trình-c-trên-mcu)
@@ -18,7 +16,7 @@
   - [1.6. Xử lý Endianness (Little-Endian vs Big-Endian)](#16-xử-lý-endianness-little-endian-vs-big-endian)
   - [1.7. Quản lý Bộ nhớ Động không dùng `malloc()` (Static Memory Pool)](#17-quản-lý-bộ-nhớ-động-không-dùng-malloc-static-memory-pool)
   - [1.8. Cài đặt Circular Ring Buffer chuẩn ISR-Safe bằng C](#18-cài-đặt-circular-ring-buffer-chuẩn-isr-safe-bằng-c)
-- [PHẦN 2 — KIẾN TRÚC VI ĐIỀU KHIỂN & GIAO TIẾP NGOẠI VI (CORTEX-M & PERIPHERALS)](#phần-2--kiến-trúc-vi-điều-khiển--giao-tiếp-ngoại-vi-cortex-m--peripherals)
+- [PHẦN 2: KIẾN TRÚC VI ĐIỀU KHIỂN VÀ GIAO TIẾP NGOẠI VI](#phần-2-kiến-trúc-vi-điều-khiển-và-giao-tiếp-ngoại-vi)
   - [2.1. NVIC & Cơ chế phân nhóm mức ưu tiên (Priority Grouping)](#21-nvic--cơ-chế-phân-nhóm-mức-ưu-tiên-priority-grouping)
   - [2.2. SysTick Timer vs General-Purpose Timer](#22-systick-timer-vs-general-purpose-timer)
   - [2.3. Quy trình Boot từ chân Reset đến hàm `main()`](#23-quy-trình-boot-từ-chân-reset-đến-hàm-main)
@@ -30,7 +28,7 @@
   - [2.9. CAN Bus: Trở đầu cuối 120 Ohm & Phân xử Trọng tài (Arbitration)](#29-can-bus-trở-đầu-cuối-120-ohm--phân-xử-trọng-tài-arbitration)
   - [2.10. DMA Controller: Polling vs Interrupt vs DMA](#210-dma-controller-polling-vs-interrupt-vs-dma)
   - [2.11. Thiết bị đo kiểm: JTAG vs SWD, Logic Analyzer vs Oscilloscope](#211-thiết-bị-đo-kiểm-jtag-vs-swd-logic-analyzer-vs-oscilloscope)
-- [PHẦN 3 — HỆ ĐIỀU HÀNH THỜI GIAN THỰC & ZEPHYR RTOS CHUYÊN SÂU](#phần-3--hệ-điều-hành-thời-gian-thực--zephyr-rtos-chuyên-sâu)
+- [PHẦN 3: HỆ ĐIỀU HÀNH THỜI GIAN THỰC VÀ ZEPHYR RTOS](#phần-3-hệ-điều-hành-thời-gian-thực-và-zephyr-rtos)
   - [3.1. Phân biệt Mutex, Binary Semaphore và Message Queue](#31-phân-biệt-mutex-binary-semaphore-và-message-queue)
   - [3.2. Quy tắc vàng: CẤM Block/Sleep bên trong ngắt ISR](#32-quy-tắc-vàng-cấm-blocksleep-bên-trong-ngắt-isr)
   - [3.3. Hiện tượng Nghịch đảo Ưu tiên (Priority Inversion) & Priority Inheritance](#33-hiện-tượng-nghịch-đảo-ưu-tiên-priority-inversion--priority-inheritance)
@@ -38,12 +36,12 @@
   - [3.5. Devicetree & Kconfig vs `#define` truyền thống](#35-devicetree--kconfig-vs-define-truyền-thống)
   - [3.6. Công cụ dòng lệnh Meta-tool `west`](#36-công-cụ-dòng-lệnh-meta-tool-west)
   - [3.7. Bảo vệ tràn Stack bằng phần cứng: `CONFIG_MPU_STACK_GUARD`](#37-bảo-vệ-tràn-stack-bằng-phần-cứng-config_mpu_stack_guard)
-- [PHẦN 4 — XOÁY SÂU TOÀN DIỆN 4 DỰ ÁN TRONG CV (PROJECT DEEP-DIVE)](#phần-4--xoáy-sâu-toàn-diện-4-dự-án-trong-cv-project-deep-dive)
+- [PHẦN 4: PHÂN TÍCH CHUYÊN SÂU 4 DỰ ÁN TRONG CV](#phần-4-phân-tích-chuyên-sâu-4-dự-án-trong-cv)
   - [4.1. DỰ ÁN 1: Automotive CAN Gateway (STM32F746 + Zephyr RTOS)](#41-dự-án-1-automotive-can-gateway-stm32f746--zephyr-rtos)
   - [4.2. DỰ ÁN 2: High-Speed Bare-Metal TFT & SDHC Player (STM32F746)](#42-dự-án-2-high-speed-bare-metal-tft--sdhc-player-stm32f746)
   - [4.3. DỰ ÁN 3: ESP32-S3 Wearable Smartwatch](#43-dự-án-3-esp32-s3-wearable-smartwatch)
   - [4.4. DỰ ÁN 4 (Internship): Hệ Thống Giám Sát & Điều Khiển Tép Bạc](#44-dự-án-4-internship-hệ-thống-giám-sát--điều-khiển-tép-bạc)
-- [PHẦN 5 — TÌNH HUỐNG THỰC ĐỊA, QUY CHUẨN GIT & KỊCH BẢN PHỎNG VẤN (STAR)](#phần-5--tình-huống-thực-địa-quy-chuẩn-git--kịch-bản-phỏng-vấn-star)
+- [PHẦN 5: TÌNH HUỐNG THỰC TẾ, QUY CHUẨN GIT VÀ KỊCH BẢN PHỎNG VẤN](#phần-5-tình-huống-thực-tế-quy-chuẩn-git-và-kịch-bản-phỏng-vấn)
   - [5.1. Xử lý sự cố Thread RTOS bị treo / không được cấp CPU](#51-xử-lý-sự-cố-thread-rtos-bị-treo--không-được-cấp-cpu)
   - [5.2. Quy trình 3 bước xử lý khi mạng CAN Bus bị nhiễu cao](#52-quy-trình-3-bước-xử-lý-khi-mạng-can-bus-bị-nhiễu-cao)
   - [5.3. Quy chuẩn Git & Giải quyết xung đột Rebase](#53-quy-chuẩn-git--giải-quyết-xung-đột-rebase)
@@ -51,11 +49,11 @@
 
 ---
 
-# PHẦN 1 — LẬP TRÌNH C EMBEDDED THỰC CHIẾN (TECH TEST & LIVE-CODING)
+# PHẦN 1: LẬP TRÌNH C EMBEDDED (TECH TEST VÀ LIVE-CODING)
 
 ### 1.1. Từ khóa `volatile` và cơ chế tối ưu của Compiler
 
-#### ❓ Câu hỏi: "Bản chất của `volatile` là gì? Tại sao thiếu nó thì code đọc thanh ghi hoặc nhận ngắt ISR sẽ chạy sai khi bật cờ tối ưu `-O2` / `-O3`?"
+#### Câu hỏi: "Bản chất của `volatile` là gì? Tại sao thiếu nó thì code đọc thanh ghi hoặc nhận ngắt ISR sẽ chạy sai khi bật cờ tối ưu `-O2` / `-O3`?"
 * **Bản chất**: `volatile` thông báo cho Compiler biết rằng giá trị của ô nhớ có thể bị thay đổi bất kỳ lúc nào bởi phần cứng (Hardware register), một ngắt (ISR), hoặc một luồng song song khác. Compiler **cấm tối ưu hóa biến này** (cấm lưu tạm giá trị vào thanh ghi CPU R0-R12 và cấm xóa các lệnh đọc/ghi ô nhớ).
 * **3 trường hợp bắt buộc trong Embedded**:
   1. Con trỏ trỏ tới thanh ghi phần cứng (Memory-Mapped I/O):
@@ -87,7 +85,7 @@
 
 ### 1.2. Thao tác Bitwise, Bitmask & Clear-then-Set Pattern
 
-#### ❓ Câu hỏi: "Viết bộ Macro thao tác bit chuẩn mực và giải thích tại sao khi cấu hình trường nhiều bit bắt buộc phải dùng mẫu Clear-then-Set?"
+#### Câu hỏi: "Viết bộ Macro thao tác bit chuẩn mực và giải thích tại sao khi cấu hình trường nhiều bit bắt buộc phải dùng mẫu Clear-then-Set?"
 
 ```c
 #define SET_BIT(REG, BIT)          ((REG) |= (1UL << (BIT)))
@@ -106,7 +104,7 @@
     `REG = REG | (0b01 << 4) = 0b11 | 0b01 = 0b11` (Vẫn giữ nguyên là Analog!).
   * Phép OR **chỉ có thể biến 0 thành 1, không thể biến 1 thành 0**. Vì vậy, bắt buộc phải xóa sạch trường bit đó về `0b00` trước bằng phép `& ~MASK`, sau đó mới OR với giá trị mới.
 
-#### ❓ Live-Coding Test: "Viết hàm đảo ngược thứ tự các bit của một số 32-bit (Bit Reversal) không dùng hàm thư viện."
+#### Bài kiểm tra Live-Coding: "Viết hàm đảo ngược thứ tự các bit của một số 32-bit (Bit Reversal) không dùng hàm thư viện."
 ```c
 uint32_t reverse_bits(uint32_t n) {
     uint32_t result = 0;
@@ -117,7 +115,7 @@ uint32_t reverse_bits(uint32_t n) {
     }
     return result;
 }
-/* Câu trả lời điểm 10: Trên lõi ARM Cortex-M, có thể thay bằng 1 lệnh Assembly: */
+/* Lưu ý tối ưu: Trên kiến trúc ARM Cortex-M, có thể thay thế bằng lệnh Assembly chuyên dụng: */
 /* __asm volatile ("rbit %0, %1" : "=r"(result) : "r"(n)); */
 ```
 
@@ -125,7 +123,7 @@ uint32_t reverse_bits(uint32_t n) {
 
 ### 1.3. Memory Layout của chương trình C trên MCU
 
-#### ❓ Câu hỏi: "Trình bày các phân vùng bộ nhớ của chương trình C trong vi điều khiển. Chỉ rõ 6 biến sau nằm ở đâu?"
+#### Câu hỏi: "Trình bày các phân vùng bộ nhớ của chương trình C trong vi điều khiển. Chỉ rõ 6 biến sau nằm ở đâu?"
 
 ```text
 Địa chỉ cao (RAM)
@@ -165,7 +163,7 @@ Bộ nhớ FLASH ROM (Non-volatile):
 
 ### 1.4. Con trỏ nâng cao & Bảng hàm Callback (Function Pointer)
 
-#### ❓ Câu hỏi: "Phân biệt `const int *p`, `int * const p`, `const int * const p`. Cho ví dụ thực tế dùng Function Pointer để xây dựng Driver Callback."
+#### Câu hỏi: "Phân biệt `const int *p`, `int * const p`, `const int * const p`. Cho ví dụ thực tế dùng Function Pointer để xây dựng Driver Callback."
 * **Phân biệt cú pháp**:
   * `const int *p`: Con trỏ trỏ tới dữ liệu hằng. Không thể sửa nội dung `*p = 5`, nhưng con trỏ có thể đổi sang trỏ địa chỉ khác `p = &other`.
   * `int * const p`: Con trỏ hằng trỏ tới dữ liệu biến đổi. Không thể đổi địa chỉ trỏ `p = &other`, nhưng có thể sửa nội dung `*p = 10` (Thanh ghi ngoại vi vi điều khiển chính là con trỏ hằng).
@@ -199,7 +197,7 @@ Bộ nhớ FLASH ROM (Non-volatile):
 
 ### 1.5. Struct Padding, Data Alignment & `__attribute__((packed))`
 
-#### ❓ Câu hỏi: "Tại sao `sizeof(struct { char a; int b; short c; })` lại ra 12 bytes trên ARM Cortex-M? Hậu quả gì xảy ra nếu không thêm `__attribute__((packed))` khi gửi struct qua CAN/UART?"
+#### Câu hỏi: "Tại sao `sizeof(struct { char a; int b; short c; })` lại ra 12 bytes trên ARM Cortex-M? Hậu quả gì xảy ra nếu không thêm `__attribute__((packed))` khi gửi struct qua CAN/UART?"
 * **Cơ chế căn lề tự nhiên (Data Alignment)**:
   * Vi xử lý 32-bit Cortex-M tối ưu hóa truy cập dữ liệu khi biến N-byte nằm ở địa chỉ chia hết cho N.
   * `char a` (1 byte) nằm tại Offset 0.
@@ -215,7 +213,7 @@ Bộ nhớ FLASH ROM (Non-volatile):
 
 ### 1.6. Xử lý Endianness (Little-Endian vs Big-Endian)
 
-#### ❓ Câu hỏi: "Viết hàm C phát hiện kiến trúc vi điều khiển là Little hay Big Endian. Viết macro hoán đổi byte cho số 16-bit và 32-bit."
+#### Câu hỏi: "Viết hàm C phát hiện kiến trúc vi điều khiển là Little hay Big Endian. Viết macro hoán đổi byte cho số 16-bit và 32-bit."
 
 ```c
 /* Kiểm tra bằng con trỏ */
@@ -238,7 +236,7 @@ int is_little_endian(void) {
 
 ### 1.7. Quản lý Bộ nhớ Động không dùng `malloc()` (Static Memory Pool)
 
-#### ❓ Câu hỏi: "Tại sao trong Firmware tiêu chuẩn ô tô (MISRA-C / ISO 26262) lại cấm `malloc()`? Làm sao cấp phát động an toàn?"
+#### Câu hỏi: "Tại sao trong Firmware tiêu chuẩn ô tô (MISRA-C / ISO 26262) lại cấm `malloc()`? Làm sao cấp phát động an toàn?"
 * **3 hiểm họa của `malloc()` / `free()` trong hệ thống nhúng**:
   1. **Phân mảnh bộ nhớ (Heap Fragmentation)**: Các khối nhớ nhỏ xen kẽ khiến hệ thống không tìm được khối nhớ liên tục đủ lớn.
   2. **Thời gian thực thi không tiền định (Non-deterministic timing)**: Thuật toán tìm khối trống tốn chu kỳ CPU khác nhau tùy trạng thái heap.
@@ -279,7 +277,7 @@ int is_little_endian(void) {
 
 ### 1.8. Cài đặt Circular Ring Buffer chuẩn ISR-Safe bằng C
 
-#### ❓ Câu hỏi: "Cài đặt một Ring Buffer bằng C thuần phục vụ nhận ngắt UART. Làm sao để đảm bảo Thread-Safe giữa ISR và `main()` mà không cần dùng Mutex?"
+#### Câu hỏi: "Cài đặt một Ring Buffer bằng C thuần phục vụ nhận ngắt UART. Làm sao để đảm bảo Thread-Safe giữa ISR và `main()` mà không cần dùng Mutex?"
 
 ```c
 #define RING_BUFFER_SIZE  128 /* Lũy thừa của 2 để tối ưu phép chia % thành & MASK */
@@ -314,7 +312,7 @@ bool ring_buffer_pop(ring_buffer_t *rb, uint8_t *data) {
 
 ---
 
-# PHẦN 2 — KIẾN TRÚC VI ĐIỀU KHIỂN & GIAO TIẾP NGOẠI VI (CORTEX-M & PERIPHERALS)
+# PHẦN 2: KIẾN TRÚC VI ĐIỀU KHIỂN VÀ GIAO TIẾP NGOẠI VI
 
 ### 2.1. NVIC & Cơ chế phân nhóm mức ưu tiên (Priority Grouping)
 * **NVIC (Nested Vectored Interrupt Controller)**: Khối điều khiển ngắt độc quyền trên ARM Cortex-M hỗ trợ ngắt lồng nhau và thời gian trễ ngắt cực thấp.
@@ -396,7 +394,7 @@ bool ring_buffer_pop(ring_buffer_t *rb, uint8_t *data) {
 
 ---
 
-# PHẦN 3 — HỆ ĐIỀU HÀNH THỜI GIAN THỰC & ZEPHYR RTOS CHUYÊN SÂU
+# PHẦN 3: HỆ ĐIỀU HÀNH THỜI GIAN THỰC VÀ ZEPHYR RTOS
 
 ### 3.1. Phân biệt Mutex, Binary Semaphore và Message Queue
 | Cơ chế | Mục đích chính | Khái niệm Ownership | Dùng trong ISR |
@@ -443,21 +441,21 @@ bool ring_buffer_pop(ring_buffer_t *rb, uint8_t *data) {
 
 ---
 
-# PHẦN 4 — XOÁY SÂU TOÀN DIỆN 4 DỰ ÁN TRONG CV (PROJECT DEEP-DIVE)
+# PHẦN 4: PHÂN TÍCH CHUYÊN SÂU 4 DỰ ÁN TRONG CV
 
 ---
 
 ## 4.1. DỰ ÁN 1: Automotive CAN Gateway (STM32F746 + Zephyr RTOS)
 
-### ❓ Câu 1: "Với xung nhịp bus APB1 là 54 MHz, tính toán chi tiết Prescaler, BS1, BS2 và SJW để đạt tốc độ chuẩn 500 kbps với điểm lấy mẫu 83.33%?"
+### Câu 1: "Với xung nhịp bus APB1 là 54 MHz, tính toán chi tiết Prescaler, BS1, BS2 và SJW để đạt tốc độ chuẩn 500 kbps với điểm lấy mẫu 83.33%?"
 
-* **🗣️ Kịch bản trả lời phỏng vấn bằng lời nói (Spoken Script - 35 giây):**
+* **Kịch bản trả lời:**
   > *"Dạ, trên STM32F746 chạy 216MHz thì bus APB1 cấp cho bộ điều khiển CAN tối đa là 54 MHz.  
   > Để đạt tốc độ 500 kbps, chu kỳ của 1 bit sẽ là 2000 nano-giây. Em chia 1 bit thành 18 khoảng thời gian lượng tử (Time Quanta - tq), tức là tần số của mỗi tq sẽ là 9 MHz. Lấy 54 MHz chia cho 9 MHz thì em ra hệ số chia Prescaler BRP bằng 6.  
   > Về điểm lấy mẫu, tiêu chuẩn CiA 301 khuyến nghị là khoảng 87.5%. Em bố trí 1 bit gồm: 1 tq cho đoạn đồng bộ Sync, 14 tq cho đoạn BS1, và 3 tq còn lại cho đoạn BS2. Lúc này điểm lấy mẫu thực tế rơi vào đúng 15 chia 18, tức là 83.33%, rất sát với chuẩn.  
   > Khi ghi vào thanh ghi CAN_BTR, phần cứng yêu cầu lấy giá trị thực trừ đi 1, nên em nạp BRP=5, TS1=13, TS2=2 và bước nhảy đồng bộ SJW=0."*
 
-* **📊 Thông số then chốt (Quick Cheatsheet):**
+* **Thông số kỹ thuật:**
   * Xung nhịp bus: APB1 = 54 MHz.
   * Tốc độ mạng: 500 kbps (1 bit = 2000 ns, chia 18 tq -> 1 tq = 111.1 ns).
   * Bộ chia: `BRP = 54 MHz / (500 kbps x 18) = 6` (Nạp 5 vào thanh ghi).
@@ -466,7 +464,7 @@ bool ring_buffer_pop(ring_buffer_t *rb, uint8_t *data) {
 
 ---
 
-### ❓ Câu 2: "Show một đoạn DeviceTree Overlay thật cho bxCAN trong Zephyr và giải thích từng thuộc tính."
+### Câu 2: "Show một đoạn DeviceTree Overlay thật cho bxCAN trong Zephyr và giải thích từng thuộc tính."
 
 ```dts
 /* File: app.overlay */
@@ -482,16 +480,16 @@ bool ring_buffer_pop(ring_buffer_t *rb, uint8_t *data) {
     };
 };
 ```
-* **🗣️ Kịch bản trả lời:**
+* **Kịch bản trả lời:**
   > *"Dạ, trong file overlay em kích hoạt node `&can1` bằng `status = "okay"`.  
   > Thuộc tính `pinctrl-0` ánh xạ trực tiếp chân PB8 và PB9 sang Alternate Function AF9 của CAN thông qua hệ thống pinctrl của Zephyr trước khi vào `main()`.  
   > Hai thuộc tính `bus-speed = <500000>` và `sample-point = <833>` khai báo tốc độ 500kbps và điểm lấy mẫu 83.3%. Driver CAN gốc của Zephyr sẽ tự động lấy các giá trị này kết hợp với xung nhịp bus trong Devicetree để tự cấu hình thanh ghi BTR tối ưu nhất."*
 
 ---
 
-### ❓ Câu 3: "Async CAN reception với 6 hardware filter bank vào k_msgq: Filter mode dùng là Mask hay List? Tại sao chọn 6?"
+### Câu 3: "Async CAN reception với 6 hardware filter bank vào k_msgq: Filter mode dùng là Mask hay List? Tại sao chọn 6?"
 
-* **🗣️ Kịch bản trả lời (30 giây):**
+* **Kịch bản trả lời:**
   > *"Dạ, em kết hợp cả 2 chế độ List Mode và Mask Mode:  
   > Em dùng 2 Filter Banks ở chế độ List Mode để bắt chính xác 4 ID khẩn cấp cố định gồm: ID 0x100 phanh khẩn cấp, ID 0x102 bung túi khí, và 2 ID chẩn đoán OBD-II là 0x7DF và 0x7E8.  
   > Còn 4 Filter Banks còn lại em dùng chế độ Mask Mode với mặt nạ 0x7F0 để gom toàn bộ các dải dữ liệu Telemetry của xe, ví dụ dải động cơ từ 0x200 đến 0x20F và dải thân xe từ 0x300 đến 0x30F.  
@@ -499,36 +497,36 @@ bool ring_buffer_pop(ring_buffer_t *rb, uint8_t *data) {
 
 ---
 
-### ❓ Câu 4: "AUTOSAR E2E Profile 1 — Polynomial CRC-8 em dùng là gì? Tại sao chọn Profile 1?"
+### Câu 4: "AUTOSAR E2E Profile 1: Đa thức CRC-8 sử dụng là gì và tại sao chọn Profile 1?"
 
-* **🗣️ Kịch bản trả lời (30 giây):**
+* **Kịch bản trả lời:**
   > *"Dạ, trong chuẩn AUTOSAR E2E Profile 1, em dùng đa thức CRC-8 chuẩn là 0x1D với giá trị khởi tạo và XOR_OUT đều là 0xFF.  
   > Cấu trúc gói tin 8 bytes gồm: 7 bytes đầu chứa dữ liệu tải trọng và bộ đếm Rolling Counter từ 0 đến 15 kèm Data ID, byte cuối cùng là mã CRC-8.  
   > Em chọn Profile 1 vì nó được thiết kế tối ưu nhất cho mạng CAN truyền thống có độ dài cố định 8 bytes. Về mặt tính toán, thuật toán dùng bảng tra cứu sẵn 256 phần tử, thời gian tính CRC chỉ tốn chưa tới 1.5 microsecond trên Cortex-M7 216MHz, vừa đáp ứng chuẩn an toàn dữ liệu, vừa không làm nghẽn hàng đợi xử lý."*
 
 ---
 
-### ❓ Câu 5: "Cơ chế ISO 11898-1 Bus-Off Recovery trong 100ms: Phát hiện bằng cách nào và khôi phục cụ thể ra sao?"
+### Câu 5: "Cơ chế ISO 11898-1 Bus-Off Recovery trong 100ms: Phát hiện bằng cách nào và khôi phục cụ thể ra sao?"
 
-* **🗣️ Kịch bản trả lời (35 giây):**
+* **Kịch bản trả lời:**
   > *"Dạ, khi đường truyền bị lỗi liên tục, bộ đếm lỗi truyền TEC vượt quá 255 thì phần cứng CAN tự động ngắt kết nối để bảo vệ bus, gọi là trạng thái Bus-Off. Driver phát hiện điều này bằng cách đọc bit BOFF trong thanh ghi CAN_ESR hoặc thông qua callback thay đổi trạng thái của Zephyr.  
   > Theo chuẩn ISO 11898-1, một node muốn hòa mạng trở lại thì bắt buộc phải giám sát thấy 128 lần xuất hiện của 11 bit lặn liên tiếp trên đường truyền rảnh.  
   > Trong code, khi bắt được sự kiện Bus-Off, em chuyển máy trạng thái FSM sang RECOVERING, bật timer 100ms và kích hoạt chu trình Reset phần cứng CAN. Sau khi phần cứng tự đếm đủ 128 chuỗi 11 bit lặn thì cờ BOFF tự động xóa, FSM khôi phục lại trạng thái ERROR_ACTIVE và tiếp tục nhận gửi bình thường."*
 
 ---
 
-### ❓ Câu 6: "Xử lý 12 vehicle signal bằng Fixed-Point: Công thức chuyển đổi raw CAN data sang giá trị vật lý là gì? Cho ví dụ cụ thể."
+### Câu 6: "Xử lý 12 vehicle signal bằng Fixed-Point: Công thức chuyển đổi raw CAN data sang giá trị vật lý là gì? Cho ví dụ cụ thể."
 
-* **🗣️ Kịch bản trả lời (30 giây):**
+* **Kịch bản trả lời:**
   > *"Dạ, theo định dạng Vector DBC, giá trị vật lý bằng giá trị thô nhân với hệ số Factor cộng với Offset.  
   > Ví dụ tín hiệu tốc độ xe Vehicle Speed có Factor là 0.01 km/h. Nếu dùng số thực float thì vi điều khiển phải tốn chu kỳ FPU và dễ sinh sai số làm tròn.  
   > Thay vào đó, em dùng kỹ thuật Fixed-Point: em giữ nguyên giá trị thô với đơn vị là centi-km/h, tức là 0.01 km/h. Khi cần in ra màn hình hoặc gửi lên UART, em chỉ việc lấy giá trị đó chia cho 100 để lấy phần nguyên, và chia lấy dư cho 100 để lấy phần thập phân. Cách này chạy 100% bằng số nguyên nên tốc độ xử lý cực nhanh và đảm bảo an toàn tuyệt đối."*
 
 ---
 
-### ❓ Câu 7: "Dưới 2% CPU load và 1000 frame/s: Đo bằng công cụ gì? Cách chứng minh con số này?"
+### Câu 7: "Dưới 2% CPU load và 1000 frame/s: Đo bằng công cụ gì? Cách chứng minh con số này?"
 
-* **🗣️ Kịch bản trả lời chứng minh định lượng (45 giây):**
+* **Kịch bản trả lời:**
   > *"Dạ, em chứng minh bằng cả lý thuyết đường truyền và đo đạc thực tế:  
   > Thứ nhất về đường truyền: Một frame CAN chuẩn dài trung bình khoảng 110 bit. Ở tốc độ 500kbps thì 1 frame chiếm bus khoảng 220 microsecond. Khi truyền 1000 frame/giây thì tổng thời gian chiếm bus là 220 mili-giây, tức là Bus Load chỉ khoảng 22%, đường truyền vẫn còn rất thoáng.  
   > Thứ hai về tải CPU: Em dùng bộ đếm chu kỳ phần cứng DWT của Cortex-M7 để đo thời gian thực thi: ngắt ISR nhận frame và nạp vào hàng đợi k_msgq chỉ tốn khoảng 350 chu kỳ (tức là 1.6 microsecond); Worker Thread lấy gói tin, kiểm tra E2E CRC-8 và giải mã tín hiệu tốn khoảng 1200 chu kỳ (khoảng 5.5 microsecond).  
@@ -538,24 +536,24 @@ bool ring_buffer_pop(ring_buffer_t *rb, uint8_t *data) {
 
 ## 4.2. DỰ ÁN 2: High-Speed Bare-Metal TFT & SDHC Player (STM32F746)
 
-### ❓ Câu 8: "Cấu hình Pixel Clock (PCLK) cho panel 480x272 @ 60Hz: Công thức tính toán chi tiết là gì?"
+### Câu 8: "Cấu hình Pixel Clock (PCLK) cho panel 480x272 @ 60Hz: Công thức tính toán chi tiết là gì?"
 
-* **🗣️ Kịch bản trả lời (35 giây):**
+* **Kịch bản trả lời:**
   > *"Dạ, màn hình 480x272 ngoài vùng hiển thị thực tế thì còn có các khoảng dập xung ngang và dập xung dọc để chùm tia quét quay về đầu dòng và đầu khung.  
   > Cộng cả các khoảng blanking đó thì tổng kích thước quét thực tế là 566 pixel ngang và 286 đường quét dọc.  
   > Để màn hình quét đủ 60 khung hình một giây, em lấy 566 nhân 286 nhân với 60, ra tần số Pixel Clock cần cấp là khoảng 9.71 MHz.  
   > Trong Clock Tree của STM32F7, em lấy nguồn từ khối PLLSAI, cấu hình bộ chia để sinh ra xung nhịp chính xác là 9.6 MHz cấp cho khối LTDC. Với xung 9.6 MHz này, tốc độ làm tươi thực tế đạt 59.3 FPS, khớp hoàn hảo với chuẩn hiển thị mượt mà 60 FPS."*
 
-* **📊 Thông số then chốt:**
+* **Thông số kỹ thuật:**
   * Kích thước tổng cả Blanking: `H_total = 566 pixels`, `V_total = 286 lines`.
   * Tần số yêu cầu: `566 x 286 x 60 = 9.71 MHz`.
   * Cấu hình thực tế: Nguồn `PLLSAI` chia ra `PCLK = 9.6 MHz` -> Đạt `59.3 FPS` (~60 FPS).
 
 ---
 
-### ❓ Câu 9: "Kỹ thuật Double Buffering VSYNC Reload (`VBR`) triệt tiêu hiện tượng xé hình (Tearing-Free) hoạt động thế nào?"
+### Câu 9: "Kỹ thuật Double Buffering VSYNC Reload (`VBR`) triệt tiêu hiện tượng xé hình (Tearing-Free) hoạt động thế nào?"
 
-* **🗣️ Kịch bản trả lời (30 giây):**
+* **Kịch bản trả lời:**
   > *"Dạ, hiện tượng xé hình Tearing xảy ra khi CPU ghi đè dữ liệu mới vào đúng vùng nhớ mà bộ điều khiển LTDC đang quét dở ra màn hình.  
   > Để triệt tiêu hoàn toàn, em cấp phát 2 bộ đệm Framebuffer 0 và Framebuffer 1 trên SDRAM ngoài. Trong khi LTDC đang quét hiển thị Framebuffer 0 thì CPU và DMA2D vẽ toàn bộ khung hình mới vào Framebuffer 1.  
   > Khi vẽ xong xuôi, em nạp địa chỉ Framebuffer 1 vào thanh ghi CFBAR và kích hoạt bit nạp dập đứng VBR trong thanh ghi SRCR.  
@@ -563,9 +561,9 @@ bool ring_buffer_pop(ring_buffer_t *rb, uint8_t *data) {
 
 ---
 
-### ❓ Câu 10: "DMA2D Chrom-ART: Các chế độ hoạt động và ứng dụng cụ thể trong dự án?"
+### Câu 10: "DMA2D Chrom-ART: Các chế độ hoạt động và ứng dụng cụ thể trong dự án?"
 
-* **🗣️ Kịch bản trả lời (30 giây):**
+* **Kịch bản trả lời:**
   > *"Dạ, DMA2D là bộ tăng tốc đồ họa phần cứng chuyên dụng trên STM32F7. Trong dự án em ứng dụng 3 chế độ:  
   > Thứ nhất là chế độ R2M: Điền một màu cố định vào vùng nhớ RAM với tốc độ cực đại để xóa màn hình hoặc vẽ thanh đo.  
   > Thứ hai là chế độ M2M có chuyển đổi định dạng điểm ảnh PFC: Chuyển trực tiếp các icon từ định dạng ARGB8888 sang RGB565 của Framebuffer bằng phần cứng.  
@@ -574,32 +572,32 @@ bool ring_buffer_pop(ring_buffer_t *rb, uint8_t *data) {
 
 ---
 
-### ❓ Câu 11: "FMC SDRAM: Chuỗi 5 lệnh JEDEC khởi tạo và công thức tính Refresh Rate Counter?"
+### Câu 11: "FMC SDRAM: Chuỗi 5 lệnh JEDEC khởi tạo và công thức tính Refresh Rate Counter?"
 
-* **🗣️ Kịch bản trả lời (35 giây):**
+* **Kịch bản trả lời:**
   > *"Dạ, để khởi động chip SDRAM ngoài, chuẩn JEDEC bắt buộc phải tuân theo chuỗi 5 lệnh: Cấp xung clock -> Phát lệnh Precharge All đưa các bank về trạng thái nghỉ -> Phát ít nhất 8 chu kỳ Auto-Refresh liên tiếp -> Nạp thanh ghi Mode Register để cấu hình CAS Latency bằng 2 -> Đưa SDRAM vào chế độ Normal Mode.  
   > Còn về thanh ghi Refresh Rate Counter: Chip SDRAM MT48LC4M32B2 có 4096 dòng và yêu cầu làm tươi toàn bộ trong 64 mili-giây, nghĩa là cứ 15.625 microsecond phải làm tươi một dòng.  
   > Bus SDRAM của em chạy ở 108 MHz, tức là chu kỳ xung là 9.26 nano-giây. Lấy 15.625 microsecond chia cho chu kỳ 9.26 nano-giây rồi trừ đi 20 chu kỳ dự phòng theo công thức của Reference Manual RM0385, em tính ra giá trị nạp vào thanh ghi FMC_SDRTR chính xác là 1667."*
 
-* **📊 Thông số then chốt:**
+* **Thông số kỹ thuật:**
   * Xung nhịp SDRAM: `108 MHz` (Chu kỳ `9.26 ns`).
   * Chu kỳ làm tươi 1 dòng: `64 ms / 4096 rows = 15.625 us`.
   * Giá trị nạp: `(15.625 us x 108 MHz) - 20 = 1687.5 - 20 = 1667`.
 
 ---
 
-### ❓ Câu 12: "Chuẩn hóa thẻ MicroSD SDHC (4GB - 32GB) cho SDMMC: Tại sao bắt buộc dùng Block Addressing LBA?"
+### Câu 12: "Chuẩn hóa thẻ MicroSD SDHC (4GB - 32GB) cho SDMMC: Tại sao bắt buộc dùng Block Addressing LBA?"
 
-* **🗣️ Kịch bản trả lời (30 giây):**
+* **Kịch bản trả lời:**
   > *"Dạ, các dòng thẻ SDSC cũ dung lượng nhỏ hơn hoặc bằng 2GB thì dùng cơ chế Byte Addressing, tức là địa chỉ truyền vào lệnh đọc ghi là số thứ tự nhân với 512. Nhưng với thẻ SDHC từ 4GB đến 32GB, dung lượng vượt quá giới hạn 4GB của con số 32-bit, nếu nhân 512 sẽ làm tràn biến số nguyên uint32_t ngay lập tức.  
   > Vì vậy chuẩn SDHC bắt buộc chuyển sang cơ chế Block Addressing LBA: tham số truyền vào các lệnh CMD17, CMD18 hay CMD24 chính là số thứ tự của Sector, truyền thẳng mà tuyệt đối không nhân 512.  
   > Trong driver lúc gửi lệnh ACMD41, em bật bit HCS bằng 1; khi thẻ trả về thanh ghi OCR, em kiểm tra cờ CCS bằng 1 để xác nhận đúng thẻ SDHC rồi mới tiến hành đọc ghi."*
 
 ---
 
-### ❓ Câu 13: "Sự cố D-Cache Coherency khi streaming video từ SDHC vào SDRAM và cách giải quyết triệt để?"
+### Câu 13: "Sự cố D-Cache Coherency khi streaming video từ SDHC vào SDRAM và cách giải quyết triệt để?"
 
-* **🗣️ Kịch bản trả lời (30 giây):**
+* **Kịch bản trả lời:**
   > *"Dạ, đây là lỗi bất đồng bộ dữ liệu giữa Cache và RAM trên Cortex-M7: Khối phần cứng SDMMC đọc dữ liệu từ thẻ nhớ nạp thẳng vào ô nhớ SDRAM ngoài mà không qua CPU. Nếu trước đó CPU đã từng đọc vùng nhớ này, CPU sẽ tiếp tục đọc dữ liệu cũ lưu trong L1 D-Cache thay vì đọc dữ liệu mới dưới RAM, làm màn hình bị vỡ hình và sọc rác.  
   > Để xử lý triệt để, em thực hiện 3 bước:  
   > Một là căn lề bộ đệm đúng 32 bytes khớp với độ dài một Cache Line.  
@@ -610,24 +608,24 @@ bool ring_buffer_pop(ring_buffer_t *rb, uint8_t *data) {
 
 ## 4.3. DỰ ÁN 3: ESP32-S3 Wearable Smartwatch
 
-### ❓ Câu 14: "Tại sao phải tách Dual I2C Port? Nếu dùng chung thì hiện tượng gì xảy ra?"
-* **🗣️ Kịch bản trả lời:**
+### Câu 14: "Tại sao phải tách Dual I2C Port? Nếu dùng chung thì hiện tượng gì xảy ra?"
+* **Kịch bản trả lời:**
   > *"Dạ, cảm biến nhịp tim MAX30102 và cảm biến chuyển động BMI270 lấy mẫu liên tục với tần số cao. Trong khi đó, màn hình cảm ứng phát sinh ngắt không theo chu kỳ khi người dùng thao tác vuốt chạm.  
   > Nếu dùng chung 1 bus I2C, khi CPU đang bận truyền gói dữ liệu dài của cảm biến thì lệnh đọc tọa độ cảm ứng sẽ bị nghẽn lại, gây ra hiện tượng giật trễ cảm ứng rất khó chịu (độ trễ trên 50ms).  
   > Em tách riêng Port 0 cho Touch Controller và Port 1 cho mảng cảm biến, giúp phản hồi cảm ứng luôn mượt mà tức thì dưới 10ms."*
 
 ---
 
-### ❓ Câu 15: "Cấu hình LVGL Buffer trong PSRAM: Trade-off giữa SRAM và PSRAM là gì?"
-* **🗣️ Kịch bản trả lời:**
+### Câu 15: "Cấu hình LVGL Buffer trong PSRAM: Trade-off giữa SRAM và PSRAM là gì?"
+* **Kịch bản trả lời:**
   > *"Dạ, màn hình AMOLED 368x448 RGB565 chiếm khoảng 330KB RAM cho một khung hình, trong khi SRAM nội của ESP32-S3 chỉ còn khoảng 380KB cho ứng dụng. Nếu đặt Framebuffer trong SRAM nội thì hệ thống sẽ cạn kiệt RAM và không đủ chạy BLE hay WiFi stack.  
   > Vì vậy em đưa Framebuffer sang bộ nhớ ngoài Octal-SPI PSRAM 8MB.  
   > Về mặt trade-off, tốc độ truy cập PSRAM chậm hơn SRAM nội khoảng 3 lần. Em tối ưu bằng cách dùng cơ chế Double Partial Buffer kích thước bằng 1/10 màn hình đặt tại SRAM nội để LVGL render nhanh, sau đó dùng DMA đẩy dữ liệu song song ra màn hình. Nhờ đó tốc độ khung hình vẫn duy trì mượt mà 35 đến 45 FPS mà tiết kiệm được hơn 300KB SRAM nội."*
 
 ---
 
-### ❓ Câu 16: "Dòng tiêu thụ 25 µA Standby: Giải trình tính khả thi thực tế?"
-* **🗣️ Kịch bản trả lời:**
+### Câu 16: "Dòng tiêu thụ 25 µA Standby: Giải trình tính khả thi thực tế?"
+* **Kịch bản trả lời:**
   > *"Dạ, để đạt được mức 25 micro-ampe thì không thể chỉ gọi lệnh sleep thông thường mà vẫn cấp nguồn cho cảm biến được.  
   > Về phần cứng, em dùng mạch transistor PMOS ngắt hoàn toàn nguồn VCC của module GPS, chip nhịp tim và màn hình hiển thị.  
   > Vi điều khiển ESP32-S3 được đưa vào chế độ Deep Sleep, tắt toàn bộ lõi CPU chính và khối Radio Bluetooth/WiFi.  
@@ -635,47 +633,64 @@ bool ring_buffer_pop(ring_buffer_t *rb, uint8_t *data) {
 
 ---
 
-### ❓ Câu 17: "BLE Sync Latency 20ms & GPS 1PPS Sync: Hiện thực thế nào?"
-* **🗣️ Kịch bản trả lời:**
+### Câu 17: "BLE Sync Latency 20ms & GPS 1PPS Sync: Hiện thực thế nào?"
+* **Kịch bản trả lời:**
   > *"Dạ về BLE: Em dùng hàm `esp_ble_gap_set_prefer_conn_params` thương lượng khoảng thời gian kết nối Connection Interval từ 15ms đến 20ms và đặt Slave Latency bằng 0, đảm bảo đồng hồ gửi dữ liệu lên điện thoại phản hồi ngay trong vòng 20ms.  
   > Còn về GPS: Chân xung 1PPS của module GPS có độ chính xác cấp nano-giây được em đưa vào chân ngắt GPIO của ESP32. Ngay khi có cạnh lên của xung 1PPS, ngắt ISR sẽ chốt giá trị bộ đếm microsecond timer nội bộ để tự động hiệu chỉnh sai số trôi dạt của thạch anh RTC trong đồng hồ, giữ độ chính xác thời gian chuẩn tuyệt đối."*
 
 ---
 
-### ❓ Câu 18: "UI Watchdog Guard: Thuật toán phục hồi cụ thể khi GUI bị treo?"
-* **🗣️ Kịch bản trả lời:**
+### Câu 18: "UI Watchdog Guard: Thuật toán phục hồi cụ thể khi GUI bị treo?"
+* **Kịch bản trả lời:**
   > *"Dạ, em tạo một tác vụ Watchdog riêng biệt có mức ưu tiên cao nhất để giám sát một biến đếm nhịp tim `g_ui_heartbeat`.  
   > Trong vòng lặp chính của LVGL, cứ mỗi chu kỳ ứng dụng sẽ nạp lại biến đếm bằng 10. Cứ mỗi giây, watchdog task giảm biến đếm đi 1 đơn vị.  
   > Nếu biến đếm giảm về 0 (nghĩa là tác vụ đồ họa bị treo hoặc deadlock quá 10 giây): watchdog sẽ ghi lại nguyên nhân lỗi vào phân vùng RTC Memory, sau đó chủ động xóa và tạo lại task LVGL mới. Nếu sau 30 giây mà hệ thống vẫn không phản hồi thì mới kích hoạt ngắt Watchdog phần cứng để reboot toàn bộ chip."*
 
 ---
 
+### Câu 19: "Khi chạy thực tế, Smartwatch hay gặp lỗi chạy tầm 5, 10 đến 30 phút thì bị đơ máy rồi tự reset. Bạn phân tích nguyên nhân gốc rễ và xử lý thế nào?"
+* **Kịch bản trả lời:**
+  > *"Trong hệ thống đồng hồ thông minh chạy FreeRTOS và thư viện đồ họa LVGL trên ESP32-S3, hiện tượng thiết bị bị đơ sau một thời gian vận hành bắt nguồn từ 3 cơ chế lỗi chính:  
+  > - **Hiện tượng:** Thiết bị vận hành bình thường lúc ban đầu; sau 5 đến 30 phút, màn hình bị đóng băng, cảm ứng mất phản hồi, và sau 5 giây hệ thống tự động khởi động lại.  
+  > - **3 Nguyên nhân kỹ thuật:**  
+  >   1. **Rò rỉ và phân mảnh bộ nhớ Heap:** Mỗi giây khi nhận dữ liệu nhịp tim MAX30102 hoặc thông báo BLE, mã nguồn gọi các hàm định dạng chuỗi động (`lv_label_set_text_fmt`, cJSON) mà bỏ sót lệnh `free()` trong nhánh xử lý lỗi. Sau 15 - 30 phút, Heap cạn kiệt hoặc bị xé vụn, hàm cấp phát trả về `NULL`. Thao tác truy xuất vào con trỏ NULL kích hoạt ngoại lệ `LoadStoreProhibited` và gây reset chip.  
+  >   2. **Xung đột an toàn luồng LVGL và Deadlock:** Thư viện LVGL không hỗ trợ thread-safe mặc định. Nếu tác vụ BLE hoặc cảm biến gọi trực tiếp hàm cập nhật giao diện mà không có Mutex bảo vệ (`lvgl_port_lock()`), hai lõi CPU cùng ghi vào cây Widget Tree gây vòng lặp vô hạn. Khi tác vụ đồ họa bị nghẽn quá 5 giây, Task Watchdog Timer (TWDT) không được nạp lại sẽ kích hoạt ngắt phần cứng khởi động lại hệ thống.  
+  >   3. **Khóa bus I2C (SDA Stuck Low):** Khi cảm biến bị sụt áp hoặc nhiễu đường truyền, chân SDA có thể bị giữ ở mức thấp. Nếu driver I2C không cấu hình timeout, CPU sẽ chờ cờ phần cứng vô hạn, làm treo tác vụ cảm biến và kích hoạt Watchdog.  
+  > - **Giải pháp 4 bước xử lý:**  
+  >   1. **Kiến trúc truyền thông qua FreeRTOS Queue:** Tác vụ BLE và cảm biến không gọi trực tiếp hàm LVGL mà chỉ đóng gói dữ liệu vào Struct gửi vào Queue; duy nhất tác vụ giao diện đọc Queue và render, loại bỏ nguy cơ tranh chấp và Deadlock.  
+  >   2. **Cơ chế phục hồi bus I2C qua 9 xung Clock:** Thiết lập timeout phần cứng 25ms cho mọi thao tác I2C. Nếu phát hiện chân SDA bị kẹt ở mức 0, CPU phát 9 xung clock trên đường SCL để giải phóng đường truyền.  
+  >   3. **Kiểm soát bộ nhớ tĩnh:** Không dùng `malloc()` trong chu kỳ runtime; sử dụng bộ đệm tĩnh `static char` cho các chuỗi hiển thị. Giám sát `uxTaskGetStackHighWaterMark()` để bảo đảm ngăn xếp mỗi tác vụ luôn dư tối thiểu 1KB.  
+  >   4. **Cấu hình Watchdog TWDT 5 giây kết hợp lưu vết RTC:** Thiết lập TWDT 5000ms. Khi phát sinh sự cố, hệ thống ghi mã lỗi và địa chỉ Program Counter vào vùng nhớ RTC trước khi reset để khôi phục trạng thái đếm bước chân mà không làm mất dữ liệu người dùng."*
+
+---
+
 ## 4.4. DỰ ÁN 4 (Internship): Hệ Thống Giám Sát & Điều Khiển Tép Bạc
 
-### ❓ Câu 19: "Bộ lọc Moving Average giảm nhiễu 40%: Window size bao nhiêu? Tại sao chọn kích thước đó?"
-* **🗣️ Kịch bản trả lời:**
+### Câu 20: "Bộ lọc Moving Average giảm nhiễu 40%: Window size bao nhiêu? Tại sao chọn kích thước đó?"
+* **Kịch bản trả lời:**
   > *"Dạ, em chọn kích thước cửa sổ lọc N = 16 mẫu.  
   > Lý do thứ nhất là về tối ưu: vì 16 là lũy thừa của 2, nên phép chia lấy trung bình được trình biên dịch tối ưu thành phép dịch bit phải 4 vị trí (`>> 4`), không tốn chu kỳ chia số nguyên của CPU.  
   > Lý do thứ hai là về cân bằng giữa độ mịn và độ trễ: Trong môi trường ao tôm, máy bơm công suất lớn sinh ra rất nhiều xung nhiễu gai điện. Nếu chọn cửa sổ quá nhỏ như N=4 thì không lọc được nhiễu; còn nếu chọn N=64 thì tín hiệu quá trễ, không phát hiện kịp sự cố môi trường. Cửa sổ N=16 ở tần số lấy mẫu 10Hz mang lại độ trễ chỉ 1.6 giây, giảm 40% phương sai nhiễu mà vẫn đảm bảo phản hồi tức thì cho thuật toán điều khiển relay."*
 
 ---
 
-### ❓ Câu 20: "Lỗi Timing trên đường truyền RS485: Bắt lỗi bằng Oscilloscope thế nào?"
-* **🗣️ Kịch bản trả lời:**
+### Câu 21: "Lỗi Timing trên đường truyền RS485: Bắt lỗi bằng Oscilloscope thế nào?"
+* **Kịch bản trả lời:**
   > *"Dạ, đường truyền RS485 hoạt động ở chế độ bán song công, vi điều khiển phải điều khiển chân DE để chuyển đổi giữa chế độ truyền và nhận.  
   > Khi đo bằng máy hiện sóng, em kẹp kênh 1 vào chân DE và kênh 2 vào đường TX của vi điều khiển. Em phát hiện ra lỗi: code cũ khi thấy cờ TXE bật lên thì lập tức hạ chân DE về 0 để chuyển sang nhận. Nhưng lúc đó byte cuối cùng mới chỉ vừa chuyển từ thanh ghi DR sang Shift Register và chưa truyền xong ra đường dây, dẫn tới Stop bit bị cắt cụt giữa chừng và cảm biến báo lỗi Framing Error.  
   > Em sửa lại bằng cách chờ cờ TC (Transmission Complete) bật lên rồi mới hạ chân DE, đảm bảo toàn bộ byte kể cả Stop bit đã rời khỏi chân truyền vật lý an toàn."*
 
 ---
 
-### ❓ Câu 21: "MQTT 99.8% Uptime & Tối ưu hóa Latency FreeRTOS: Con số 0.2% từ đâu ra?"
-* **🗣️ Kịch bản trả lời:**
+### Câu 22: "MQTT 99.8% Uptime & Tối ưu hóa Latency FreeRTOS: Con số 0.2% từ đâu ra?"
+* **Kịch bản trả lời:**
   > *"Dạ, con số 0.2% Downtime tương đương khoảng 2.8 phút mất kết nối mỗi ngày. Phân tích log thực tế cho thấy nguyên nhân chủ yếu do sóng WiFi ngoài trang trại bị suy hao khi trời mưa giông hoặc router cấp phát lại IP. Em áp dụng thuật toán Exponential Backoff with Jitter để tự động kết nối lại an toàn, đồng thời lưu tạm dữ liệu vào bộ nhớ Flash để đẩy bù khi có mạng.  
   > Còn về độ trễ FreeRTOS giảm từ 120ms xuống dưới 50ms: em tách rời tác vụ đọc cảm biến chậm khỏi tác vụ truyền tin mạng, đồng thời chuyển sang dùng Direct-to-Task Notifications thay vì Semaphore để đánh thức tác vụ ngay lập tức, giảm thời gian chuyển đổi ngữ cảnh từ 15 microsecond xuống dưới 3 microsecond."*
 
+
 ---
 
-# PHẦN 5 — TÌNH HUỐNG THỰC ĐỊA, QUY CHUẨN GIT & KỊCH BẢN PHỎNG VẤN (STAR)
+# PHẦN 5: TÌNH HUỐNG THỰC TẾ, QUY CHUẨN GIT VÀ KỊCH BẢN PHỎNG VẤN
 
 ### 5.1. Xử lý sự cố Thread RTOS bị treo / không được cấp CPU
 1. **Kiểm tra Deadlock do Mutex**: Xem Thread có đang chờ một Mutex bị giữ bởi tác vụ khác không nhả ra.

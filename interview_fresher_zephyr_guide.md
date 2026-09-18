@@ -54,32 +54,167 @@
 ### 1.1. Từ khóa `volatile` và cơ chế tối ưu của Compiler
 
 #### Câu hỏi: "Bản chất của `volatile` là gì? Tại sao thiếu nó thì code đọc thanh ghi hoặc nhận ngắt ISR sẽ chạy sai khi bật cờ tối ưu `-O2` / `-O3`?"
-* **Bản chất**: `volatile` thông báo cho Compiler biết rằng giá trị của ô nhớ có thể bị thay đổi bất kỳ lúc nào bởi phần cứng (Hardware register), một ngắt (ISR), hoặc một luồng song song khác. Compiler **cấm tối ưu hóa biến này** (cấm lưu tạm giá trị vào thanh ghi CPU R0-R12 và cấm xóa các lệnh đọc/ghi ô nhớ).
-* **3 trường hợp bắt buộc trong Embedded**:
-  1. Con trỏ trỏ tới thanh ghi phần cứng (Memory-Mapped I/O):
-     ```c
-     #define USART1_ISR (*(volatile uint32_t *)0x4001101CUL)
-     ```
-  2. Biến cờ (Flag) hoặc biến toàn cục chia sẻ giữa ngắt ISR và luồng `main()`:
-     ```c
-     volatile uint8_t g_rx_flag = 0;
-     ```
-  3. Biến dùng tạo vòng lặp delay thô (nếu thiếu `volatile`, compiler tối ưu xóa sạch vòng for).
-* **Mổ xẻ Assembly khi thiếu `volatile`**:
-  ```c
-  while (!g_rx_flag);
-  ```
-  * **Khi có `volatile`**: Mỗi lần lặp, CPU đều phát lệnh `LDR R0, [g_rx_flag]` để đọc trực tiếp từ RAM.
-  * **Khi thiếu `volatile` (với cờ `-O2`)**: Compiler đọc `g_rx_flag` vào thanh ghi `R0` đúng 1 lần trước vòng lặp. Trong vòng lặp không thấy lệnh nào sửa biến này, Compiler sinh mã:
-    ```assembly
-    LDR  R0, =g_rx_flag
-    LDR  R1, [R0]        ; Đọc RAM 1 lần duy nhất
-    CMP  R1, #0
-    BNE  .exit_loop
-    .loop:
-    B    .loop           ; Nhảy tại chỗ vĩnh viễn (Treo máy!)
-    ```
-    Dù ISR có đổi `g_rx_flag = 1` trong RAM thì CPU vẫn loop vô tận trên thanh ghi `R1`.
+
+#### 1. Bản chất kỹ thuật theo tiêu chuẩn C (ISO C99 / C11 Section 5.1.2.3):
+* Từ khóa `volatile` là một Type Qualifier thông báo cho trình biên dịch (Compiler) rằng giá trị của đối tượng bộ nhớ có thể bị biến đổi bất kỳ lúc nào bởi các tác nhân nằm ngoài luồng thực thi hiện tại (như phần cứng ngoại vi, ngắt ISR, hoặc một luồng song song khác).
+* **Quy tắc As-If Rule & Sequence Points**: Trong chuẩn C, mọi thao tác truy cập (đọc hoặc ghi) vào một đối tượng `volatile` được phân loại là **Observable Behavior** (hành vi quan sát được). Compiler bị cấm tuyệt đối:
+  1. Không được loại bỏ thao tác truy cập ô nhớ (Dead Code Elimination).
+  2. Không được hoán đổi thứ tự truy xuất giữa các đối tượng `volatile` qua các điểm tuần tự (Sequence Points).
+  3. Không được lưu đệm (cache) giá trị của biến vào thanh ghi CPU (Register Allocation) qua các vòng lặp.
+
+#### 2. Ba trường hợp bắt buộc phải dùng `volatile` trong Embedded:
+1. **Con trỏ trỏ tới thanh ghi phần cứng (Memory-Mapped I/O Registers)**:
+   ```c
+   #define USART1_ISR (*(volatile uint32_t *)0x4001101CUL)
+   ```
+2. **Biến cờ (Flag) hoặc biến trạng thái chia sẻ giữa ISR và luồng thực thi nền (`main()` / Task)**:
+   ```c
+   volatile uint8_t g_rx_ready = 0;
+   ```
+3. **Biến dùng trong các hàm trễ thô (Software Busy-Wait Delays)**:
+   ```c
+   void delay_cycles(volatile uint32_t count) {
+       while (count--);
+   }
+   ```
+
+---
+
+#### 3. Dẫn chứng thực nghiệm hoàn chỉnh (End-to-End C Code & Mổ xẻ Assembly):
+
+Xét chương trình C thực tế trong hệ thống nhúng: luồng nền `main()` kiểm tra cờ nhận dữ liệu UART `g_rx_ready` để xử lý gói tin, trong khi cờ này được dựng lên bất đồng bộ từ bên trong trình phục vụ ngắt ngoại vi `USART1_IRQHandler()`.
+
+```c
+/* File: main.c */
+#include <stdint.h>
+#include <stdbool.h>
+
+extern void process_uart_payload(void);
+
+/* Bối cảnh: Biến cờ toàn cục chia sẻ giữa ngắt và luồng chính */
+#if defined(USE_VOLATILE)
+    volatile uint8_t g_rx_ready = 0; /* Đúng chuẩn hệ thống nhúng */
+#else
+    uint8_t g_rx_ready = 0;          /* THIẾU volatile -> Gây lỗi tối ưu hóa */
+#endif
+
+/* Luồng thực thi nền (Background Task) */
+void wait_for_uart_packet(void) {
+    while (g_rx_ready == 0) {
+        /* Chờ cờ ngắt phần cứng dựng lên */
+    }
+    process_uart_payload();
+}
+
+/* Trình phục vụ ngắt phần cứng (Hardware ISR) */
+void USART1_IRQHandler(void) {
+    /* Đọc dữ liệu từ ngoại vi và bật cờ thông báo */
+    g_rx_ready = 1;
+}
+```
+
+---
+
+#### 4. So sánh Assembly khi biên dịch với GCC ARM Cortex-M7 (`arm-none-eabi-gcc -mcpu=cortex-m7 -mthumb -O2 -S`):
+
+##### Trường hợp A: Khi THIẾU `volatile` (Sinh mã lỗi - Treo máy vĩnh viễn)
+
+* **Cơ chế tối ưu của Compiler**:
+  Khi bật cờ tối ưu hóa `-O2` hoặc `-O3`, trình biên dịch thực hiện kỹ thuật **Loop-Invariant Code Motion (LICM)** và **Register Hoisting**.
+  Quan sát thân hàm `wait_for_uart_packet()`, Compiler phân tích luồng điều khiển (Control Flow Graph) và nhận thấy: bên trong vòng lặp `while (g_rx_ready == 0)` hoàn toàn không có lệnh gán nào cho biến `g_rx_ready`, cũng không có lời gọi hàm ngoài nào có thể can thiệp vào biến này. Do `g_rx_ready` không được khai báo `volatile`, Compiler kết luận giá trị của `g_rx_ready` là hằng số bất biến xuyên suốt vòng lặp. Nó đưa lệnh đọc bộ nhớ (`LDRB`) ra khỏi vòng lặp và chỉ đọc đúng một lần duy nhất trước khi lặp.
+
+```assembly
+wait_for_uart_packet:
+    ldr   r3, .L_ADDR           ; r3 = Địa chỉ của biến g_rx_ready (&g_rx_ready)
+    ldrb  r2, [r3]              ; ĐỌC RAM ĐÚNG 1 LẦN DUY NHẤT: r2 = g_rx_ready (Giá trị ban đầu = 0)
+    cbz   r2, .L_LOOP           ; Nếu r2 == 0, nhảy vào nhãn vòng lặp .L_LOOP
+    b     process_uart_payload  ; Nếu r2 != 0, thoát lặp gọi hàm xử lý
+
+.L_LOOP:
+    b     .L_LOOP               ; BẪY TREO CỨNG: Lệnh nhảy tại chỗ vô tận (Infinite Loop)!
+
+.L_ADDR:
+    .word g_rx_ready
+```
+
+* **Hậu quả phần cứng thực tế**:
+  1. Khi CPU thực thi `wait_for_uart_packet()`, nó nạp `g_rx_ready` (giá trị 0) từ SRAM vào thanh ghi CPU `r2`.
+  2. Lệnh `cbz r2, .L_LOOP` kiểm tra thấy `r2 == 0` nên lập tức phân nhánh tới `.L_LOOP`.
+  3. Tại `.L_LOOP`, CPU thực thi lệnh `b .L_LOOP` nhảy vòng tròn tại chỗ, tiêu tốn 100% tài nguyên xử lý của lõi Cortex-M7.
+  4. Khi có dữ liệu UART đến, phần cứng kích hoạt ngắt, CPU tạm dừng và nhảy vào `USART1_IRQHandler()`. Lệnh ngắt ghi thành công giá trị `1` vào ô nhớ `g_rx_ready` trong SRAM.
+  5. Khi ISR kết thúc (`BX LR`), CPU quay trở lại vị trí bị cắt ngang: đó chính là vòng lặp `.L_LOOP` (`b .L_LOOP`). Vì trong `.L_LOOP` **hoàn toàn không có bất kỳ lệnh `LDRB` nào đọc lại SRAM**, CPU tiếp tục nhảy tại chỗ vĩnh viễn trên thanh ghi `r2` vốn vẫn giữ giá trị 0. Toàn bộ thiết bị bị treo cứng (System Hang).
+
+---
+
+##### Trường hợp B: Khi CÓ `volatile` (Sinh mã chính xác - Luôn đồng bộ với RAM)
+
+* **Cơ chế biên dịch**:
+  Từ khóa `volatile` cấm trình biên dịch thực hiện kỹ thuật LICM và cấm lưu đệm giá trị vào thanh ghi. Mọi lần đánh giá biểu thức điều kiện `g_rx_ready == 0` đều bắt buộc phải phát ra một chu kỳ truy xuất bus bộ nhớ thực sự.
+
+```assembly
+wait_for_uart_packet:
+    ldr   r3, .L_ADDR           ; r3 = Địa chỉ của biến g_rx_ready (&g_rx_ready)
+
+.L_POLL_LOOP:
+    ldrb  r2, [r3]              ; MỖI VÒNG LẶP ĐỀU BẮT BUỘC PHÁT LỆNH ĐỌC TỪ SRAM VÀO r2!
+    cbz   r2, .L_POLL_LOOP      ; Nếu r2 == 0, quay lại .L_POLL_LOOP đọc lại từ SRAM
+    b     process_uart_payload  ; Thoát lặp ngay khi r2 != 0 để xử lý gói tin
+
+.L_ADDR:
+    .word g_rx_ready
+```
+
+* **Cơ chế vận hành thực tế**:
+  1. Lệnh `ldrb r2, [r3]` nằm ngay bên trong thân vòng lặp `.L_POLL_LOOP`.
+  2. Khi chưa có dữ liệu, CPU liên tục phát các chu kỳ đọc bus SRAM.
+  3. Ngay khi `USART1_IRQHandler()` được kích hoạt và nạp `1` vào ô nhớ `g_rx_ready` trong SRAM, chu kỳ đọc `ldrb r2, [r3]` kế tiếp sẽ nạp giá trị `1` vào thanh ghi `r2`.
+  4. Lệnh kiểm tra `cbz r2, .L_POLL_LOOP` thấy `r2 != 0` nên không nhảy nữa, CPU thoát vòng lặp và thực thi lệnh `b process_uart_payload` một cách chuẩn xác, đúng với ý đồ thiết kế.
+
+---
+
+#### 5. Mổ xẻ đối với Thanh Ghi Phần Cứng (Memory-Mapped Peripheral Register):
+
+Xét thao tác kiểm tra cờ nhận dữ liệu `RXNE` trong thanh ghi trạng thái `USART_ISR`:
+
+```c
+/* Nếu khai báo con trỏ thông thường THIẾU volatile: */
+#define USART1_ISR_BUGGY  (*(uint32_t *)0x4001101CUL)
+
+void wait_rxne_buggy(void) {
+    while ((USART1_ISR_BUGGY & (1U << 5)) == 0); /* Chờ cờ RXNE (bit 5) = 1 */
+}
+
+/* Mã Assembly sinh ra với -O2: */
+wait_rxne_buggy:
+    ldr   r3, =0x4001101C
+    ldr   r3, [r3]              ; Đọc thanh ghi phần cứng ĐÚNG 1 LẦN DUY NHẤT
+    tst   r3, #32               ; Kiểm tra bit 5 (RXNE)
+    bne   .L_EXIT
+.L_STUCK:
+    b     .L_STUCK              ; Treo máy tại chỗ, không bao giờ đọc lại phần cứng!
+.L_EXIT:
+    bx    lr
+```
+
+Khi có `volatile`:
+```c
+#define USART1_ISR_OK     (*(volatile uint32_t *)0x4001101CUL)
+
+void wait_rxne_ok(void) {
+    while ((USART1_ISR_OK & (1U << 5)) == 0);
+}
+
+/* Mã Assembly sinh ra với -O2: */
+wait_rxne_ok:
+    ldr   r3, =0x4001101C
+.L_READ_HARDWARE:
+    ldr   r2, [r3]              ; PHÁT CHU KỲ BUS APB ĐỌC MỚI THANH GHI Ở MỖI VÒNG LẶP!
+    tst   r2, #32
+    beq   .L_READ_HARDWARE      ; Chưa có byte mới thì tiếp tục đọc thanh ghi phần cứng
+    bx    lr
+```
+
+* **Kết luận đúc kết khi phỏng vấn**: `volatile` không phải là cơ chế đồng bộ hóa luồng (Thread-safety) hay tạo rào cản bộ nhớ (Memory Barrier / Cache Coherency), mà là **một chỉ thị bắt buộc đối với trình biên dịch** nhằm vô hiệu hóa các phép tối ưu lưu đệm thanh ghi và xóa bỏ thao tác ô nhớ, bảo đảm mã máy phát ra luôn đọc/ghi trực tiếp tới địa chỉ vật lý của phần cứng và SRAM.
 
 ---
 
@@ -168,30 +303,70 @@ Bộ nhớ FLASH ROM (Non-volatile):
   * `const int *p`: Con trỏ trỏ tới dữ liệu hằng. Không thể sửa nội dung `*p = 5`, nhưng con trỏ có thể đổi sang trỏ địa chỉ khác `p = &other`.
   * `int * const p`: Con trỏ hằng trỏ tới dữ liệu biến đổi. Không thể đổi địa chỉ trỏ `p = &other`, nhưng có thể sửa nội dung `*p = 10` (Thanh ghi ngoại vi vi điều khiển chính là con trỏ hằng).
   * `const int * const p`: Cả địa chỉ con trỏ lẫn dữ liệu ô nhớ đều là hằng số cố định, không thể thay đổi.
-* **Mẫu thiết kế Driver Callback dùng Function Pointer**:
-  ```c
-  typedef void (*can_rx_callback_t)(uint32_t can_id, const uint8_t *data, uint8_t dlc);
+* **Mẫu thiết kế Driver Callback dùng Function Pointer (Kiến trúc phân tầng hoàn chỉnh)**:
 
-  typedef struct {
-      CAN_TypeDef *instance;
-      can_rx_callback_t rx_cb; /* Con trỏ hàm callback */
-  } can_driver_handle_t;
+```c
+/* ================= TẦNG DRIVER NGOẠI VI (can_driver.h & can_driver.c) ================= */
+typedef void (*can_rx_callback_t)(uint32_t can_id, const uint8_t *data, uint8_t dlc);
 
-  void CAN_RegisterRxCallback(can_driver_handle_t *hcan, can_rx_callback_t callback) {
-      if (hcan != NULL) hcan->rx_cb = callback;
-  }
+typedef struct {
+    CAN_TypeDef *instance;
+    can_rx_callback_t rx_cb; /* Con trỏ hàm callback lưu hàm xử lý của tầng trên */
+} can_driver_handle_t;
 
-  void CAN1_RX0_IRQHandler(void) {
-      if (CAN1->RF0R & CAN_RF0R_FMP0) {
-          uint32_t id = (CAN1->sFIFOMailBox[0].RIR >> 21);
-          uint8_t data[8];
-          if (g_hcan1.rx_cb != NULL) {
-              g_hcan1.rx_cb(id, data, 8);
-          }
-          CAN1->RF0R |= CAN_RF0R_RFOM0; /* Release FIFO0 */
-      }
-  }
-  ```
+/* Đối tượng driver quản lý phần cứng */
+static can_driver_handle_t s_hcan1 = { .instance = CAN1, .rx_cb = NULL };
+
+/* Hàm cho phép tầng Application đăng ký callback mà không sửa code driver */
+void CAN_RegisterRxCallback(can_driver_handle_t *hcan, can_rx_callback_t callback) {
+    if (hcan != NULL) {
+        hcan->rx_cb = callback;
+    }
+}
+
+/* Trình phục vụ ngắt phần cứng: Gọi ngược về hàm của tầng Application */
+void CAN1_RX0_IRQHandler(void) {
+    if (CAN1->RF0R & CAN_RF0R_FMP0) { /* Kiểm tra cờ có bản tin trong FIFO0 */
+        uint32_t id = (CAN1->sFIFOMailBox[0].RIR >> 21);
+        uint8_t dlc = (CAN1->sFIFOMailBox[0].RDTR & 0x0F);
+        uint8_t data[8];
+        
+        uint32_t rdl = CAN1->sFIFOMailBox[0].RDLR;
+        uint32_t rdh = CAN1->sFIFOMailBox[0].RDHR;
+        data[0] = (uint8_t)(rdl >> 0);  data[1] = (uint8_t)(rdl >> 8);
+        data[2] = (uint8_t)(rdl >> 16); data[3] = (uint8_t)(rdl >> 24);
+        data[4] = (uint8_t)(rdh >> 0);  data[5] = (uint8_t)(rdh >> 8);
+        data[6] = (uint8_t)(rdh >> 16); data[7] = (uint8_t)(rdh >> 24);
+
+        /* Kích hoạt callback nếu tầng trên đã đăng ký */
+        if (s_hcan1.rx_cb != NULL) {
+            s_hcan1.rx_cb(id, data, dlc);
+        }
+
+        /* Ghi 1 trực tiếp để xóa cờ W1C giải phóng Mailbox (Tuyệt đối không dùng |=) */
+        CAN1->RF0R = CAN_RF0R_RFOM0;
+    }
+}
+
+/* ================= TẦNG ỨNG DỤNG (main.c) ================= */
+/* Hàm xử lý của Application: Tách biệt 100% khỏi thanh ghi phần cứng */
+static void app_vehicle_telemetry_handler(uint32_t can_id, const uint8_t *data, uint8_t dlc) {
+    if (can_id == 0x123 && dlc >= 4) {
+        uint16_t speed = (data[0] << 8) | data[1];
+        uint16_t rpm   = (data[2] << 8) | data[3];
+        /* Cập nhật trạng thái ứng dụng... */
+    }
+}
+
+int main(void) {
+    /* Đăng ký hàm xử lý ứng dụng vào Driver */
+    CAN_RegisterRxCallback(&s_hcan1, app_vehicle_telemetry_handler);
+
+    while (1) {
+        /* Luồng chính chạy nền tự do, ngắt ngoại vi sẽ tự định tuyến callback */
+    }
+}
+```
 
 ---
 
@@ -285,8 +460,8 @@ int is_little_endian(void) {
 
 typedef struct {
     uint8_t buffer[RING_BUFFER_SIZE];
-    volatile uint16_t head; /* Chỉ ISR ghi */
-    volatile uint16_t tail; /* Chỉ main() đọc */
+    volatile uint16_t head; /* Chỉ Producer (ISR) ghi */
+    volatile uint16_t tail; /* Chỉ Consumer (main) đọc */
 } ring_buffer_t;
 
 void ring_buffer_init(ring_buffer_t *rb) {
@@ -296,7 +471,7 @@ void ring_buffer_init(ring_buffer_t *rb) {
 
 bool ring_buffer_push(ring_buffer_t *rb, uint8_t data) {
     uint16_t next_head = (rb->head + 1) & RING_BUFFER_MASK;
-    if (next_head == rb->tail) return false; /* Buffer đầy */
+    if (next_head == rb->tail) return false; /* Buffer đầy (Giữ trống 1 slot phân biệt rỗng/đầy) */
     rb->buffer[rb->head] = data;
     rb->head = next_head;
     return true;
@@ -308,7 +483,38 @@ bool ring_buffer_pop(ring_buffer_t *rb, uint8_t *data) {
     rb->tail = (rb->tail + 1) & RING_BUFFER_MASK;
     return true;
 }
+
+/* ================= VÍ DỤ SỬ DỤNG THỰC TẾ (END-TO-END DEMO) ================= */
+static ring_buffer_t s_uart_rx_rb;
+
+/* Trình phục vụ ngắt UART (Single Producer - Chỉ ghi head) */
+void USART1_IRQHandler(void) {
+    if (USART1->ISR & (1U << 5)) { /* Kiểm tra cờ RXNE (Read Data Register Not Empty) */
+        uint8_t byte = (uint8_t)(USART1->RDR & 0xFF);
+        if (!ring_buffer_push(&s_uart_rx_rb, byte)) {
+            /* Bộ đệm đầy: Ghi nhận lỗi Buffer Overflow */
+        }
+    }
+}
+
+/* Luồng thực thi nền main (Single Consumer - Chỉ ghi tail) */
+int main(void) {
+    ring_buffer_init(&s_uart_rx_rb);
+    /* Cấu hình UART và kích hoạt ngắt NVIC... */
+
+    while (1) {
+        uint8_t rx_data;
+        if (ring_buffer_pop(&s_uart_rx_rb, &rx_data)) {
+            process_incoming_byte(rx_data); /* Xử lý dữ liệu nhận được */
+        }
+    }
+}
 ```
+
+* **Cơ sở kỹ thuật Thread-Safe không cần Mutex (Mô hình SPSC Lock-Free)**:
+  1. **Tách biệt quyền hạn ghi**: `head` chỉ được cập nhật bởi một Producer duy nhất (ngắt ISR), còn `tail` chỉ được cập nhật bởi một Consumer duy nhất (luồng `main()`).
+  2. **Tính nguyên tử (Atomic Access)**: Trên kiến trúc vi xử lý 32-bit ARM Cortex-M, lệnh đọc và ghi biến kiểu `uint16_t` là lệnh đơn lẻ (`LDRH` / `STRH`). CPU không bao giờ bị cắt ngang giữa chừng khi đang đọc/ghi một con trỏ 16-bit.
+  3. **Không xung đột điều kiện tương tranh (Race Condition)**: Ngắt ISR có thể nhảy vào bất kỳ lúc nào để nạp dữ liệu và tăng `head`, nhưng nó không bao giờ sửa đổi `tail`. Luồng `main()` chỉ kiểm tra vị trí của `head` để quyết định đọc dữ liệu. Vì vậy, hệ thống hoàn toàn Thread-Safe mà không cần dùng Mutex hay cấm ngắt toàn cục (`__disable_irq()`), giúp loại bỏ 100% thời gian trễ ngắt (Zero Interrupt Latency Overhead).
 
 ---
 

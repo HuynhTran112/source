@@ -447,6 +447,26 @@ sequenceDiagram
     Z_CAN-->>App: CAN Gateway sẵn sàng vận hành (Running at 500 kbps)
 ```
 
+#### Diễn giải chi tiết từng bước quy trình cấu hình phần cứng:
+
+1. **Cấp xung nhịp ngoại vi CAN1 qua khối RCC:**
+   - Driver ghi bit `CAN1EN = 1` (bit 25) trong thanh ghi `RCC_APB1ENR`. Ngoại vi bxCAN1 kết nối vào bus APB1 với tần số xung nhịp tối đa $54\text{ MHz}$. Việc cấp xung nhịp là điều kiện bắt buộc trước khi thao tác trên bất kỳ thanh ghi nào của bxCAN.
+2. **Ghép kênh chân GPIO (Pinmux) sang AF9:**
+   - Chân PB8 (CAN1_RX) và PB9 (CAN1_TX) được cấu hình sang chức năng Alternate Function `AF9` thông qua thanh ghi `GPIOB_AFRH` (nạp giá trị `0b1001` vào trường `AFRH8` và `AFRH9`).
+   - Cấu hình tốc độ đáp ứng xung cao (`Very High Speed`) trong `GPIOB_OSPEEDR` và bật điện trở kéo lên (`Pull-Up`) trong `GPIOB_PUPDR` cho chân RX để giữ mức logic Recessive ổn định khi đường truyền ở trạng thái nghỉ.
+3. **Bắt tay chuyển sang Chế độ Khởi tạo (Initialization Mode Handshake):**
+   - Phần cứng bxCAN chỉ cho phép sửa đổi định thời bit và cấu hình bộ lọc khi đang ở Chế độ Khởi tạo. Driver ghi bit `INRQ = 1` trong thanh ghi `CAN_MCR`.
+   - Driver thực hiện vòng lặp polling kiểm tra cờ `INAK` trong thanh ghi `CAN_MSR`. Khi cờ `INAK = 1`, phần cứng xác nhận toàn bộ khối truyền nhận đã tạm dừng và sẵn sàng nhận thông số mới.
+4. **Nạp tham số định thời Bit Timing và bộ lọc phần cứng:**
+   - Cấu hình thanh ghi `CAN_BTR` với giá trị đạt tốc độ $500\text{ kbps}$ tại điểm lấy mẫu $83.33\%$. Các tham số gồm Prescaler `BRP = 6` (nạp 5), `TS1 = 14` (nạp 13), `TS2 = 3` (nạp 2), và bước nhảy đồng bộ `SJW = 1` (nạp 0).
+   - Cấu hình Filter Banks: Ghi bit `FINIT = 1` trong `CAN_FMR` để mở khóa các thanh ghi bộ lọc. Nạp 6 bộ lọc 32-bit Mask vào các thanh ghi `CAN_FxR1` và `CAN_FxR2`, gán bộ đệm nhận FIFO0, sau đó ghi bit `FACTx = 1` trong `CAN_FA1R` để kích hoạt từng bộ lọc. Cuối cùng xóa `FINIT = 0` để khóa bảo vệ cấu hình.
+5. **Bắt tay rời khỏi Init Mode sang Normal Mode:**
+   - Driver xóa bit `INRQ = 0` trong `CAN_MCR`. Phần cứng bxCAN bắt đầu giám sát đường truyền vật lý để tìm kiếm chuỗi đồng bộ 11 bit Recessive liên tiếp.
+   - Khi phát hiện đường bus rảnh đủ 11 bit, phần cứng tự động xóa cờ `INAK = 0` trong `CAN_MSR`, đưa bộ điều khiển chính thức hòa mạng.
+6. **Kích hoạt ngắt NVIC và khởi động hệ thống:**
+   - Driver ghi bit `FMPIE0 = 1` trong thanh ghi `CAN_IER` để cho phép sinh ngắt khi có bản tin hợp lệ vào FIFO0.
+   - Kích hoạt vector ngắt trên nhân Cortex-M7 qua hàm `NVIC_EnableIRQ(CAN1_RX0_IRQn)` với mức ưu tiên ngắt phù hợp, sẵn sàng cho luồng ứng dụng gọi `can_start()`.
+
 ---
 
 ### 3.2. Quy Trình Vận Hành & Bắt Tay Dữ Liệu Thời Gian Thực (Runtime Dataflow)
@@ -489,6 +509,23 @@ sequenceDiagram
     end
 ```
 
+#### Diễn giải chi tiết luồng dữ liệu và bắt tay thời gian thực:
+
+1. **Tiếp nhận khung tin vật lý và đối soát bộ lọc phần cứng:**
+   - Khung tin CAN 2.0B truyền trên đường dây vi sai được IC Transceiver chuyển đổi thành chuỗi xung số đi vào chân PB8. Khối phần cứng bxCAN đối soát ID của khung tin với 6 Filter Banks đã kích hoạt.
+   - Khi ID khớp với Bank 0 (ví dụ ID `0x201`), phần cứng tự động nạp toàn bộ ID, độ dài DLC và 8 byte dữ liệu vào Mailbox của bộ đệm FIFO0. Cờ số lượng bản tin `FMP0[1:0]` trong thanh ghi `CAN_RF0R` tăng lên, kích hoạt ngắt phần cứng `CAN1_RX0_IRQn`.
+2. **Xử lý ngắt ISR trong thời gian dưới $5\mu s$ (Zero-Blocking ISR):**
+   - Trình phục vụ ngắt `CAN_RX0_IRQHandler` đọc dữ liệu trực tiếp từ các thanh ghi: `CAN_RI0R` (Standard ID), `CAN_RDT0R` (DLC), `CAN_RDL0R` (Data byte 0 - 3) và `CAN_RDH0R` (Data byte 4 - 7).
+   - Ngay sau khi đọc xong, ISR ghi trực tiếp bit `RFOM0 = 1` vào thanh ghi `CAN_RF0R` để giải phóng Mailbox của FIFO0 cho phần cứng tiếp tục nhận bản tin tiếp theo, phòng tránh lỗi Overrun.
+   - Bản tin được đóng gói vào struct và đẩy vào hàng đợi Zephyr Message Queue thông qua lệnh phi phong tỏa `k_msgq_put(&can_rx_msgq, &frame, K_NO_WAIT)`. ISR lập tức kết thúc để trả quyền thực thi cho CPU.
+3. **Thẩm định an toàn chức năng theo chuẩn AUTOSAR E2E Profile 1:**
+   - Worker Thread (Thread 2) bị chặn ở lệnh `k_msgq_get()` được đánh thức ngay khi có dữ liệu trong hàng đợi.
+   - Luồng trích xuất trường Alive Counter 4-bit (giá trị tuần hoàn $0 \rightarrow 14$) để kiểm tra tính liên tục, phát hiện kịp thời lỗi mất khung tin hoặc lặp khung tin.
+   - Luồng tính toán mã CRC-8 SAE J1850 với đa thức sinh $0x1D$, giá trị khởi tạo $0xFF$ và hằng số `Data ID = 0x1001` trên 7 byte dữ liệu.
+4. **Phân nhánh xử lý dữ liệu và cập nhật hệ thống:**
+   - **Trường hợp hợp lệ:** Nếu mã CRC-8 trùng khớp và Alive Counter tăng tuần tự đúng quy chuẩn, luồng sử dụng công thức Fixed-Point để giải mã tín hiệu vật lý theo file Vector DBC: Tốc độ xe $V = \text{Raw} \times 0.01\text{ km/h}$, Vòng tua $RPM = \text{Raw} \times 0.25\text{ rpm}$. Các biến trạng thái được cập nhật an toàn qua thao tác nguyên tử (Atomic Update) để Thread Shell hiển thị ra bảng điều khiển.
+   - **Trường hợp lỗi:** Nếu CRC không khớp hoặc Alive Counter bị nhảy bước, luồng tăng biến đếm lỗi `g_e2e_fault_count` và phát cảnh báo vi phạm toàn vẹn dữ liệu ra Shell CLI để ghi nhận mã lỗi chẩn đoán (DTC).
+
 ---
 
 ### 3.3. Quy Trình Xử Lý Sự Cố & Phục Hồi An Toàn (Fault & Recovery Pipeline)
@@ -523,6 +560,20 @@ sequenceDiagram
         Mon->>Mon: Kích hoạt thuật toán Exponential Backoff (Thử lại sau 500ms, 1s, 2s, 5s)
     end
 ```
+
+#### Diễn giải chi tiết quy trình xử lý sự cố và phục hồi Bus-Off:
+
+1. **Giám sát suy thoái đường truyền và phát hiện lỗi Bus-Off:**
+   - Khi đường dây CAN gặp sự cố vật lý (chập mass, đứt trở đầu cuối, hoặc nhiễu điện từ mạnh), bộ điều khiển truyền tin thất bại và tăng bộ đếm lỗi truyền `TEC` thêm 8 đơn vị sau mỗi khung tin hỏng.
+   - Khi `TEC > 255`, phần cứng bxCAN tự động chuyển sang trạng thái Bus-Off để cách ly nút mạng, tránh làm tê liệt đường truyền chung của xe. Đồng thời, bit `BOFF` trong thanh ghi `CAN_ESR` bật lên mức 1 và kích hoạt ngắt lỗi trạng thái `CAN_SCE_IRQHandler`.
+2. **Kích hoạt quy trình an toàn Fail-Safe:**
+   - Trình phục vụ ngắt `CAN_SCE_IRQHandler` gửi tín hiệu Semaphore đánh thức tác vụ giám sát trạng thái hệ thống (`State Monitor Thread`).
+   - Tác vụ lập tức đình chỉ toàn bộ hoạt động truyền khung tin định kỳ nhằm ngăn chặn việc phát thêm dữ liệu vào đường truyền đang hỏng. Sau đó, tác vụ gọi hàm `can_recover(dev, K_MSEC(100))` để bắt đầu quy trình khôi phục theo chuẩn ISO 11898-1.
+3. **Giám sát điều kiện hòa mạng theo chuẩn ISO 11898-1:**
+   - Bộ điều khiển CAN chuyển sang chế độ phục hồi và bắt đầu lắng nghe tín hiệu trên đường bus. Theo quy định của chuẩn ISO, phần cứng bắt buộc phải đếm đủ 128 lần xuất hiện của chuỗi 11 bit Recessive liên tiếp (tương đương 128 khung tin rảnh không có xung đột).
+4. **Xử lý kết quả phục hồi:**
+   - **Phục hồi thành công:** Nếu sự cố vật lý đã được giải tỏa và phần cứng đếm đủ 128 chuỗi 11 bit rảnh trước khi hết thời gian chờ 100ms, cờ `BOFF` được tự động xóa về 0, bộ đếm `TEC` và `REC` reset về 0. Trạng thái mạng trở lại `CAN_STATE_ERROR_ACTIVE`, các tác vụ truyền nhận được kích hoạt lại bình thường.
+   - **Xử lý Timeout bằng Exponential Backoff:** Nếu sau 100ms mà đường dây vẫn bị ngắn mạch, hàm `can_recover()` trả về mã lỗi `-ETIMEDOUT`. Tác vụ giám sát kích hoạt thuật toán giãn cách thời gian thử lại lũy thừa (thử lại sau 500ms, 1s, 2s, 5s). Nếu sau 5 lần thử liên tiếp vẫn thất bại, hệ thống khóa chức năng phát và phát tín hiệu cảnh báo hỏng phần cứng ra bảng điều khiển.
 
 ---
 

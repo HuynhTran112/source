@@ -412,6 +412,34 @@ sequenceDiagram
     FAT-->>Main: Mount Thẻ Thành Công (Sẵn sàng phát Video 60 FPS)
 ```
 
+#### Diễn giải chi tiết từng bước khởi động phần cứng:
+
+1. **Kích hoạt xung nhịp RCC cho toàn bộ khối ngoại vi:**
+   - Kích hoạt bus AHB3 (`RCC_AHB3ENR` bit `FMCEN = 1`) để cấp xung cho bộ điều khiển bộ nhớ ngoài FMC vận hành tại $108\text{ MHz}$ ($HCLK / 2$).
+   - Kích hoạt bus AHB1 (`RCC_AHB1ENR`) cho các cổng GPIO (GPIOA, GPIOC, GPIOD, GPIOE, GPIOF, GPIOG, GPIOH, GPIOI).
+   - Kích hoạt bus APB2 (`RCC_APB2ENR`) cho bộ điều khiển màn hình LTDC (bit `LTDCEN = 1`) và bộ điều khiển thẻ nhớ SDMMC1 (bit `SDMMC1EN = 1`).
+2. **Ghép kênh chân GPIO (Pinmux):**
+   - Chân bus địa chỉ và dữ liệu FMC (D0 - D15, A0 - A11, BA0, BA1, SDCLK, SDCKE, SDNE0, SDNWE, SDNRAS, SDNCAS) được cấu hình sang chức năng Alternate Function `AF12`.
+   - Các chân tín hiệu song song RGB565 và xung nhịp đồng bộ màn hình LCD (R3-R7, G2-G7, B3-B7, HSYNC, VSYNC, DE, CLK) được gán sang chức năng `AF14`.
+   - Các chân giao tiếp thẻ nhớ SDMMC1 (D0 - D3, CLK, CMD) được cấu hình sang `AF12` ở chế độ Very High Speed với điện trở kéo lên nội.
+3. **Chuỗi 5 lệnh JEDEC khởi tạo chip SDRAM ngoài (Micron MT48LC4M32B2):**
+   - Lệnh 1 (Clock Configuration Enable): Phát xung clock và kích hoạt chân CKE bằng lệnh `FMC_SDCMR` Mode `0b001`.
+   - Lệnh 2 (PALL - Precharge All): Phát lệnh nạp điện trước toàn bộ 4 bank nhớ để xả điện áp cặn của các tụ lưu trữ.
+   - Lệnh 3 (Auto-Refresh): Phát liên tiếp 8 chu kỳ tự làm tươi để định hình trạng thái các tụ điện bên trong chip nhớ.
+   - Lệnh 4 (Load Mode Register - LMR): Nạp thanh ghi chế độ với CAS Latency = 2 chu kỳ và độ dài truyền chùm Burst Length = 1.
+   - Lệnh 5 (Normal Mode): Đưa SDRAM vào chế độ vận hành bình thường và nạp giá trị vào thanh ghi `FMC_SDRTR = 1667` để kích hoạt bộ đếm làm tươi tự động định kỳ mỗi $15.625\mu s$ ($64\text{ ms} / 4096\text{ rows}$).
+4. **Cấu hình định thời hiển thị LTDC panel 480x272 @ 60Hz:**
+   - Cấu hình các thanh ghi định thời quét: `LTDC_SSCR` (HSYNC = 41, VSYNC = 10), `LTDC_BPCR` (HBP = 13, VBP = 2), `LTDC_AWCR` (Active Width = 480, Active Height = 272), `LTDC_TWCR` (Total Width = 566, Total Height = 286).
+   - Cấu hình Layer 0: Gán địa chỉ bộ đệm Framebuffer vào SDRAM (`0xC0000000` trong `LTDC_L1CFBAR`), định dạng màu RGB565, độ dài dòng quét trong `LTDC_L1CFBLR`, sau đó bật bit `LTDC_EN` trong `LTDC_GCR`.
+5. **Giao thức khởi tạo 8 bước thẻ nhớ SDHC (SDMMC1):**
+   - Cấp xung nhịp định danh ban đầu $f_{OD} \le 400\text{ kHz}$. Gửi lệnh `CMD0` đưa thẻ về trạng thái IDLE.
+   - Gửi lệnh `CMD8` (Arg `0x1AA`) kiểm tra dải điện áp $2.7\text{V} - 3.6\text{V}$ và kiểm tra mẫu echo $0xAA$.
+   - Thực hiện vòng lặp gửi `ACMD41` với cờ `HCS = 1` (High Capacity Support). Thẻ SDHC phản hồi thanh ghi OCR với bit `CCS = 1` xác nhận hỗ trợ đánh địa chỉ theo khối (Block Addressing LBA 512B).
+   - Lần lượt gửi `CMD2` (lấy mã CID), `CMD3` (nhận địa chỉ tương đối RCA), và `CMD7` (chọn thẻ vào trạng thái Transfer State).
+   - Gửi `ACMD6` chuyển bus sang độ rộng 4-bit, sau đó nâng xung nhịp bus lên tốc độ tối đa $f_{SDCLK} = 48\text{ MHz}$.
+6. **Gắn kết hệ thống tệp tin ChaN FatFs:**
+   - Gọi hàm `f_mount(&s_fs, "", 1)` thực hiện đọc Boot Sector (Sector 0) và phân tích bảng Master Boot Record (MBR) / FAT32 BIOS Parameter Block. Sau khi kiểm tra chuỗi định danh hợp lệ, hệ thống sẵn sàng mở tệp tin video `.BIN`.
+
 ---
 
 ### 3.2. Quy Trình Vận Hành Streaming Video Zero-Copy (Runtime Dataflow)
@@ -451,6 +479,26 @@ sequenceDiagram
     end
 ```
 
+#### Diễn giải chi tiết luồng truyền phát video Zero-Copy thời gian thực:
+
+1. **Kích hoạt đọc khối thẻ nhớ đa cung LBA 512B:**
+   - Cứ mỗi chu kỳ $16.6\text{ ms}$ (tương ứng tốc độ làm tươi $60\text{ FPS}$), chương trình gọi hàm `f_read()` yêu cầu đọc 261,120 byte dữ liệu điểm ảnh (đúng bằng $480 \times 272 \times 2\text{ bytes}$).
+   - Tầng điều khiển SDMMC phát lệnh `CMD18` (Read Multiple Block). Thẻ MicroSD bắt đầu truyền chuỗi các khối dữ liệu 512 byte liên tục qua 4 đường data song song ở tần số $48\text{ MHz}$.
+2. **Vận chuyển dữ liệu Zero-Copy qua Bus Matrix AXI 64-bit:**
+   - Bộ điều khiển DMA nội của SDMMC1 trực tiếp chiếm quyền Master trên ma trận bus AXI, đẩy thẳng toàn bộ 261,120 byte từ FIFO phần cứng sang vùng nhớ Back-Buffer trên chip SDRAM ngoài (`0xC0040000`).
+   - Quá trình này không đi qua bộ nhớ SRAM nội của vi điều khiển (Zero-Copy), giúp CPU Cortex-M7 hoàn toàn rảnh tay và không tiêu tốn băng thông bộ nhớ nội.
+3. **Đồng bộ hóa bộ nhớ đệm dữ liệu (D-Cache Invalidation):**
+   - Do DMA ghi dữ liệu thẳng vào SDRAM mà không thông qua nhân CPU, vùng nhớ đệm D-Cache có thể đang lưu giữ dữ liệu cũ của khung hình trước đó.
+   - CPU thực thi hàm `SCB_InvalidateDCache_by_Addr()` trên toàn bộ dải địa chỉ của Back-Buffer để xóa sạch các dòng Cache Line cũ, ép CPU và các ngoại vi đọc dữ liệu mới nhất từ SDRAM.
+   - Thực thi lệnh rào cản phần cứng `__DSB()` (Data Synchronization Barrier) để đảm bảo toàn bộ thao tác ghi vào bus đã hoàn tất trước khi chuyển quyền hiển thị.
+4. **Đảo bộ đệm Double Buffering tại thời điểm VSYNC (Triệt tiêu hiện tượng xé hình):**
+   - Ngoại vi LTDC phát sinh tín hiệu ngắt dập đứng Line Interrupt / VSYNC khi chùm tia quét kết thúc dòng 272 và đi vào khoảng dập dọc.
+   - Trong trình phục vụ ngắt, CPU nạp địa chỉ của Back-Buffer vào thanh ghi `LTDC_L1CFBAR`, sau đó kích hoạt bit `VBR = 1` (Vertical Blanking Reload) trong thanh ghi `LTDC_SRCR`.
+   - Cơ chế Shadow Register của phần cứng LTDC bảo đảm địa chỉ bộ đệm mới chỉ chính thức có hiệu lực khi chùm tia bắt đầu quét khung hình tiếp theo từ đỉnh màn hình, loại bỏ hoàn toàn hiện tượng xé hình (Screen Tearing).
+5. **Xuất hình ảnh ra tấm nền LCD và hoán đổi con trỏ bộ đệm:**
+   - LTDC tự động đọc dữ liệu điểm ảnh từ Front-Buffer mới trong SDRAM và xuất ra 16 chân tín hiệu RGB565 song song cùng xung nhịp Pixel Clock $9.6\text{ MHz}$ đến panel LCD.
+   - CPU hoán đổi con trỏ `active_buf` giữa Buffer 0 (`0xC0000000`) và Buffer 1 (`0xC0040000`), sẵn sàng nạp khung hình kế tiếp vào bộ đệm ẩn.
+
 ---
 
 ### 3.3. Quy Trình Xử Lý Sự Cố Phần Cứng An Toàn (Fault & Recovery Pipeline)
@@ -482,6 +530,23 @@ sequenceDiagram
     App->>GUI: Chuyển sang vẽ màn hình cảnh báo (DMA2D Fill màu đỏ)
     App->>GUI: Hiển thị dòng thông báo: "SD Card Removed! Insert to Resume."
 ```
+
+#### Diễn giải chi tiết quy trình xử lý sự cố rút thẻ nhớ đột ngột:
+
+1. **Phát hiện sự cố mất kết nối thẻ nhớ vật lý:**
+   - Khi người dùng rút thẻ nhớ MicroSD trong lúc video đang streaming ở tốc độ $60\text{ FPS}$, bộ điều khiển SDMMC1 gửi lệnh `CMD18` đọc sector tiếp theo nhưng không nhận được tín hiệu Start Bit phản hồi trên các chân dữ liệu.
+   - Bộ đếm thời gian phần cứng `SDMMC_DTIMER` đếm lùi về 0. Khi hết thời gian chờ dữ liệu quy định, phần cứng tự động bật cờ lỗi quá hạn `DTIMEOUT = 1` trong thanh ghi trạng thái `SDMMC_STA`.
+2. **Kích hoạt ngắt NVIC và giải tỏa cờ trạng thái an toàn:**
+   - Phần cứng kích hoạt ngắt `SDMMC_IRQHandler`.
+   - Trình phục vụ ngắt ghi trực tiếp bit `DTIMEOUTC = 1` vào thanh ghi `SDMMC_ICR` để xóa cờ lỗi theo quy chuẩn W1C (Write 1 to Clear), ngăn chặn việc lặp ngắt vô hạn làm treo hệ thống.
+   - Ngắt gửi mã lỗi ngoại lệ `SDMMC_ERR_TIMEOUT` về cho tầng ứng dụng trình phát media.
+3. **Thực thi quy trình cô lập tài nguyên an toàn (Fail-Safe Cleanup):**
+   - Ứng dụng lập tức gọi hàm `f_close(&fil)` để đóng cấu trúc tệp tin, bảo vệ tính toàn vẹn của các biến quản lý FAT32.
+   - Gọi hàm `f_mount(NULL, "", 0)` để hủy gắn kết phân vùng tệp, ngăn ngừa việc ghi đè dữ liệu rác lên cấu trúc thư mục.
+   - Tắt nguồn cấp cho bus thẻ nhớ bằng cách xóa thanh ghi `SDMMC_POWER = 0` nhằm ngắt các tín hiệu xung nhịp, bảo vệ giao tiếp vật lý tránh hiện tượng đoản mạch chân cắm khi thẻ được đưa vào lại.
+4. **Hiển thị giao diện cảnh báo lỗi người dùng:**
+   - Ứng dụng gọi khối tăng tốc đồ họa phần cứng DMA2D tô màu nền đỏ cảnh báo lên toàn bộ Framebuffer trong thời gian dưới $1\text{ ms}$.
+   - Kẻ khung hiển thị thông báo lỗi: *"SD Card Removed! Insert to Resume."* và chuyển hệ thống sang trạng thái chờ sự kiện gắn lại thẻ nhớ qua ngắt chân Card Detect (CD) hoặc nút bấm điều hướng.
 
 ---
 

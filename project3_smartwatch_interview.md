@@ -187,6 +187,28 @@ sequenceDiagram
     Core->>Core: Chuyển quyền cho ULP Coprocessor -> Đi vào Deep Sleep (25 µA)
 ```
 
+#### Diễn giải chi tiết từng bước quy trình quản lý năng lượng:
+
+1. **Trạng thái Deep Sleep tiêu thụ dòng tối thiểu $25\mu A$:**
+   - Khi không có tương tác, toàn bộ hai nhân CPU chính (Xtensa LX7), khối kết nối vô tuyến BLE/WiFi RF và các ngoại vi tốc độ cao đều bị ngắt nguồn điện hoàn toàn.
+   - Hệ thống chỉ duy trì nguồn cho khối xử lý phụ năng lượng siêu thấp (ULP Coprocessor) và bộ điều khiển RTC Timer chạy ở tần số thấp $32.768\text{ kHz}$.
+2. **Kích hoạt thức giấc từ sự kiện phần cứng ngoại vi:**
+   - Người dùng thực hiện thao tác nhấc cổ tay: Cảm biến gia tốc BMI270 phát hiện ngưỡng chuyển động và kéo chân ngắt phần cứng nối vào chân RTC GPIO.
+   - Hoặc người dùng bấm nút vật lý: Kích hoạt nguồn đánh thức ngoại vi `EXT1 Wakeup`.
+   - Bộ điều khiển nguồn RTC phục hồi cấp điện cho hai nhân CPU chính, vi điều khiển khởi động lại từ vùng nhớ lưu trữ ngữ cảnh RTC Fast Memory trong thời gian dưới $5\text{ ms}$.
+3. **Kích hoạt mạch ngắt nguồn PMOS (Power Gating):**
+   - Sau khi thức dậy, CPU kéo chân điều khiển `PMOS_EN` xuống mức thấp (Active-Low). Transistor PMOS dẫn thông bão hòa, cấp nguồn $3.3\text{V}$ cho module GPS, cảm biến nhịp tim quang học MAX30102 và tấm nền hiển thị AMOLED.
+   - Giải pháp Power Gating bằng phần cứng triệt tiêu hoàn toàn dòng rò tiêu hao (Quiescent Current) của các IC cảm biến khi không sử dụng.
+4. **Khởi chạy hệ điều hành đa nhiệm FreeRTOS trên 2 lõi CPU:**
+   - Bộ lập lịch FreeRTOS phân bổ tác vụ chuyên biệt: `Core 0` chịu trách nhiệm thu thập cảm biến (Sensor Task, chu kỳ $100\text{ ms}$), `Core 1` đảm nhận giao diện người dùng (LVGL GUI Task, chu kỳ $16.6\text{ ms}$).
+   - Kích hoạt ngắt chân Tearing Effect (`TE`) từ Driver IC của màn hình để đồng bộ thời điểm truyền khung hình, nạp dữ liệu từ Partial Framebuffer qua SPI DMA. Mặt đồng hồ chính (Watchface) hiển thị hoàn chỉnh trong thời gian dưới $50\text{ ms}$.
+5. **Tự động chuyển về trạng thái ngủ sâu (Inactivity Sleep Transition):**
+   - Nếu bộ đếm thời gian phát hiện người dùng không có thao tác chạm hoặc cử động mới sau 10 giây:
+     * CPU gửi lệnh Sleep Out / Display Off (`0x10`) qua giao tiếp SPI tới Driver IC màn hình.
+     * Kéo chân `PMOS_EN` lên mức cao để ngắt hoàn toàn nguồn VCC của toàn bộ cảm biến ngoài.
+     * Gọi hàm `rtc_gpio_isolate()` để cô lập trạng thái logic của các chân GPIO, ngăn chặn dòng rò ký sinh (Parasitic Back-Powering) chạy qua các diode bảo vệ ESD nội của chip.
+     * Chuyển quyền giám sát cho ULP Coprocessor và đưa vi điều khiển trở lại chế độ Deep Sleep $25\mu A$.
+
 ---
 
 ### 3.2. Quy Trình Truyền Dữ Liệu An Toàn Đa Luồng (Zero-Direct-Call Dataflow)
@@ -219,6 +241,21 @@ sequenceDiagram
     end
 ```
 
+#### Diễn giải chi tiết kiến trúc truyền dữ liệu an toàn đa luồng:
+
+1. **Chu kỳ thu thập và tiền xử lý cảm biến trên Core 0:**
+   - Tác vụ `SensorTask` được ghim cố định (Pinned) trên Core 0, thực thi lặp định kỳ mỗi $100\text{ ms}$.
+   - Tác vụ đọc gói dữ liệu điểm ảnh PPG từ bộ đệm FIFO của MAX30102 qua bus I2C1, sau đó chạy thuật toán lọc dải băng (Bandpass Filter) và lọc trung bình trượt để tính toán chỉ số nhịp tim (BPM) cùng nồng độ oxy trong máu (SpO2).
+2. **Chuyển giao dữ liệu phi phong tỏa qua FreeRTOS Queue (Zero-Direct-Call):**
+   - Thư viện đồ họa LVGL không hỗ trợ tính an toàn đa luồng (Non-Thread-Safe) mặc định. Nếu `SensorTask` trên Core 0 gọi trực tiếp các API cập nhật giao diện (`lv_label_set_text`), hai lõi CPU sẽ cùng truy xuất vào cây phần tử đồ họa (Widget Tree) và dẫn tới xung đột bộ nhớ hoặc sập hệ thống (Kernel Panic).
+   - `SensorTask` chỉ đóng gói các chỉ số đã tính toán vào một cấu trúc dữ liệu nhỏ và đẩy vào hàng đợi thông qua hàm `xQueueSend(g_sensor_data_queue, &data, 0)`. Lệnh này không gây nghẽn và độc lập hoàn toàn với trạng thái của tác vụ giao diện.
+3. **Chu kỳ quét vẽ giao diện định kỳ trên Core 1:**
+   - Tác vụ `GUITask` được ghim trên Core 1, chạy tuần hoàn với chu kỳ $16.6\text{ ms}$ để duy trì tốc độ làm tươi $60\text{ FPS}$.
+   - Tác vụ gọi `xQueueReceive(g_sensor_data_queue, &data, 0)` để kiểm tra dữ liệu mới từ cảm biến. Nếu có bản tin, tác vụ trích xuất giá trị và gọi hàm cập nhật chuỗi tĩnh `lv_label_set_text_static()`, đảm bảo toàn bộ thao tác đồ họa chỉ diễn ra trên một lõi duy nhất.
+4. **Tính toán vùng thay đổi và xuất dữ liệu qua SPI DMA:**
+   - Hàm `lv_timer_handler()` tính toán tọa độ các vùng có nội dung thay đổi (Dirty Areas) thay vì vẽ lại toàn bộ màn hình.
+   - Khối SPI DMA trên Core 1 đẩy các khối điểm ảnh Partial Buffer ra màn hình AMOLED mà không làm tiêu tốn thời gian xử lý của CPU, giải phóng tài nguyên cho các hiệu ứng chuyển cảnh mượt mà.
+
 ---
 
 ### 3.3. Quy Trình Xử Lý Sự Cố Treo Máy & Phục Hồi An Toàn (Fault & Recovery Pipeline)
@@ -248,6 +285,20 @@ sequenceDiagram
         SensorTask->>SensorTask: Reset lại cấu hình I2C và tiếp tục chạy bình thường (0 crash!)
     end
 ```
+
+#### Diễn giải chi tiết cơ chế xử lý sự cố kẹt bus I2C và tự phục hồi:
+
+1. **Sự cố kẹt đường truyền vật lý (SDA Stuck Low):**
+   - Khi cảm biến ngoài gặp xung nhiễu điện áp trên đường cấp nguồn hoặc bị sụt áp đột ngột trong chu kỳ truyền dữ liệu, chip Slave có thể bị dừng giữa chừng khi đang kéo chân SDA xuống mức 0 để phát bit ACK.
+   - Do bus I2C hoạt động theo nguyên lý cực máng hở (Open-Drain), khi Slave giữ chân SDA ở mức thấp, đường truyền bị kẹt cứng và Master không thể phát điều kiện STOP để giải phóng bus.
+2. **Hậu quả khi thiếu cơ chế xử lý ngoại lệ:**
+   - Nếu driver I2C sử dụng vòng lặp chờ cờ phần cứng thông thường mà không cấu hình thời gian chờ (`while (!I2C_FLAG)`), tác vụ `SensorTask` sẽ bị treo vô hạn.
+   - Do bị đơ cứng trong vòng lặp, tác vụ không thể thực hiện hành động xóa cờ giám sát (Watchdog Feeding). Bộ đếm Task Watchdog Timer (TWDT) đếm lùi quá ngưỡng $5000\text{ ms}$, kích hoạt ngắt Reset khẩn cấp làm đồng hồ khởi động lại đột ngột.
+3. **Quy trình phục hồi chủ động bằng 9 xung Clock (I2C 9-Clock Recovery):**
+   - **Bước 1 (Bắt lỗi Timeout):** Driver I2C tích hợp bộ đếm thời gian chờ phần cứng với ngưỡng $25\text{ ms}$. Khi hết thời gian mà đường bus không phản hồi, hàm đọc lập tức thoát ra với mã lỗi `ESP_ERR_TIMEOUT`.
+   - **Bước 2 (Chuyển chế độ GPIO):** CPU tạm thời chuyển đổi chân SCL từ chức năng ngoại vi I2C sang chế độ GPIO Output thông thường.
+   - **Bước 3 (Phát chuỗi 9 xung nhịp):** CPU tạo thủ công chuỗi 9 xung nhịp trên đường SCL. Theo đặc tả của giao thức I2C, khi nhận đủ 9 xung clock, mạch logic bên trong Slave sẽ dịch hết thanh ghi dịch nội bộ, phát hiện trạng thái kết thúc byte và tự động nhả chân SDA trở về mức cao (trạng thái Recessive do điện trở kéo lên).
+   - **Bước 4 (Khởi tạo lại driver):** Sau khi chân SDA được giải phóng, CPU tái cấu hình chân SCL về lại khối ngoại vi I2C, khôi phục trạng thái hoạt động bình thường mà không làm gián đoạn hệ điều hành hay gây khởi động lại thiết bị.
 
 ---
 

@@ -1,10 +1,64 @@
-# Cẩm Nang Phỏng Vấn Dự Án 2: High-Speed Video Playback & SDHC Storage Subsystem
+# Tài Liệu Học Lại Dự Án 2: High-Speed Video Playback & SDHC Storage Subsystem
+
+*(Học ý tưởng thiết kế, luồng hoạt động và cách vận hành từng khối phần cứng — dùng lại được cho phỏng vấn nhưng mục tiêu chính là hiểu hệ thống, không phải học thuộc.)*
 
 > **Hệ Thống:** Bare-Metal High-Speed 60 FPS Video Playback & SDHC Storage Subsystem
 > **Nền Tảng Phần Cứng:** STM32F746NG (ARM Cortex-M7 @ 216 MHz, MPU, L1 Cache 16KB)
 > **Phương Thức Lập Trình:** 100% Bare-Metal Register-Level (Không dùng HAL/LL, lập trình trực tiếp theo RM0385)
 > **Các Khối Ngoại Vi Cốt Lõi:** FMC SDRAM (108 MHz), SDMMC1 (4-bit, 48 MHz bypass), LTDC (480x272 RGB565), DMA2D Chrom-ART (UI), ChaN FatFs (FAT32)
 > **Tài liệu nền tảng tham chiếu (trên máy cá nhân, không đính kèm ở đây):** `day00_baremetal_foundations.md`, `sdmmc_fatfs_architecture.md`, STM32F746 Reference Manual (RM0385).
+
+---
+
+## 🧭 Ý TƯỞNG & THIẾT KẾ HỆ THỐNG (ĐỌC PHẦN NÀY TRƯỚC — "TẠI SAO" TRƯỚC KHI HỌC "LÀM THẾ NÀO")
+
+Trước khi đi vào chi tiết từng thanh ghi, cần nắm được **bài toán đặt ra** và **các quyết định kiến trúc** để hiểu vì sao hệ thống lại được ghép nối như vậy. Mọi quyết định dưới đây đều xuất phát từ một ràng buộc gốc: **STM32F746 không có bất kỳ bộ giải mã video/ảnh phần cứng nào**, và CPU chỉ có một lõi.
+
+### Bài toán gốc
+Hiển thị video mượt 60 FPS trên màn hình 480×272 từ một thẻ nhớ MicroSD, trên một vi điều khiển không có GPU, không có video codec phần cứng, chỉ có một lõi Cortex-M7 @ 216 MHz.
+
+### Chuỗi quyết định thiết kế (từ trên xuống)
+
+1. **Không giải mã video nén (MJPEG/H.264) → phát Raw RGB565 thô.**
+   Giải mã mềm một khung 480×272 (IDCT + Huffman + đổi màu YUV→RGB) chiếm gần hết 216 MHz nhưng chỉ ra được ~15-20 FPS — không đạt mục tiêu. Nên video được **tiền xử lý trên PC** (script `convert_video.py`) thành chuỗi khung hình thô RGB565 (2 byte/pixel, không nén), MCU chỉ việc đọc thẳng và hiển thị — không tốn chu kỳ CPU nào để "giải mã". Đây là đánh đổi: dung lượng file lớn hơn nhiều (không nén) để đổi lấy 0 chi phí giải mã.
+
+2. **Vì dữ liệu đã ở dạng thô → bài toán trở thành bài toán băng thông I/O, không phải bài toán xử lý.**
+   Một khi đã chấp nhận không nén, câu hỏi chỉ còn là: *"Có đọc kịp 15.66 MB/s từ thẻ SD và bơm ra màn hình đủ nhanh không?"* → dẫn tới toàn bộ phần tối ưu SDMMC (CMD18 multi-block thay vì CMD17 từng khối, bus 4-bit, Bypass 48MHz) chỉ nhằm một mục tiêu: kéo đường ống nạp dữ liệu đủ nhanh hơn 15.66 MB/s.
+
+3. **Đọc nhiều khối cùng lúc (CMD18) thay vì từng khối (CMD17).**
+   Mỗi lệnh SD có "phí bắt tay" cố định (~1.5-1.8ms). Đọc 510 sector rời rạc bằng CMD17 tốn ~918ms/frame (≈1 FPS — không dùng được). Gộp thành 1 lệnh CMD18 duy nhất, thẻ tự động "xả" liên tục 510 sector qua bus — phí bắt tay chỉ trả 1 lần thay vì 510 lần. *(Xem Bug 10, Mục 5.3.)*
+
+4. **Bỏ qua bộ chia clock của SDMMC (Bypass Mode) để tối đa hoá băng thông bus.**
+   Sau khi đã gộp lệnh, băng thông bus vẫn là giới hạn tiếp theo. Bus 4-bit ở 24MHz cho ~41 FPS (chưa đạt 60); bật `BYPASS=1` đưa xung nhịp thẳng lên 48MHz (từ `PLL48CLK`), tăng gấp đôi băng thông, đủ dư thời gian để khoá ổn định 60 FPS. *(Xem Bug 11, Mục 5.3.)*
+
+5. **Đọc trực tiếp từ thẻ SD vào framebuffer SDRAM — không qua bộ nhớ đệm trung gian trong RAM nội.**
+   RAM nội (SRAM) của STM32F746 nhỏ hơn nhiều so với 1 frame (261KB). Vì vậy `f_read()` ghi thẳng vào SDRAM ngoài (8MB, đủ chỗ cho 2 framebuffer + phần dư) — đây là lý do vì sao SDRAM 108MHz và toàn bộ chuỗi khởi tạo JEDEC 5 bước là bắt buộc phải có trước khi làm bất cứ điều gì khác.
+
+6. **Double Buffering + VSYNC Reload (VBR) để hiển thị không xé hình.**
+   Vì việc nạp 1 frame mất thời gian (không tức thời), nếu ghi thẳng vào buffer đang được LTDC quét ra màn hình thì sẽ thấy nửa khung cũ/nửa khung mới (xé hình). Giải pháp kinh điển: 2 vùng nhớ (Front đang hiển thị / Back đang nạp), và chỉ "tráo" con trỏ hiển thị vào đúng lúc màn hình quét xong (Vertical Blanking) bằng cờ phần cứng `LTDC_SRCR.VBR` — không cần can thiệp bằng ngắt, phần cứng LTDC tự trì hoãn việc áp dụng địa chỉ mới.
+
+7. **DMA2D chỉ dùng cho đồ hoạ giao diện, không dùng cho luồng video.**
+   Vì dữ liệu video đã đọc thẳng vào đúng vị trí framebuffer cần thiết (bước 5), không cần thêm một bước chép pixel nào nữa cho video. DMA2D được dùng ở nơi thực sự cần "vẽ hình" — tô màu khối chữ nhật cho splash screen, khung menu, khung hiển thị FPS, sprite demo — những việc mà nếu dùng CPU vẽ từng pixel sẽ chậm hơn nhiều so với để phần cứng Chrom-ART làm.
+
+8. **Giao diện trên màn hình (menu chọn file, FPS overlay) thay vì chạy "mù" một file cố định.**
+   Ban đầu (theo tường thuật ở Bug 12) hệ thống tự chạy 1 file cố định — không linh hoạt và không có cách thoát. Thiết kế cuối cùng thêm một tầng "file browser" đơn giản dùng `f_opendir`/`f_readdir` của FatFs quét `.BIN`/`.RAW`, cùng cơ chế điều hướng bằng 1 nút bấm duy nhất (click = next, giữ = play, không thao tác = auto-play sau 4s) — vì board Discovery chỉ có đúng 1 nút người dùng (PI11), nên toàn bộ UI phải thiết kế quanh giới hạn "1 nút, không có bàn phím/chuột".
+
+9. **D-Cache cố tình để tắt (thay vì bật + invalidate).**
+   Đây là một quyết định thận trọng, không phải thiếu sót: bật D-Cache đúng cách đòi hỏi phải invalidate đúng vùng nhớ đúng thời điểm ở mọi nơi CPU đọc dữ liệu do DMA/ngoại vi ghi vào (SDRAM) — sai một chỗ là ảnh vỡ/crash khó debug. Ở giai đoạn hiện tại, dự án ưu tiên **đúng và ổn định** hơn **tối đa hiệu năng CPU**, nên chấp nhận không có tăng tốc từ I-Cache/D-Cache và để dành làm bước nâng cấp sau khi đã có nền tảng chắc chắn.
+
+### Tóm tắt luồng dữ liệu 1 khung hình (từ ý tưởng ở trên)
+
+```
+Thẻ SD (.BIN, RGB565 thô)
+   → CMD18 Multi-Block, bus 4-bit @ 48MHz (Bypass)   [ý tưởng 3+4]
+   → CPU đọc FIFO SDMMC, ghi thẳng vào SDRAM Back-Buffer   [ý tưởng 5]
+   → DMA2D vẽ đè khung FPS/UI lên Back-Buffer (nếu cần)   [ý tưởng 7]
+   → Set LTDC_SRCR.VBR, chờ tới Vertical Blanking mới áp dụng   [ý tưởng 6]
+   → LTDC tự quét Front-Buffer mới ra màn hình 60Hz
+   → Lặp lại cho khung tiếp theo, đồng thời lắng nghe nút bấm PI11   [ý tưởng 8]
+```
+
+Nắm được chuỗi lý do này thì phần thanh ghi/công thức ở các mục dưới sẽ dễ nhớ hơn nhiều, vì mỗi con số đều đang trả lời cho một ràng buộc cụ thể ở trên (băng thông, độ trễ bắt tay, thời gian rảnh của Vertical Blanking...).
 
 ---
 
@@ -31,6 +85,7 @@ File này là tài liệu học/ôn phỏng vấn, viết ở mức "kiến trú
 
 ## MỤC LỤC TỔNG QUAN
 
+- [🧭 Ý tưởng & Thiết kế hệ thống](#-ý-tưởng--thiết-kế-hệ-thống-đọc-phần-này-trước--tại-sao-trước-khi-học-làm-thế-nào)
 - [0. Đối chiếu với Source Code thật](#️-0-đối-chiếu-với-source-code-thật--đọc-trước-khi-học-thuộc)
 - [1. Danh mục tài liệu gốc & hướng dẫn tra cứu RM/Datasheet](#1-danh-mục-tài-liệu-gốc--hướng-dẫn-tra-cứu-rmdatasheet-lookup-guide)
 - [2. Tổng quan hệ thống & bản đồ Bus Matrix phần cứng](#2-tổng-quan-hệ-thống--bản-đồ-bus-matrix-phần-cứng)

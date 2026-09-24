@@ -405,7 +405,9 @@ Trong giao thức CAN (ISO 11898-1), 1 bit dữ liệu được chia thành 4 ph
 2. **Prop_Seg (Propagation Segment):** Bù trễ vật lý của cáp vi sai và chip Transceiver.
 3. **Phase_Seg1 (Phase Buffer Segment 1):** Bù trễ pha dương.
 4. **Phase_Seg2 (Phase Buffer Segment 2):** Bù trễ pha âm. Điểm giao giữa Phase_Seg1 và Phase_Seg2 chính là **Điểm lấy mẫu (Sample Point)**.
-* Trong thanh ghi `CAN_BTR` của bxCAN: $\text{TS1} = \text{Prop}_{\text{Seg}} + \text{Phase}_{\text{Seg1}}$, $\text{TS2} = \text{Phase}_{\text{Seg2}}$.
+* Trong thanh ghi CAN_BTR của ngoại vi bxCAN:
+
+$$\text{TS1} = \text{Prop}_{\text{Seg}} + \text{Phase}_{\text{Seg1}}, \qquad \text{TS2} = \text{Phase}_{\text{Seg2}}$$
 
 $$N_{\text{tq}} = \text{Sync}_{\text{Seg}} + \text{TS1} + \text{TS2} = 1 + \text{TS1} + \text{TS2}$$
 $$\text{Sample Point} = \frac{1 + \text{TS1}}{1 + \text{TS1} + \text{TS2}} \times 100$$
@@ -508,7 +510,10 @@ void CAN1_Filter_Config(uint32_t id, uint32_t mask)
   * **Byte 1:** Alive/Rolling Counter 4-bit (`0` đến `15`).
   * **Byte 2:** Tốc độ xe ($0 - 250\text{ km/h}$, độ phân giải 1 km/h / LSB).
   * **Byte 3..4:** Vòng tua máy (Engine RPM) chuẩn **Little-Endian (Intel)** với **Factor = 0.25**:
-    $$\text{Raw}_{\text{RPM}} = \text{data}[3] \mid (\text{data}[4] \ll 8), \qquad \text{RPM} = \text{Raw}_{\text{RPM}} \gg 2$$
+
+$$\text{Raw}_{\text{RPM}} = \text{data}[3] \mid (\text{data}[4] \ll 8), \qquad \text{RPM} = \text{Raw}_{\text{RPM}} \gg 2$$
+
+    *Công thức giải mã:* `raw_rpm = (uint16_t)data[3] | ((uint16_t)data[4] << 8);` $\rightarrow$ `rpm = raw_rpm >> 2;`
   * **Byte 5:** Nhiệt độ nước làm mát (**Offset = -40 °C**): $\text{Temp (°C)} = \text{Byte 5} - 40$.
   * **Byte 6..7:** Dành riêng (`0x00`).
 
@@ -743,12 +748,12 @@ sequenceDiagram
 * **Trên Node 1 (STM32F746 — Gateway Zephyr):**
   - Xung nhịp bus ngoại vi $f_{APB1} = 54\text{ MHz}$. Chọn tổng số time quanta $N = 18\text{ tq}$.
   - $BRP = \frac{54\text{ MHz}}{500\text{ kbps} \times 18} = 6 \implies t_q = \frac{6}{54\text{ MHz}} = 111.11\text{ ns}$.
-  - Phân bổ: $\text{Sync}_{\text{Seg}} = 1\text{ tq}$, $\text{TS1} = 15\text{ tq}$, $\text{TS2} = 2\text{ tq}$.
+  - Phân bổ: `Sync_Seg = 1 tq`, `TS1 = 15 tq`, `TS2 = 2 tq` (tổng 18 tq).
   - Điểm lấy mẫu: $\text{Sample Point} = \frac{1 + 15}{18} = \frac{16}{18} \approx 88.89\%$ (rất sát chuẩn CiA $87.5\%$). Zephyr tự giải toán phương trình này từ khai báo `sample-point = <875>; bitrate = <500000>;` trong Devicetree.
 * **Trên Node 2 (STM32F103 — Bare-Metal ECU Simulator):**
   - Xung nhịp bus ngoại vi $f_{APB1} = 36\text{ MHz}$. Chọn $N = 18\text{ tq}$.
   - $BRP = \frac{36\text{ MHz}}{500\text{ kbps} \times 18} = 4 \implies t_q = \frac{4}{36\text{ MHz}} = 111.11\text{ ns}$.
-  - Phân bổ: $\text{Sync}_{\text{Seg}} = 1\text{ tq}$, $\text{TS1} = 14\text{ tq}$, $\text{TS2} = 3\text{ tq}$.
+  - Phân bổ: `Sync_Seg = 1 tq`, `TS1 = 14 tq`, `TS2 = 3 tq` (tổng 18 tq).
   - Điểm lấy mẫu: $\text{Sample Point} = \frac{1 + 14}{18} = \frac{15}{18} \approx 83.33\%$.
   - Nạp trực tiếp vào thanh ghi: `CAN1_BTR = 0x002D0003UL` ($BRP-1=3$, $TS1-1=13$, $TS2-1=2$).
 

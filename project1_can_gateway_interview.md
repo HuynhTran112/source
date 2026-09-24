@@ -74,6 +74,7 @@ sequenceDiagram
   - [1.1. Mục Tiêu Dự Án & Thông Số Kỹ Thuật Định Lượng](#11-mục-tiêu-dự-án--thông-số-kỹ-thuật-định-lượng)
   - [1.2. Sơ Đồ Khối Kiến Trúc Phân Tầng & Luồng Dữ Liệu Đa Nhiệm (Zephyr Multi-threading)](#12-sơ-đồ-khối-kiến-trúc-phân-tầng--luồng-dữ-liệu-đa-nhiệm-zephyr-multi-threading)
   - [1.3. Cấu Trúc Khung CAN 2.0B & Cấu Hình DeviceTree Chuẩn Ô Tô](#13-cấu-trúc-khung-can-20b--cấu-hình-devicetree-chuẩn-ô-tô)
+  - [1.4. Kiến Thức Nền Tảng Zephyr RTOS (Trọng Tâm Cho Vị Trí Fresher)](#14-kiến-thức-nền-tảng-zephyr-rtos-trọng-tâm-cho-vị-trí-fresher)
 - [2. LÝ THUYẾT CỐT LÕI & CÔNG THỨC BẮT BUỘC PHẢI NHỚ](#2-lý-thuyết-cốt-lõi--công-thức-bắt-buộc-phải-nhớ)
   - [2.1. Chi Tiết CAN Bit Timing & Bảng Thanh Ghi CAN_BTR (500 kbps @ APB1 54 MHz)](#21-chi-tiết-can-bit-timing--bảng-thanh-ghi-can_btr-500-kbps--apb1-54-mhz)
   - [2.2. Cơ Chế Bộ Lọc bxCAN Filter Bank: Bố Cục Bit 32-bit Mask & Quy Trình Nạp RMW](#22-cơ-chế-bộ-lọc-bxcan-filter-bank-bố-cục-bit-32-bit-mask--quy-trình-nạp-rmw)
@@ -271,26 +272,104 @@ Mọi bản tin trao đổi trong dự án đều tuân thủ cấu trúc khung 
 (Dom)                     1=Rmt   1=Ext        (0..8)   (Tốc độ, RPM)   phần cứng          + Del  khung tin
 ```
 
-#### File cấu hình DeviceTree Overlay (`app.overlay`) trong Zephyr:
+#### File cấu hình DeviceTree Overlay (`app.overlay`) trong Zephyr — ✅ đúng nguyên văn project thật:
 ```dts
 / {
-    chosen {
-        zephyr,can-primary = &can1;
+    aliases {
+        can-primary = &can1;
+        led-warn = &user_led_1;      /* DT macro sẽ tự đổi "-" thành "_": DT_ALIAS(led_warn) */
+    };
+
+    leds {
+        compatible = "gpio-leds";
+        user_led_1: led_1 {
+            gpios = <&gpioi 1 GPIO_ACTIVE_HIGH>;   /* PI1 — đèn cảnh báo */
+            label = "User Warning LED (PI1)";
+        };
+    };
+
+    transceiver {
+        compatible = "gpio-leds";
+        can_stb: stb_pin {
+            gpios = <&gpioi 0 GPIO_ACTIVE_HIGH>;   /* PI0 — chân Standby IC Transceiver */
+            label = "CAN Transceiver Standby Control (PI0)";
+        };
     };
 };
 
 &can1 {
-    status = "okay";
     pinctrl-0 = <&can1_rx_pb8 &can1_tx_pb9>;
     pinctrl-names = "default";
-    bus-speed = <500000>;
-    sample-point = <875>; /* 87.5% theo chuẩn CiA */
-
-    can-transceiver {
-        max-bitrate = <1000000>;
-    };
+    status = "okay";
+    bitrate = <500000>;
+    sample-point = <875>; /* 87.5% theo chuẩn CiA — Zephyr tự suy ra BRP/TS1/TS2 lúc build */
+    /* loopback; */        /* bật dòng này nếu muốn tự test trên 1 board duy nhất — xem Bug 11 */
 };
 ```
+
+---
+
+# 1.4. KIẾN THỨC NỀN TẢNG ZEPHYR RTOS (TRỌNG TÂM CHO VỊ TRÍ FRESHER)
+
+> Vì ứng tuyển vị trí Fresher Embedded thường xuyên gặp câu hỏi riêng về **Zephyr RTOS** (không chỉ hỏi về CAN Bus), phần này tổng hợp các khái niệm nền tảng của framework mà project này dùng — tách bạch với lý thuyết CAN Bus ở Mục 2 để dễ ôn theo từng chủ đề.
+
+### 1.4.1. Zephyr là gì & vì sao ngành công nghiệp dùng nó?
+
+Zephyr là một **RTOS mã nguồn mở, footprint nhỏ**, do Linux Foundation bảo trợ, hỗ trợ đa kiến trúc (ARM Cortex-M, RISC-V, x86...). Khác với kiểu làm việc "viết thẳng HAL + FreeRTOS rời rạc" phổ biến trước đây, Zephyr đóng gói sẵn 3 trụ cột giúp tách phần cứng khỏi phần mềm ứng dụng:
+
+| Trụ cột | Vai trò | File tương ứng trong project |
+| :--- | :--- | :--- |
+| **Kconfig** | Bật/tắt tính năng phần mềm lúc build (driver nào được biên dịch vào, bao nhiêu bộ nhớ log...) | `prj.conf` |
+| **Devicetree** | Mô tả **phần cứng board** (chân nào nối gì, tốc độ bus bao nhiêu) — hoàn toàn tách khỏi code C | `app.overlay` |
+| **CMake (qua West)** | Định nghĩa file nguồn nào được biên dịch vào ứng dụng | `CMakeLists.txt` |
+
+Nhiều công ty lớn trong ngành ô tô/IoT (Nordic, Bosch, Intel...) chuyển sang Zephyr vì: driver model thống nhất (đổi board không phải viết lại code ứng dụng), quản lý bộ nhớ/ngăn xếp an toàn hơn bằng MPU tích hợp sẵn, và cộng đồng lớn (Linux Foundation).
+
+### 1.4.2. Driver Model & `device_is_ready()`
+
+Mọi ngoại vi trong Zephyr được trừu tượng hoá thành một `struct device`. Ứng dụng lấy "tay cầm" tới thiết bị qua các macro sinh từ Devicetree, ví dụ trong `main.c` thật của project:
+```c
+static const struct gpio_dt_spec warn_led = GPIO_DT_SPEC_GET_OR(DT_ALIAS(led_warn), gpios, {0});
+...
+if (warn_led.port != NULL && gpio_is_ready_dt(&warn_led)) {
+    gpio_pin_configure_dt(&warn_led, GPIO_OUTPUT_INACTIVE);
+}
+```
+Nguyên tắc bắt buộc: **luôn kiểm tra `*_is_ready()` trước khi dùng thiết bị** — vì driver có thể được biên dịch vào nhưng phần cứng thật lỗi/không tồn tại trên board đang chạy (khác bare-metal, nơi bạn "biết chắc" phần cứng có mặt vì tự viết init tay).
+
+### 1.4.3. Luồng thực thi tĩnh: `K_THREAD_DEFINE`
+
+Project định nghĩa thread ngay lúc biên dịch (static), thay vì gọi `k_thread_create()` lúc runtime:
+```c
+K_THREAD_DEFINE(can_worker_tid, CAN_WORKER_STACK_SIZE,
+                can_worker_thread_entry, NULL, NULL, NULL,
+                CAN_WORKER_PRIO, 0, 0);
+```
+Tham số theo thứ tự: tên định danh thread → kích thước stack → hàm entry → 3 tham số truyền vào (không dùng, để `NULL`) → **mức ưu tiên** → cờ tuỳ chọn → **độ trễ khởi động** (0 = chạy ngay khi kernel start). Ưu điểm so với tạo động: cấp phát tĩnh lúc build, không tốn heap runtime, phù hợp hệ thống nhúng cần xác định bộ nhớ trước.
+
+**Về độ ưu tiên:** số **càng nhỏ thì ưu tiên càng cao**. Project dùng 3 mức: `can_worker` = 5, `safety` = 6, `sim` = 7 — nghĩa là luồng xử lý CAN được ưu tiên chạy trước luồng giám sát an toàn, luồng này lại được ưu tiên hơn luồng mô phỏng (hợp lý: xử lý dữ liệu thật quan trọng hơn tự phát dữ liệu giả). Priority ≥ 0 là **preemptive** (có thể bị luồng ưu tiên cao hơn ngắt giữa chừng); priority âm là **cooperative** (chỉ nhường CPU khi tự gọi hàm blocking) — project này dùng toàn priority dương nên cả 3 thread đều preemptive.
+
+### 1.4.4. Đồng bộ hoá giữa các luồng: `k_msgq` và `k_mutex`
+
+* **`k_msgq` (Message Queue):** hàng đợi có khoá nội tại, an toàn để 1 bên ghi (driver CAN, chạy trong ngữ cảnh ISR/driver nội bộ) và 1 bên đọc (`can_worker_thread`) mà không cần tự quản lý mutex thủ công. Gọi `k_msgq_get(&raw_can_msgq, &rx_frame, K_FOREVER)` sẽ khiến luồng **ngủ hoàn toàn (0% CPU)** cho tới khi có dữ liệu — khác hẳn kiểu polling liên tục ở bare-metal.
+* **`k_mutex` (`K_MUTEX_DEFINE(g_telemetry_mutex)`):** bảo vệ biến toàn cục `g_current_telemetry` khỏi truy cập đồng thời giữa `can_worker_thread` (ghi) và `diag_shell` (đọc khi gõ lệnh `vehicle status`). Điểm đáng nói khi phỏng vấn: Mutex của Zephyr có **Priority Inheritance** — nếu luồng ưu tiên thấp đang giữ khoá mà luồng ưu tiên cao cần khoá đó, kernel tạm "nâng" độ ưu tiên của luồng đang giữ khoá lên bằng luồng đang chờ, tránh hiện tượng **Priority Inversion** kinh điển (vụ lỗi nổi tiếng của tàu Mars Pathfinder năm 1997 chính là do thiếu cơ chế này).
+
+### 1.4.5. Logging & Shell — công cụ chẩn đoán có sẵn, không cần tự viết
+
+* **Logging:** `LOG_MODULE_REGISTER(main_app, LOG_LEVEL_INF)` + `LOG_INF(...)`/`LOG_WRN(...)`/`LOG_ERR(...)`. Project bật `CONFIG_LOG_MODE_DEFERRED=y` — log được đẩy vào một buffer, in ra ở một luồng riêng thay vì in ngay lập tức (in đồng bộ qua UART tốc độ chậm có thể làm trễ luồng đang xử lý CAN thời gian thực).
+* **Shell CLI:** `SHELL_CMD_REGISTER`/`SHELL_STATIC_SUBCMD_SET_CREATE` (dùng cho `vehicle status`, `dtc read/clear`, `can sim/auto/inject`) — Zephyr tự dựng sẵn một console tương tác qua UART, project chỉ cần viết hàm callback xử lý lệnh, không phải tự viết bộ phân tích chuỗi lệnh (parser) từ đầu như khi làm bare-metal.
+
+### 1.4.6. Bảo vệ ngăn xếp & công cụ debug tích hợp sẵn
+
+`prj.conf` bật `CONFIG_HW_STACK_PROTECTION` + `CONFIG_MPU_STACK_GUARD` — dùng MPU (Memory Protection Unit) phần cứng của Cortex-M7 để dựng "hàng rào" cuối mỗi vùng stack của từng thread; nếu một thread tràn stack, MPU sinh Fault ngay lập tức thay vì âm thầm ghi đè lên vùng nhớ của thread khác (lỗi khó debug nhất trong RTOS). Cộng thêm `CONFIG_THREAD_ANALYZER` — Zephyr tự log định kỳ mức sử dụng stack của từng thread, giúp phát hiện thread nào sắp tràn stack **trước khi nó thực sự tràn**.
+
+### 1.4.7. Tầng trừu tượng hoá CAN Driver so với bare-metal
+
+So với việc tự viết ISR đọc `CAN_RI0R`/ghi `RFOM0` (như ở Node 2 bare-metal, xem Mục 2.1-2.2), Node 1 chỉ cần:
+```c
+can_add_rx_filter_msgq(can_dev, &raw_can_msgq, &rx_filter);
+```
+Một dòng này thay thế toàn bộ việc: cấu hình Filter Bank, bật ngắt `CAN_RX0_IRQn` trong NVIC, viết `CAN1_RX0_IRQHandler`, đọc `CAN_RDLxR`/`CAN_RDHxR`, ghi cờ `RFOM0` để giải phóng FIFO — tất cả nằm sẵn bên trong driver `can_stm32_bxcan` của Zephyr. Đây chính là điểm khác biệt cốt lõi giữa 2 node trong project: Node 2 học/thực hành "chạm tay vào thanh ghi", Node 1 học "dùng đúng framework công nghiệp thật".
 
 ---
 
@@ -1209,14 +1288,26 @@ Nguyên nhân xuất phát từ cơ chế xác nhận phần cứng **ACK Slot**
 * **Mã lỗi phần mềm:** Trong hệ thống Zephyr RTOS, lỗi Acknowledge Error từ thanh ghi phần cứng được ánh xạ sang mã lỗi chuẩn POSIX: `-EIO` (mã số `-5`).
 * **Hậu quả nếu phát lặp lại liên tục:** Nếu ứng dụng liên tục gọi `can_send()` mà không có ACK, chỉ sau $256 / 8 = 32$ lần phát lỗi, bộ đếm $TEC$ sẽ vượt quá 255 và kéo bo mạch rơi thẳng vào trạng thái tê liệt **Bus-Off**!
 
-#### Dẫn chứng mã nguồn thực tế trong dự án:
-Khắc phục triệt để bằng cách kích hoạt chế độ **Loopback Mode** trong file [`zephyr_project/src/can_gateway.c`](file:///d:/Project/STM32F7/zephyr_project/src/can_gateway.c):
+#### Dẫn chứng mã nguồn thực tế trong dự án (✅ đúng nguyên văn `can_gateway.c`, có compile-time switch):
 ```c
 int can_gateway_init(void)
 {
     ...
-    /* Bật chế độ CAN_MODE_LOOPBACK trước khi start ngoại vi */
+    /* Đánh thức IC Transceiver trước (chân STB, xem Mục 1.4) */
+    if (stb_spec.port != NULL && gpio_is_ready_dt(&stb_spec)) {
+        gpio_pin_configure_dt(&stb_spec, GPIO_OUTPUT_INACTIVE);
+        gpio_pin_set_dt(&stb_spec, 0);
+    }
+
+    if (!device_is_ready(can_dev)) { ... }
+
+    /* CAN_MODE_LOOPBACK: chỉ bật khi build với macro USE_CAN_LOOPBACK_MODE
+       (test độc lập 1 board, không có Transceiver ngoài) */
+#if defined(USE_CAN_LOOPBACK_MODE)
     can_set_mode(can_dev, CAN_MODE_LOOPBACK);
+#else
+    can_set_mode(can_dev, CAN_MODE_NORMAL);
+#endif
 
     ret = can_start(can_dev);
     if (ret != 0) {
@@ -1294,3 +1385,22 @@ static void can_state_change_handler(const struct device *dev, enum can_state st
 
 #### Điểm chốt kỹ thuật khi phỏng vấn:
 Cấu hình Pinctrl được khai báo tập trung trong Devicetree overlay (`pinctrl-0 = <&can1_rx_pb8 &can1_tx_pb9>`), và xử lý Bus-Off trên STM32 được giải quyết bằng chuỗi lệnh `can_stop()` $\rightarrow$ `k_msleep(100)` $\rightarrow$ `can_start()` để tương thích kiến trúc phần cứng tự động của bxCAN mà không bị lỗi Linker.
+
+---
+
+### Nhóm câu hỏi riêng về nền tảng Zephyr RTOS (thường gặp khi tuyển Fresher Embedded)
+
+**Câu 9 — Zephyr khác gì so với FreeRTOS (framework RTOS phổ biến khác)?**
+FreeRTOS về bản chất chỉ là một **kernel lập lịch** (scheduler + task + queue/semaphore) — driver ngoại vi, cấu hình chân, quản lý board thường phải tự viết hoặc dựa vào HAL của hãng chip đi kèm riêng. Zephyr là một **hệ điều hành đầy đủ**: kernel lập lịch + driver model thống nhất (đổi board không cần sửa code ứng dụng) + Devicetree (tách mô tả phần cứng khỏi code) + Kconfig (bật/tắt tính năng) + hệ sinh thái sẵn (Shell, Logging, file hệ thống, network stack, Bluetooth...). → Xem Mục 1.4.
+
+**Câu 10 — Priority Inversion là gì, và Zephyr xử lý ra sao?**
+Priority Inversion xảy ra khi một luồng ưu tiên **thấp** đang giữ một tài nguyên (mutex) mà một luồng ưu tiên **cao** cần, nhưng một luồng ưu tiên **trung bình** khác lại chen ngang chiếm CPU của luồng ưu tiên thấp — khiến luồng ưu tiên cao phải chờ gián tiếp qua luồng trung bình dù nó có ưu tiên cao hơn cả hai. `k_mutex` của Zephyr có cơ chế **Priority Inheritance**: khi phát hiện tình huống trên, kernel tạm nâng độ ưu tiên của luồng đang giữ khoá lên bằng luồng đang chờ, đảm bảo nó được chạy tiếp và nhả khoá sớm. → Xem Mục 1.4.4.
+
+**Câu 11 — Devicetree và Kconfig khác nhau ở điểm nào? Vì sao cần cả hai?**
+Kconfig trả lời câu hỏi **"phần mềm nào được biên dịch vào"** (VD: có bật driver CAN không, có bật Shell không — `prj.conf`). Devicetree trả lời câu hỏi **"phần cứng thật trên board này nối ra sao"** (VD: CAN1 dùng chân PB8/PB9, đèn LED nối PI1 — `app.overlay`). Tách hai thứ này giúp cùng một mã nguồn ứng dụng chạy được trên nhiều board khác nhau — chỉ cần đổi file Devicetree, không phải sửa code C.
+
+**Câu 12 — `K_THREAD_DEFINE` (static) khác gì `k_thread_create()` (dynamic)?**
+`K_THREAD_DEFINE` khai báo thread ngay lúc biên dịch — vùng nhớ stack và cấu trúc điều khiển thread được cấp phát tĩnh trong file nhị phân, thread tự động chạy khi kernel khởi động, không tốn heap lúc runtime. `k_thread_create()` tạo thread lúc runtime, linh hoạt hơn (có thể quyết định tạo bao nhiêu thread tuỳ điều kiện chạy) nhưng cần cấp phát vùng nhớ (heap hoặc mảng tĩnh) thủ công và dễ rủi ro cạn bộ nhớ nếu tạo quá nhiều. Project này dùng toàn bộ `K_THREAD_DEFINE` vì số lượng và vai trò của từng thread (`can_worker`, `safety`, `sim`) đã biết trước, không thay đổi lúc chạy — phù hợp hệ thống nhúng cần xác định trước tài nguyên.
+
+**Câu 13 — Tại sao `k_msgq_get(..., K_FOREVER)` không làm "treo" hệ thống hay tốn CPU?**
+Khi một luồng gọi hàm blocking như `k_msgq_get` với `K_FOREVER`, kernel Zephyr chuyển luồng đó sang trạng thái **Suspended/Waiting** và đưa CPU cho luồng khác (hoặc vào chế độ tiết kiệm năng lượng nếu không còn luồng nào sẵn sàng) — khác hẳn vòng lặp `while(1) { if (co_du_lieu) ... }` polling liên tục ở bare-metal (luôn chiếm 100% CPU dù không có gì để làm). Khi hàng đợi có dữ liệu mới (do driver CAN đẩy vào), kernel đánh thức lại đúng luồng đang chờ.

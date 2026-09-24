@@ -64,6 +64,7 @@ sequenceDiagram
 ## MỤC LỤC TỔNG QUAN
 
 - [🧭 Ý tưởng & Thiết kế hệ thống](#-ý-tưởng--thiết-kế-hệ-thống-đọc-trước--tại-sao-trước-khi-học-làm-thế-nào)
+- [🆕 Cập nhật so với phiên bản Source trước](#-cập-nhật-so-với-phiên-bản-source-trước--nâng-cấp-từ-1-bản-tin-lên-hệ-thống-3-bản-tin)
 - [⚠️ Đối chiếu với Source Code thật](#️-đối-chiếu-với-source-code-thật--đọc-trước-khi-học-thuộc)
 - [0. DANH MỤC TÀI LIỆU GỐC & HƯỚNG DẪN TRA CỨU RM/DATASHEET (LOOKUP GUIDE)](#0-danh-mục-tài-liệu-gốc--hướng-dẫn-tra-cứu-rmdatasheet-lookup-guide)
   - [0.1. Danh Mục Tài Liệu Gốc Trọng Tâm (Official Documents)](#01-danh-mục-tài-liệu-gốc-trọng-tâm-official-documents)
@@ -98,7 +99,42 @@ sequenceDiagram
 
 ---
 
-## ⚠️ ĐỐI CHIẾU VỚI SOURCE CODE THẬT — ĐỌC TRƯỚC KHI HỌC THUỘC
+## 🆕 CẬP NHẬT SO VỚI PHIÊN BẢN SOURCE TRƯỚC — NÂNG CẤP TỪ 1 BẢN TIN LÊN HỆ THỐNG 3 BẢN TIN
+
+Source vừa gửi lại đã thay đổi so với bản đối chiếu trước — không phải sửa lỗi nhỏ mà là **nâng cấp kiến trúc thật sự**, theo đúng hướng một mạng CAN ô tô thật (nhiều ECU con, mỗi ECU phát 1 loại bản tin riêng). Tóm tắt để không bị lẫn với bản cũ:
+
+| Hạng mục | Bản trước (đã học) | Bản mới (source vừa gửi) |
+| :--- | :--- | :--- |
+| **Số loại bản tin CAN** | 1 bản tin duy nhất `0x123` (tốc độ, RPM, nhiệt độ) | **3 bản tin riêng biệt**: `CAN_ID_ENGINE=0x123` (tốc độ/RPM/nhiệt độ nước), `CAN_ID_TRANSMISSION=0x124` (tay số, mô-men xoắn), `CAN_ID_CHASSIS=0x125` (áp lực phanh) |
+| **Bộ lọc phần cứng (Node 1)** | `id=0x123, mask=0x7FF` (khớp chính xác 1 ID) | `id=0x120, mask=0x7F8` — lọc theo **dải 8 ID** `0x120-0x127`, đủ rộng để lọt qua cả 3 bản tin `0x123/0x124/0x125` cùng lúc chỉ bằng 1 bộ lọc |
+| **Hàm giải mã (Node 1)** | `dbc_decode_vehicle_frame()` — chỉ hiểu 1 định dạng | `dbc_decode_can_frame(can_id, ...)` — `switch(can_id)` giải mã đúng layout theo từng ID; hàm cũ vẫn còn (gọi hộ `dbc_decode_can_frame(CAN_ID_ENGINE,...)` để không phá code cũ) |
+| **Rolling Counter** | 1 biến `last_counter` dùng chung, chỉ kiểm tra "counter tiếp theo có đúng +1 không" | Mảng `last_counters[3]` — mỗi ID có bộ đếm riêng; kiểm tra theo **delta**: `delta==0` → khung trùng lặp (replay), `delta==1` → bình thường, `delta==2` → rớt đúng 1 khung, `delta>2` → rớt nhiều khung — phân loại lỗi chi tiết hơn hẳn, và cộng dồn vào bộ đếm thống kê |
+| **Tính CRC-8** | Vòng lặp bit-by-bit (8 phép dịch bit cho mỗi byte) | **Bảng tra nhanh (Lookup Table 256 phần tử)** `e2e_crc8_table[]` — tra bảng 1 lần thay vì lặp 8 lần/byte, giảm đáng kể chu kỳ CPU khi phải xử lý gấp 3 lần số khung (do giờ có 3 bản tin thay vì 1) |
+| **Thống kê an toàn** | Không có | Struct `VehicleE2EStats_t` mới: tổng số khung nhận, số khung hợp lệ, số lỗi CRC, số khung rớt, và đếm riêng theo từng ID (`id_123_count`, `id_124_count`, `id_125_count`) — truy vấn qua `dbc_decoder_get_stats()`/`dbc_decoder_reset_stats()` |
+| **Lệnh Shell mới** | `vehicle status`, `dtc read/clear`, `can sim/auto/inject` | Thêm **`can stat`** (xem thống kê 3-mailbox, % độ tin cậy) và **`can stat_reset`** |
+| **Node 2 — Phát khung tin** | 1 hàm `e2e_encode_vehicle_frame()`, phát 1 frame/chu kỳ 100ms | 3 hàm encode riêng (`e2e_encode_vehicle_frame`, `e2e_encode_transmission_frame`, `e2e_encode_chassis_frame`), mỗi hàm có **bộ Rolling Counter độc lập**; mỗi chu kỳ 100ms phát liên tiếp cả 3 khung |
+| **Node 2 — `CAN1_Transmit()`** | Luôn dùng cứng **Mailbox 0** (`CAN1_TI0R`), chỉ gửi được 1 khung, phải đợi khung trước gửi xong mới gửi tiếp | Tự động quét cờ `TME0/TME1/TME2` để **chọn 1 trong 3 Mailbox phần cứng đang rảnh**, tính địa chỉ thanh ghi theo công thức `base + mb*0x10` — nhờ vậy 3 khung Engine/Transmission/Chassis được nạp gần như đồng thời vào 3 mailbox khác nhau thay vì phải xếp hàng chờ từng khung một |
+
+### Ý tưởng thiết kế mới cần nắm thêm (bổ sung cho phần "Ý tưởng & Thiết kế hệ thống" ở đầu tài liệu):
+
+**10. Tách 1 "bản tin xe" thành 3 bản tin theo đúng hệ thống con vật lý (Powertrain / Transmission / Chassis).**
+   Trên xe thật, không có 1 ECU nào biết tuốt mọi thông số — động cơ, hộp số, phanh là 3 hệ thống con độc lập, mỗi hệ thống có ECU riêng phát bản tin riêng lên bus chung. Tách như vậy còn cho phép **mở rộng thêm ECU thứ 3, thứ 4...** sau này mà không phải sửa định dạng bản tin cũ — mỗi ID là một "kênh" độc lập, thêm ID mới không ảnh hưởng ID cũ.
+
+**11. Dùng 1 bộ lọc dải (`0x120-0x127`) thay vì 3 bộ lọc riêng cho 3 ID.**
+   bxCAN chỉ có tối đa vài chục Filter Bank (giới hạn phần cứng, `CONFIG_CAN_MAX_FILTER=5` trong `prj.conf`). Nếu mai này thêm ECU thứ 4, thứ 5 cùng dải `0x120-0x127`, không cần cấu hình thêm filter mới — tận dụng đúng bản chất mask-based filtering của bxCAN: mask `0x7F8` che 8 bit cao, để ngỏ 3 bit thấp tự do khớp bất kỳ giá trị nào từ `0x120` đến `0x127`.
+
+**12. Đổi từ vòng lặp CRC bit-by-bit sang bảng tra (Lookup Table) khi khối lượng khung tăng gấp 3.**
+   Khi chỉ có 1 bản tin/chu kỳ, CPU dư sức tính CRC bằng vòng lặp bit. Khi tăng lên 3 bản tin/chu kỳ (gấp 3 khối lượng tính CRC ở cả 2 node), đổi sang bảng tra sẵn 256 giá trị giúp mỗi byte chỉ tốn 1 lần tra bảng thay vì 8 lần dịch-XOR bit — đánh đổi 256 byte bộ nhớ Flash để tiết kiệm chu kỳ CPU, kinh điển trong nhúng khi cần tối ưu.
+
+**13. Rolling Counter kiểu "delta" thay vì kiểu "đúng +1 hay sai" nhị phân.**
+   Kiểu cũ chỉ trả lời được "có lỗi hay không". Kiểu delta trả lời được **"lỗi gì, mức độ bao nhiêu"** — phân biệt khung bị lặp lại (tấn công Replay hoặc lỗi phần cứng gửi trùng) với khung bị rớt do nhiễu bus, và còn đếm được rớt bao nhiêu khung liên tiếp — thông tin này hữu ích hơn nhiều khi cần debug/thống kê chất lượng đường truyền thực tế (qua lệnh `can stat` mới).
+
+**14. Round-robin qua 3 Mailbox phần cứng để gửi chùm (burst) không bị nghẽn.**
+   Nếu vẫn dùng cứng Mailbox 0 cho cả 3 khung, khung thứ 2 phải đợi khung 1 gửi xong (mất vài trăm µs ở 500kbps) mới được nạp — làm lệch thời điểm phát giữa 3 hệ thống con. Cho phép chọn mailbox rảnh (0, 1, hoặc 2) giúp nạp cả 3 khung gần như cùng lúc vào phần cứng, phần cứng bxCAN tự sắp xếp thứ tự phát ra bus theo ưu tiên ID (ID nhỏ hơn thắng arbitration — xem Câu 1) mà phần mềm không cần tự canh thời gian.
+
+---
+
+
 
 Đã đối chiếu với source thật của cả 2 node: `node1_stm32f7_gateway/src/{can_gateway.c, can_gateway.h, dbc_decoder.c, safety_monitor.c, diag_shell.c, main.c}` (Zephyr) và `node2_stm32f103_ecu/src/{can_f103.c, e2e_encoder.c, main.c}` (bare-metal). Phát hiện quan trọng nhất: **tài liệu gốc đôi khi gán nhầm code bare-metal của Node 2 thành "code thật" của Node 1** — hai board có kiến trúc hoàn toàn khác nhau nên cần tách bạch rõ trước khi học thuộc:
 
@@ -461,17 +497,18 @@ Bit 0:      0 (Reserved)
   * **Mặt nạ `0x7FF` (11 bit 1 = `111 1111 1111b`):** Phần cứng so khớp chính xác từng bit một của ID. Chỉ bản tin có ID trùng khớp 100% mới được lọt qua.
   * **Mặt nạ `0x7F0` (7 bit cao là 1, 4 bit thấp là 0 = `111 1111 0000b`):** 4 bit thấp là mức 0 (Don't care). Cho phép bắt một dải gồm $2^4 = 16\text{ bản tin}$ liên tiếp từ `0x120` đến `0x12F` vào chung một hàng đợi chỉ với 1 bộ lọc phần cứng duy nhất!
 
-#### Dẫn chứng mã nguồn thực tế trong dự án (Node 1 — F746/Zephyr, ✅ khớp `can_gateway.c` thật):
+#### Dẫn chứng mã nguồn thực tế trong dự án (Node 1 — F746/Zephyr, ✅ khớp `can_gateway.c` thật — bản mới nhất):
 ```c
-/* Cấu hình bộ lọc phần cứng nhận ID 0x123 (Standard ID) */
+/* Cấu hình bộ lọc phần cứng nhận dải ID 0x120-0x127 (bao gồm cả 3 bản tin 0x123/0x124/0x125) */
 const struct can_filter rx_filter = {
-    .id = 0x123,
-    .mask = 0x7FF, /* Mặt nạ 0x7FF: So khớp chính xác 100% ID 0x123 */
+    .id = 0x120,
+    .mask = 0x7F8, /* Mặt nạ 0x7F8: che 8 bit cao, để ngỏ 3 bit thấp -> lọt qua 8 ID liên tiếp 0x120-0x127 */
     .flags = 0
 };
 /* Gắn trực tiếp bộ lọc phần cứng vào hàng đợi k_msgq (Zero-Lock) */
 ret = can_add_rx_filter_msgq(can_dev, &raw_can_msgq, &rx_filter);
 ```
+*(Phiên bản trước của source chỉ lọc đúng 1 ID `0x123` với `mask=0x7FF`; bản hiện tại đã mở rộng thành lọc theo dải để đón thêm 2 bản tin mới `0x124`/`0x125` — xem Mục "🆕 Cập nhật so với phiên bản Source trước" ở đầu tài liệu.)*
 
 > ⚠️ Quy trình 6 bước bare-metal bên dưới cũng là code **thật của Node 2** (`can_f103.c`, hàm `CAN1_Filter_Config()`), không phải của Node 1. Điểm khác: Node 2 thật gọi `CAN1_Filter_Config(0x000, 0x000)` lúc khởi tạo — tức **mở toang nhận mọi ID** (Node 2 chỉ cần nghe, không cần lọc), chứ không lọc riêng `0x123/0x7FF` như ví dụ minh hoạ dưới đây.
 

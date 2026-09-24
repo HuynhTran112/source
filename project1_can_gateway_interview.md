@@ -251,56 +251,39 @@ Dự án hiện thực một **Trạm Cổng Giao Tiếp (Gateway) và Giám Sá
 
 Trên Node 1 (Gateway STM32F746), hệ thống phân tách thành 3 tầng rõ rệt: Tầng Phần Cứng (Hardware), Tầng Driver Kernel (Zephyr CAN Subsystem & ISR), và Tầng Ứng Dụng Đa Nhiệm (Application Threads). Các luồng giao tiếp với nhau qua hàng đợi thông điệp phi khóa `k_msgq` và biến trạng thái toàn cục bảo vệ bởi `k_mutex`:
 
-```text
-┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                             APPLICATION LAYER (ZEPHYR RTOS MULTI-THREADING)                      │
-│                                                                                                  │
-│   ┌──────────────────────────────────────────────┐  ┌─────────────────────────────────────────┐  │
-│   │  Thread 3: Shell CLI & Virtual Sim Thread    │  │  Thread 2: Safety Supervisor Thread     │  │
-│   │  - Priority: 7 (Preemptive, Low)             │  │  - Priority: 6 (Preemptive, Normal)     │  │
-│   │  - Stack: 2048 bytes (diag_shell.c)          │  │  - Stack: 1024 bytes (safety_monitor.c) │  │
-│   │  - Lệnh Shell: vehicle status, dtc, can stat │  │  - Chu kỳ: 200 ms định thời bằng sleep  │  │
-│   │  - Sim ảo: can sim, can auto, can inject     │  │  - Quét ngưỡng: >105°C, >6500RPM, 1000ms│  │
-│   │  - Cập nhật thống kê E2E & Telemetry display │  │  - Cập nhật DTC, chớp đèn cảnh báo PI1  │  │
-│   └──────────────────────▲───────────────────────┘  └────────────────────▲────────────────────┘  │
-│                          │                                               │                       │
-│                          │ g_telemetry_mutex                             │ Đọc g_current_telemetry
-│                          └───────────────────────────────────────────────┼───────────────────────┘
-│                                                                          │                       │
-│   ┌──────────────────────────────────────────────────────────────────────┴────────────────────┐  │
-│   │  Thread 1: CAN Worker Thread (can_worker_thread_entry in main.c)                          │  │
-│   │  - Priority: 5 (Preemptive, High Real-Time)                                               │  │
-│   │  - Stack: 2048 bytes                                                                      │  │
-│   │  - Chờ khung tin từ hàng đợi: k_msgq_get(&raw_can_msgq, &frame, K_FOREVER) [0% CPU idle] │  │
-│   │  - Thẩm định E2E Profile 1: Tra bảng LUT CRC-8 (0x2F) + Rolling Counter Delta             │  │
-│   │  - Giải mã Vector DBC: Tốc độ, RPM (Little-Endian >> 2), Nhiệt độ (-40), Gear, Torque... │  │
-│   │  - Cập nhật an toàn g_current_telemetry dưới khóa k_mutex                                 │  │
-│   └──────────────────────────────────────────────▲────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────┼───────────────────────────────────────────────┘
-                                                   │
-┌──────────────────────────────────────────────────┼───────────────────────────────────────────────┐
-│                    ZEPHYR DRIVER SUBSYSTEM & HARDWARE INTERRUPTS                                 │
-│                                                  │ raw_can_msgq (Độ sâu 16 Frames)               │
-│   ┌──────────────────────────────────────────────┴────────────────────────────────────────────┐  │
-│   │  Driver bxCAN Zephyr (can_stm32_bxcan.c) - Ngắt CAN1_RX0_IRQHandler & CAN1_SCE_IRQHandler │  │
-│   │  - Đọc thanh ghi dữ liệu: CAN_RI0R, CAN_RDT0R, CAN_RDL0R, CAN_RDH0R                      │  │
-│   │  - Giải phóng Mailbox phần cứng: Ghi bit W1C RFOM0 = 1 vào CAN_RF0R                       │  │
-│   │  - Đẩy vào Queue phi khóa từ ISR: k_msgq_put(&raw_can_msgq, &frame, K_NO_WAIT)           │  │
-│   │  - Bắt sự kiện Bus-Off / Error Passive và kích hoạt can_state_change_handler               │  │
-│   └──────────────────────────────────────────────▲────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────┼───────────────────────────────────────────────┘
-                                                   │
-┌──────────────────────────────────────────────────┼───────────────────────────────────────────────┐
-│                       BARE-METAL HARDWARE REGISTERS (STM32F746NG)                                │
-│                                                  │                                               │
-│   ┌──────────────────────────────────────────────┴────────────────────────────────────────────┐  │
-│   │  Khối Phần Cứng bxCAN1 (Base: 0x40006400 trên APB1 @ 54 MHz)                              │  │
-│   │  - Ghép kênh chân AF9: PB8 (CAN1_RX) & PB9 (CAN1_TX)                                      │  │
-│   │  - Chân PI0 (STB): Đánh thức CAN Transceiver từ chế độ Standby                            │  │
-│   │  - Bộ lọc phần cứng Filter Bank 0 (Mask Mode: ID=0x120, Mask=0x7F8 đón trọn 0x120-0x127)  │  │
-│   │  - CAN Transceiver ngoài (TJA1050 / MCP2551) kết nối Bus vi sai 2 dây CAN_H / CAN_L       │  │
-│   └───────────────────────────────────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph APP["TẦNG ỨNG DỤNG ZEPHYR RTOS (MULTI-THREADING)"]
+        direction TB
+        subgraph THREADS["Các Luồng Thực Thi Độc Lập"]
+            T1["<b>Thread 1: CAN Worker</b><br/>• Priority: 5 (Preemptive, Realtime)<br/>• Stack: 2048 bytes<br/>• k_msgq_get(K_FOREVER)<br/>• E2E CRC-8 LUT & Delta Counter<br/>• Giải mã DBC (Speed, RPM, Temp, Torque)"]
+            T2["<b>Thread 2: Safety Supervisor</b><br/>• Priority: 6 (Preemptive)<br/>• Stack: 1024 bytes (Chu kỳ: 200ms)<br/>• Quét ngưỡng: >105°C, >6500 RPM, 1000ms<br/>• Quản lý DTC (U0100, P0115, P0219)<br/>• Chớp Warning LED (PI1)"]
+            T3["<b>Thread 3: Shell CLI & Sim Ảo</b><br/>• Priority: 7 (Preemptive, Low)<br/>• Stack: 2048 bytes (diag_shell.c)<br/>• Lệnh: vehicle status, dtc, can stat<br/>• Bơm lỗi: can inject overheat/overspeed/corrupt<br/>• Sim xe ảo: can auto on/off"]
+        end
+
+        DATA[("<b>Dữ Liệu Vận Hành Xe</b><br/>g_current_telemetry<br/><i>(Bảo vệ bằng g_telemetry_mutex)</i>")]
+        DTC_DATA[("<b>Danh Sách Lỗi DTC</b><br/>s_active_dtcs[8]<br/><i>(Bảo vệ bằng s_dtc_mutex)</i>")]
+
+        T1 -->|"k_mutex_lock & Ghi dữ liệu"| DATA
+        T2 -->|"Đọc kiểm tra an toàn"| DATA
+        T3 -->|"Đọc hiển thị CLI"| DATA
+        T2 -->|"Cập nhật mã lỗi"| DTC_DATA
+        T3 -->|"Đọc / Xóa mã lỗi"| DTC_DATA
+    end
+
+    subgraph DRV["ZEPHYR DRIVER MODEL & NGẮT PHẦN CỨNG"]
+        QUEUE[["<b>Hàng Đợi k_msgq</b><br/>raw_can_msgq (Độ sâu 16 Frames)"]]
+        ISR["<b>Driver bxCAN Zephyr (can_stm32_bxcan.c)</b><br/>• CAN1_RX0_IRQHandler: Đọc RI0R/RDT0R/RDL0R/RDH0R -> Clear RFOM0 (W1C)<br/>• Đẩy gói tin vào hàng đợi: k_msgq_put(&raw_can_msgq, &frame, K_NO_WAIT)<br/>• CAN1_SCE_IRQHandler: Bắt lỗi Bus-Off -> Gọi callback can_state_change_handler"]
+    end
+
+    subgraph HW["PHẦN CỨNG VI ĐIỀU KHIỂN BARE-METAL STM32F746NG"]
+        CAN_HW["<b>Khối Ngoại Vi bxCAN1 (Base: 0x40006400 @ APB1 54 MHz)</b><br/>• 28 Filter Banks: Filter Bank 0 Mask Mode (ID: 0x120, Mask: 0x7F8 đón dải 0x120-0x127)<br/>• Pinmux Alternate Function AF9: PB8 (CAN1_RX) & PB9 (CAN1_TX)<br/>• Chân PI0 (STB): Đánh thức IC Transceiver từ Standby về Normal Mode<br/>• Module CAN Transceiver ngoài (TJA1050 / MCP2551) kết nối Bus 2 dây vi sai"]
+    end
+
+    HW -->|"Tín hiệu vi sai CAN_H / CAN_L"| CAN_HW
+    CAN_HW -->|"Ngắt NVIC"| ISR
+    ISR -->|"Đẩy khung tin (K_NO_WAIT)"| QUEUE
+    QUEUE -->|"Đánh thức Thread"| T1
 ```
 
 ---
@@ -422,10 +405,10 @@ Trong giao thức CAN (ISO 11898-1), 1 bit dữ liệu được chia thành 4 ph
 2. **Prop_Seg (Propagation Segment):** Bù trễ vật lý của cáp vi sai và chip Transceiver.
 3. **Phase_Seg1 (Phase Buffer Segment 1):** Bù trễ pha dương.
 4. **Phase_Seg2 (Phase Buffer Segment 2):** Bù trễ pha âm. Điểm giao giữa Phase_Seg1 và Phase_Seg2 chính là **Điểm lấy mẫu (Sample Point)**.
-* Trong thanh ghi `CAN_BTR` của bxCAN: $\text{TS1} = \text{Prop\_Seg} + \text{Phase\_Seg1}$, $\text{TS2} = \text{Phase\_Seg2}$.
+* Trong thanh ghi `CAN_BTR` của bxCAN: $\text{TS1} = \text{Prop}_{\text{Seg}} + \text{Phase}_{\text{Seg1}}$, $\text{TS2} = \text{Phase}_{\text{Seg2}}$.
 
-$$\text{Tổng số } t_q \text{ trong 1 bit} = \text{Sync\_Seg} + \text{TS1} + \text{TS2} = 1 + \text{TS1} + \text{TS2}$$
-$$\text{Sample Point (\%)} = \frac{1 + \text{TS1}}{1 + \text{TS1} + \text{TS2}} \times 100\%$$
+$$N_{\text{tq}} = \text{Sync}_{\text{Seg}} + \text{TS1} + \text{TS2} = 1 + \text{TS1} + \text{TS2}$$
+$$\text{Sample Point} = \frac{1 + \text{TS1}}{1 + \text{TS1} + \text{TS2}} \times 100$$
 $$\text{Baudrate} = \frac{f_{APB1}}{BRP \times (1 + \text{TS1} + \text{TS2})}$$
 
 ```text
@@ -525,22 +508,25 @@ void CAN1_Filter_Config(uint32_t id, uint32_t mask)
   * **Byte 1:** Alive/Rolling Counter 4-bit (`0` đến `15`).
   * **Byte 2:** Tốc độ xe ($0 - 250\text{ km/h}$, độ phân giải 1 km/h / LSB).
   * **Byte 3..4:** Vòng tua máy (Engine RPM) chuẩn **Little-Endian (Intel)** với **Factor = 0.25**:
-    $$\text{Raw\_RPM} = \text{Byte 3} \mid (\text{Byte 4} \ll 8), \qquad \text{RPM} = \text{Raw\_RPM} \gg 2$$
+    $$\text{Raw}_{\text{RPM}} = \text{data}[3] \mid (\text{data}[4] \ll 8), \qquad \text{RPM} = \text{Raw}_{\text{RPM}} \gg 2$$
   * **Byte 5:** Nhiệt độ nước làm mát (**Offset = -40 °C**): $\text{Temp (°C)} = \text{Byte 5} - 40$.
   * **Byte 6..7:** Dành riêng (`0x00`).
 
 * **Bản tin 2: CAN ID `0x124` (Transmission / Hộp số):**
-  * **Byte 0:** CRC-8 Checksum (Data ID `0x1A2B`).
-  * **Byte 1:** Alive Counter 4-bit (`0` đến `15`, độc lập).
-  * **Byte 2:** Vị trí tay số (Gear: 0=P, 1=R, 2=N, 3=D, 4..9=Số 1..6).
-  * **Byte 3..4:** Mô-men xoắn động cơ (Engine Torque: Little-Endian, $0 - 500\text{ Nm}$).
-  * **Byte 5..7:** Dành riêng (`0x00`).
+  * **Byte 0:** CRC-8 Checksum (SAE J1850 poly `0x2F`, Data ID `0x1A2B`).
+  * **Byte 1:** Alive/Rolling Counter 4-bit (`0` đến `15`, độc lập).
+  * **Byte 2:** Tay số hộp số (`gear_pos`: Cấp số 1 đến 5, hiển thị "Số %u" trên Shell).
+  * **Byte 3..4:** Mô-men xoắn động cơ (`engine_torque`: Intel Little-Endian, $150 - 290\text{ Nm}$).
+  * **Byte 5:** Nhiệt độ dầu hộp số (`oil_temp`: Offset -40 °C, ví dụ 85 °C -> raw = 125).
+  * **Byte 6..7:** Dành riêng (`0x00`).
 
 * **Bản tin 3: CAN ID `0x125` (Chassis / Khung gầm):**
-  * **Byte 0:** CRC-8 Checksum (Data ID `0x1A2B`).
-  * **Byte 1:** Alive Counter 4-bit (`0` đến `15`, độc lập).
-  * **Byte 2:** Áp lực đạp phanh (Brake Pressure: $0 - 100\%$).
-  * **Byte 3..7:** Dành riêng (`0x00`).
+  * **Byte 0:** CRC-8 Checksum (SAE J1850 poly `0x2F`, Data ID `0x1A2B`).
+  * **Byte 1:** Alive/Rolling Counter 4-bit (`0` đến `15`, độc lập).
+  * **Byte 2:** Áp lực đạp phanh (`brake_pct`: $0 - 100\%$, mô phỏng 35% khi xe phanh giảm tốc).
+  * **Byte 3..4:** Vận tốc bánh xe (`wheel_speed`: Intel Little-Endian, mô phỏng speed × 10).
+  * **Byte 5:** Nhiệt độ má phanh (`pad_temp`: Offset -40 °C, ví dụ 65 °C -> raw = 105).
+  * **Byte 6..7:** Dành riêng (`0x00`).
 
 #### Bảng Tra Cứu Nhanh CRC-8 Lookup Table (LUT 256 Giá Trị):
 Để xử lý gấp 3 lần lưu lượng mà không tốn chu kỳ CPU, hệ thống thay thế vòng lặp dịch bit bằng bảng tính sẵn `e2e_crc8_table[256]`:
@@ -757,12 +743,12 @@ sequenceDiagram
 * **Trên Node 1 (STM32F746 — Gateway Zephyr):**
   - Xung nhịp bus ngoại vi $f_{APB1} = 54\text{ MHz}$. Chọn tổng số time quanta $N = 18\text{ tq}$.
   - $BRP = \frac{54\text{ MHz}}{500\text{ kbps} \times 18} = 6 \implies t_q = \frac{6}{54\text{ MHz}} = 111.11\text{ ns}$.
-  - Phân bổ: $\text{Sync\_Seg} = 1\text{ tq}$, $\text{TS1} = 15\text{ tq}$, $\text{TS2} = 2\text{ tq}$.
+  - Phân bổ: $\text{Sync}_{\text{Seg}} = 1\text{ tq}$, $\text{TS1} = 15\text{ tq}$, $\text{TS2} = 2\text{ tq}$.
   - Điểm lấy mẫu: $\text{Sample Point} = \frac{1 + 15}{18} = \frac{16}{18} \approx 88.89\%$ (rất sát chuẩn CiA $87.5\%$). Zephyr tự giải toán phương trình này từ khai báo `sample-point = <875>; bitrate = <500000>;` trong Devicetree.
 * **Trên Node 2 (STM32F103 — Bare-Metal ECU Simulator):**
   - Xung nhịp bus ngoại vi $f_{APB1} = 36\text{ MHz}$. Chọn $N = 18\text{ tq}$.
   - $BRP = \frac{36\text{ MHz}}{500\text{ kbps} \times 18} = 4 \implies t_q = \frac{4}{36\text{ MHz}} = 111.11\text{ ns}$.
-  - Phân bổ: $\text{Sync\_Seg} = 1\text{ tq}$, $\text{TS1} = 14\text{ tq}$, $\text{TS2} = 3\text{ tq}$.
+  - Phân bổ: $\text{Sync}_{\text{Seg}} = 1\text{ tq}$, $\text{TS1} = 14\text{ tq}$, $\text{TS2} = 3\text{ tq}$.
   - Điểm lấy mẫu: $\text{Sample Point} = \frac{1 + 14}{18} = \frac{15}{18} \approx 83.33\%$.
   - Nạp trực tiếp vào thanh ghi: `CAN1_BTR = 0x002D0003UL` ($BRP-1=3$, $TS1-1=13$, $TS2-1=2$).
 

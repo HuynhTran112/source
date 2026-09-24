@@ -40,30 +40,21 @@ Mô phỏng lại đúng cách một mạng CAN Bus ô tô thật gồm **nhiề
 
 ### Tóm tắt luồng dữ liệu (từ ý tưởng ở trên)
 
-```
-Node 2 (F103, bare-metal)                              Node 1 (F746, Zephyr)
-──────────────────────────                              ─────────────────────
-Đọc cảm biến giả lập (speed/rpm/temp)
-        │
-Đóng gói DBC + tính CRC-8 + Rolling Counter   [ý tưởng 4]
-        │
-CAN1_Transmit() — ghi mailbox thanh ghi        [ý tưởng 2]
-        │
-        ▼
-   ═══════ CAN Bus vật lý 500kbps (CAN_H / CAN_L) ═══════   [ý tưởng 1]
-        │
-        ▼
-                                              bxCAN nhận, Filter Bank lọc ID=0x123  [ý tưởng 5]
-                                                          │
-                                              can_add_rx_filter_msgq → k_msgq
-                                                          │
-                                              can_worker_thread: giải mã DBC +
-                                              xác thực CRC-8 + Rolling Counter      [ý tưởng 4, 6]
-                                                          │
-                                              safety_thread: kiểm tra ngưỡng,
-                                              cập nhật DTC, nhấp nháy LED (200ms)   [ý tưởng 6]
-                                                          │
-                                              Shell CLI: "vehicle status", "dtc read"
+```mermaid
+sequenceDiagram
+    autonumber
+    participant N2 as Node 2 (F103, bare-metal)
+    participant Bus as CAN Bus vật lý 500kbps
+    participant N1 as Node 1 (F746, Zephyr)
+
+    N2->>N2: Đọc cảm biến giả lập (speed/rpm/temp)
+    N2->>N2: Đóng gói DBC + tính CRC-8 + Rolling Counter (ý tưởng 4)
+    N2->>Bus: CAN1_Transmit() — ghi mailbox thanh ghi (ý tưởng 2)
+    Bus->>N1: bxCAN nhận, Filter Bank lọc ID=0x123 (ý tưởng 5)
+    N1->>N1: can_add_rx_filter_msgq đẩy vào k_msgq
+    N1->>N1: can_worker_thread — giải mã DBC + xác thực CRC-8/Rolling Counter (ý tưởng 4, 6)
+    N1->>N1: safety_thread mỗi 200ms — kiểm tra ngưỡng, cập nhật DTC, nhấp nháy LED (ý tưởng 6)
+    N1-->>N1: Shell CLI: "vehicle status", "dtc read"
 ```
 
 *(Song song đó, `sim_thread` bên trong Node 1 có thể tự phát khung giả lập qua `can_gateway_send_frame()` mà không cần Node 2 thật — dùng để test độc lập, xem ý tưởng 7.)*

@@ -138,14 +138,16 @@ Nhằm nắm chắc hệ thống và trả lời phỏng vấn chính xác, bả
   - [2.3. AUTOSAR E2E Profile 1: Đa Thức CRC-8 SAE J1850, Alive Counter & Data ID](#23-autosar-e2e-profile-1-đa-thức-crc-8-sae-j1850-alive-counter--data-id)
   - [2.4. Máy Trạng Thái Quản Lý Lỗi CAN (Fault Confinement - ISO 11898-1)](#24-máy-trạng-thái-quản-lý-lỗi-can-fault-confinement---iso-11898-1)
 - [3. SƠ ĐỒ TUẦN TỰ HOẠT ĐỘNG (MERMAID SEQUENCE DIAGRAMS)](#3-sơ-đồ-tuần-tự-hoạt-động-mermaid-sequence-diagrams)
-  - [3.1. Quy Trình Cấu Hình Khởi Động Phần Cứng (Peripheral Configuration Pipeline)](#31-quy-trình-cấu-hình-khởi-động-phần-cứng-peripheral-configuration-pipeline)
-  - [3.2. Quy Trình Vận Hành & Bắt Tay Dữ Liệu Thời Gian Thực (Runtime Dataflow)](#32-quy-trình-vận-hành--bắt-tay-dữ-liệu-thời-gian-thực-runtime-dataflow)
-  - [3.3. Quy Trình Xử Lý Sự Cố & Phục Hồi An Toàn (Fault & Recovery Pipeline)](#33-quy-trình-xử-lý-sự-cố--phục-hồi-an-toàn-fault--recovery-pipeline)
+  - [3.1. Quy Trình Cấu Hình Khởi Động Phần Cứng — Node 1 (Peripheral Configuration Pipeline)](#31-quy-trình-cấu-hình-khởi-động-phần-cứng--node-1-zephyr-peripheral-configuration-pipeline)
+  - [3.1b. Quy Trình Cấu Hình Khởi Động Phần Cứng — Node 2 (Bare-Metal)](#31b-quy-trình-cấu-hình-khởi-động-phần-cứng--node-2-bare-metal-can_f103c)
+  - [3.2. Quy Trình Vận Hành & Bắt Tay Dữ Liệu Thời Gian Thực — Trọn Vẹn 2 Node (Runtime Dataflow)](#32-quy-trình-vận-hành--bắt-tay-dữ-liệu-thời-gian-thực-runtime-dataflow--trọn-vẹn-2-node)
+  - [3.3. Quy Trình Xử Lý Sự Cố & Phục Hồi An Toàn — Node 1 (Fault & Recovery Pipeline)](#33-quy-trình-xử-lý-sự-cố--phục-hồi-an-toàn-fault--recovery-pipeline--node-1)
 - [4. PHÂN LOẠI LỖI THỰC TẾ VÀ ĐẶC THÙ PHẦN CỨNG](#4-phân-loại-lỗi-thực-tế-và-đặc-thù-phần-cứng)
   - [4.1. Nhóm Lỗi Phổ Biến (Common Bugs)](#41-nhóm-lỗi-phổ-biến-common-bugs)
   - [4.2. Nhóm Lỗi Kiến Trúc (Architectural Bugs)](#42-nhóm-lỗi-kiến-trúc-architectural-bugs)
   - [4.3. Nhóm Lỗi Ngoại Lệ và Góc Khuất Phần Cứng (Edge-Case Bugs)](#43-nhóm-lỗi-ngoại-lệ-và-góc-khuất-phần-cứng-edge-case-bugs)
   - [4.4. Nhóm Lỗi Khi Triển Khai Trên Zephyr RTOS và STM32F7](#44-nhóm-lỗi-khi-triển-khai-trên-zephyr-rtos-và-stm32f7)
+  - [4.5. Nhóm Lỗi Riêng Trên Node 2 (Bare-Metal STM32F103)](#45-nhóm-lỗi-riêng-trên-node-2-bare-metal-stm32f103)
 - [5. BỘ CÂU HỎI PHỎNG VẤN & TRẢ LỜI KỸ THUẬT CHUYÊN SÂU](#5-bộ-câu-hỏi-phỏng-vấn--trả-lời-kỹ-thuật-chuyên-sâu)
 
 ---
@@ -249,42 +251,48 @@ Dự án hiện thực một **Trạm Cổng Giao Tiếp (Gateway) và Giám Sá
 
 ### 1.2. Sơ Đồ Khối Kiến Trúc Phân Tầng & Luồng Dữ Liệu Đa Nhiệm (Zephyr Multi-threading)
 
-Trên Node 1 (Gateway STM32F746), hệ thống phân tách thành 3 tầng rõ rệt: Tầng Phần Cứng (Hardware), Tầng Driver Kernel (Zephyr CAN Subsystem & ISR), và Tầng Ứng Dụng Đa Nhiệm (Application Threads). Các luồng giao tiếp với nhau qua hàng đợi thông điệp phi khóa `k_msgq` và biến trạng thái toàn cục bảo vệ bởi `k_mutex`:
+Trọn vẹn luồng 2 node: Node 2 (STM32F103) đóng gói và phát dữ liệu, qua CAN Bus vật lý, tới Node 1 (STM32F746) nhận và xử lý. Riêng bên trong Node 1, hệ thống phân tách thành 3 tầng rõ rệt: Tầng Driver Kernel (Zephyr CAN Subsystem & ISR) và Tầng Ứng Dụng Đa Nhiệm (Application Threads), giao tiếp qua hàng đợi thông điệp phi khóa `k_msgq` và biến trạng thái toàn cục bảo vệ bởi `k_mutex`. Sơ đồ dưới chỉ giữ khung + luồng chảy dữ liệu cho dễ nhìn — chi tiết từng thread (priority, stack, nhiệm vụ) xem ở bảng ngay bên dưới:
 
 ```mermaid
 flowchart TD
-    subgraph APP["TẦNG ỨNG DỤNG ZEPHYR RTOS (MULTI-THREADING)"]
-        direction TB
-        subgraph THREADS["Các Luồng Thực Thi Độc Lập"]
-            T1["<b>Thread 1: CAN Worker</b><br/>• Priority: 5 (Preemptive, Realtime)<br/>• Stack: 2048 bytes<br/>• k_msgq_get(K_FOREVER)<br/>• E2E CRC-8 LUT & Delta Counter<br/>• Giải mã DBC (Speed, RPM, Temp, Torque)"]
-            T2["<b>Thread 2: Safety Supervisor</b><br/>• Priority: 6 (Preemptive)<br/>• Stack: 1024 bytes (Chu kỳ: 200ms)<br/>• Quét ngưỡng: >105°C, >6500 RPM, 1000ms<br/>• Quản lý DTC (U0100, P0115, P0219)<br/>• Chớp Warning LED (PI1)"]
-            T3["<b>Thread 3: Shell CLI & Sim Ảo</b><br/>• Priority: 7 (Preemptive, Low)<br/>• Stack: 2048 bytes (diag_shell.c)<br/>• Lệnh: vehicle status, dtc, can stat<br/>• Bơm lỗi: can inject overheat/overspeed/corrupt<br/>• Sim xe ảo: can auto on/off"]
+    subgraph N2["Node 2 — STM32F103 (Bare-Metal)"]
+        SENS["Đọc cảm biến giả lập<br/>(speed/rpm/temp/gear/brake)"] --> ENC["Đóng gói DBC<br/>+ CRC-8 LUT + Rolling Counter"]
+        ENC -->|"CAN1_Transmit()<br/>round-robin 3 Mailbox"| TX["0x123 / 0x124 / 0x125"]
+    end
+
+    TX --> BUS(["CAN Bus vật lý<br/>500 kbps (CAN_H/CAN_L)"])
+    BUS --> CANHW["bxCAN1 Peripheral<br/>Filter Bank: 0x120–0x127"]
+
+    subgraph N1["Node 1 — STM32F746 (Zephyr RTOS)"]
+        subgraph DRV["Tầng Driver — Zephyr (can_stm32_bxcan.c)"]
+            CANHW -->|"Ngắt NVIC"| ISR["ISR: đọc FIFO0<br/>ghi RFOM0=1"]
+            ISR -->|"k_msgq_put<br/>K_NO_WAIT"| QUEUE[["k_msgq<br/>raw_can_msgq"]]
         end
 
-        DATA[("<b>Dữ Liệu Vận Hành Xe</b><br/>g_current_telemetry<br/><i>(Bảo vệ bằng g_telemetry_mutex)</i>")]
-        DTC_DATA[("<b>Danh Sách Lỗi DTC</b><br/>s_active_dtcs[8]<br/><i>(Bảo vệ bằng s_dtc_mutex)</i>")]
+        subgraph APP["Tầng Ứng Dụng — 3 Thread tự viết + 1 Thread Zephyr có sẵn"]
+            QUEUE -->|"k_msgq_get<br/>K_FOREVER"| T1["Thread 1<br/>can_worker (Prio 5)"]
+            T2["Thread 2<br/>safety (Prio 6)"]
+            T3["Thread 3<br/>sim (Prio 7)"]
+            SHELL["Shell Thread<br/>(có sẵn trong Zephyr)"]
 
-        T1 -->|"k_mutex_lock & Ghi dữ liệu"| DATA
-        T2 -->|"Đọc kiểm tra an toàn"| DATA
-        T3 -->|"Đọc hiển thị CLI"| DATA
-        T2 -->|"Cập nhật mã lỗi"| DTC_DATA
-        T3 -->|"Đọc / Xóa mã lỗi"| DTC_DATA
+            T1 -->|"ghi, khoá mutex"| DATA[("g_current_telemetry")]
+            T2 -->|"đọc"| DATA
+            SHELL -->|"đọc"| DATA
+            T2 -->|"cập nhật lỗi"| DTC[("s_active_dtcs")]
+            SHELL -->|"đọc / xoá lỗi"| DTC
+            T3 -.->|"'can auto on' → tự bơm frame"| QUEUE
+        end
     end
-
-    subgraph DRV["ZEPHYR DRIVER MODEL & NGẮT PHẦN CỨNG"]
-        QUEUE[["<b>Hàng Đợi k_msgq</b><br/>raw_can_msgq (Độ sâu 16 Frames)"]]
-        ISR["<b>Driver bxCAN Zephyr (can_stm32_bxcan.c)</b><br/>• CAN1_RX0_IRQHandler: Đọc RI0R/RDT0R/RDL0R/RDH0R -> Clear RFOM0 (W1C)<br/>• Đẩy gói tin vào hàng đợi: k_msgq_put(&raw_can_msgq, &frame, K_NO_WAIT)<br/>• CAN1_SCE_IRQHandler: Bắt lỗi Bus-Off -> Gọi callback can_state_change_handler"]
-    end
-
-    subgraph HW["PHẦN CỨNG VI ĐIỀU KHIỂN BARE-METAL STM32F746NG"]
-        CAN_HW["<b>Khối Ngoại Vi bxCAN1 (Base: 0x40006400 @ APB1 54 MHz)</b><br/>• 28 Filter Banks: Filter Bank 0 Mask Mode (ID: 0x120, Mask: 0x7F8 đón dải 0x120-0x127)<br/>• Pinmux Alternate Function AF9: PB8 (CAN1_RX) & PB9 (CAN1_TX)<br/>• Chân PI0 (STB): Đánh thức IC Transceiver từ Standby về Normal Mode<br/>• Module CAN Transceiver ngoài (TJA1050 / MCP2551) kết nối Bus 2 dây vi sai"]
-    end
-
-    HW -->|"Tín hiệu vi sai CAN_H / CAN_L"| CAN_HW
-    CAN_HW -->|"Ngắt NVIC"| ISR
-    ISR -->|"Đẩy khung tin (K_NO_WAIT)"| QUEUE
-    QUEUE -->|"Đánh thức Thread"| T1
 ```
+
+| Thành phần | Loại | Priority | Định nghĩa trong code | Nhiệm vụ chính |
+| :--- | :--- | :--- | :--- | :--- |
+| **Thread 1 — `can_worker`** | Tự viết (`K_THREAD_DEFINE`) | 5 (cao nhất) | `main.c` | `k_msgq_get(K_FOREVER)` → giải mã DBC theo ID + xác thực E2E (CRC-8 LUT + Rolling Counter delta) → ghi `g_current_telemetry` |
+| **Thread 2 — `safety`** | Tự viết (`K_THREAD_DEFINE`) | 6 | `main.c` | Mỗi 200ms: quét ngưỡng (>105°C, >6500 RPM, mất tín hiệu >1000ms) → cập nhật `s_active_dtcs` → nhấp nháy LED cảnh báo (PI1) |
+| **Thread 3 — `sim`** | Tự viết (`K_THREAD_DEFINE`) | 7 (thấp nhất) | `diag_shell.c` | Khi bật `can auto on`: tự phát dữ liệu giả lập 5Hz thẳng vào hàng đợi, không cần Node 2 thật |
+| **Shell Thread** | Có sẵn trong Zephyr (`CONFIG_SHELL=y`) | theo cấu hình mặc định của Zephyr, không khai báo trong code project | `diag_shell.c` (chỉ đăng ký lệnh, không tự tạo thread) | Xử lý các lệnh gõ tay: `vehicle status`, `dtc read/clear`, `can stat`, `can inject ...` |
+
+> ⚠️ **Lưu ý:** Shell Thread không xuất hiện trong danh sách `K_THREAD_DEFINE` của project — nó do subsystem Shell của Zephyr tự tạo. Dễ nhầm nó với Thread 3 (`sim`) vì cả hai đều liên quan tới CLI, nhưng đây là 2 ngữ cảnh thực thi khác nhau: Thread 3 chỉ lo tự phát dữ liệu giả lập, còn việc đọc lệnh gõ tay và in kết quả ra màn hình là việc của Shell Thread.
 
 ---
 
@@ -625,7 +633,7 @@ static void can_state_change_handler(const struct device *dev, enum can_state st
 
 # 3. SƠ ĐỒ TUẦN TỰ HOẠT ĐỘNG (MERMAID SEQUENCE DIAGRAMS)
 
-### 3.1. Quy Trình Cấu Hình Khởi Động Phần Cứng (Peripheral Configuration Pipeline)
+### 3.1. Quy Trình Cấu Hình Khởi Động Phần Cứng — Node 1 (Zephyr, Peripheral Configuration Pipeline)
 
 ```mermaid
 sequenceDiagram
@@ -644,7 +652,7 @@ sequenceDiagram
     Z_CAN->>RCC: Bật RCC_APB1ENR bit CAN1EN = 1 (Cấp xung APB1 54 MHz)
     Z_CAN->>GPIO: Cấu hình PB8 (CAN1_RX) & PB9 (CAN1_TX) sang AF9
     Z_CAN->>bxCAN: Ghi bit INRQ = 1 trong CAN_MCR -> Chờ cờ INAK = 1
-    Z_CAN->>bxCAN: Nạp CAN_BTR = 0x011E0005 (BRP=6, TS1=15, TS2=2 -> 500 kbps @ 88.9%)
+    Z_CAN->>bxCAN: Nạp CAN_BTR = 0x001E0005 (BRP=6, TS1=15, TS2=2, SJW=1 -> 500 kbps @ 88.9%)
     App->>Z_CAN: can_add_rx_filter_msgq(ID: 0x120, Mask: 0x7F8)
     Z_CAN->>bxCAN: Nạp Filter Bank 0 (FINIT=1, FR1=0x120<<21, FR2=0x7F8<<21, FINIT=0)
     Z_CAN->>bxCAN: Xóa bit INRQ = 0 trong CAN_MCR -> Rời Init Mode (INAK = 0)
@@ -652,21 +660,52 @@ sequenceDiagram
     App->>Z_CAN: can_start() hòa mạng CAN
 ```
 
----
+### 3.1b. Quy Trình Cấu Hình Khởi Động Phần Cứng — Node 2 (Bare-Metal, `can_f103.c`)
 
-### 3.2. Quy Trình Vận Hành & Bắt Tay Dữ Liệu Thời Gian Thực (Runtime Dataflow)
+Khác với Node 1 (mọi bước đều đi qua lớp trừu tượng Zephyr Driver), Node 2 tự tay thực hiện toàn bộ 7 bước theo đúng trình tự bắt buộc của RM0008:
 
 ```mermaid
 sequenceDiagram
     autonumber
+    participant App as main.c (Node 2)
+    participant RCC as RCC_APB1ENR / APB2ENR
+    participant GPIO as GPIOA (PA11/PA12)
+    participant bxCAN as Ngoại Vi bxCAN1 (F103)
+
+    App->>RCC: Bật CAN1EN (bit 25) + AFIOEN + IOPAEN
+    App->>GPIO: PA11 Input Pull-Up (CNF=10b), PA12 AF Push-Pull (CNF=10b, MODE=11b)
+    App->>bxCAN: Ghi INRQ=1 trong CAN1_MCR -> Chờ INAK=1 (vào Init Mode)
+    App->>bxCAN: Nạp CAN1_BTR = 0x002D0003UL (BRP=4, TS1=14, TS2=3 -> 500 kbps @ 83.3%)
+    App->>bxCAN: CAN1_Filter_Config(0x000, 0x000) — accept-all, không lọc ID
+    App->>bxCAN: Đặt CAN1_MCR: ABOM=1 (tự phục hồi Bus-Off), TXFP=1 (ưu tiên theo thứ tự nạp)
+    App->>bxCAN: Xóa INRQ=0 -> Chờ INAK=0 (rời Init Mode, hòa mạng CAN)
+```
+
+> **Khác biệt đáng chú ý:** Node 2 chủ động bật `ABOM=1` (tự động phục hồi Bus-Off bằng phần cứng, không cần phần mềm can thiệp) — ngược hẳn với Node 1 cố tình **tắt** cơ chế tương đương (`can_stop`/`can_start` thủ công, xem Mục 2.4 & 3.3). Đây không phải mâu thuẫn mà là 2 lựa chọn thiết kế hợp lý cho 2 vai trò khác nhau: Node 2 chỉ phát, phục hồi nhanh bằng phần cứng là đủ; Node 1 làm Gateway an toàn, cần kiểm soát tường minh để tránh vòng lặp ngắt "tự sát" (xem Bug 6).
+
+---
+
+### 3.2. Quy Trình Vận Hành & Bắt Tay Dữ Liệu Thời Gian Thực (Runtime Dataflow) — Trọn Vẹn 2 Node
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant N2 as Node 2: main.c (vòng lặp 100ms)
+    participant Enc as e2e_encoder.c (Node 2)
+    participant TxHW as CAN1_Transmit (3 Mailbox)
     participant Bus as CAN Bus Vật Lý 500kbps
-    participant bxCAN as Khối Phần Cứng bxCAN1
+    participant bxCAN as Khối Phần Cứng bxCAN1 (Node 1)
     participant ISR as Zephyr Driver ISR (can_stm32_bxcan.c)
     participant Queue as Hàng Đợi raw_can_msgq (16 Frames)
     participant Worker as Thread 1: CAN Worker (Priority 5)
     participant Safety as Thread 2: Safety Supervisor (Priority 6)
-    participant Shell as Thread 3: Shell CLI (Priority 7)
+    participant Shell as Thread 3: Sim Ảo (sim_thread, Priority 7)
 
+    N2->>N2: Đọc cảm biến giả lập (speed/rpm/gear/torque/brake)
+    N2->>Enc: e2e_encode_vehicle_frame() / _transmission_frame() / _chassis_frame()
+    Enc->>Enc: Tính CRC-8 LUT + tăng Rolling Counter riêng từng ID
+    N2->>TxHW: CAN1_Transmit() x3 — quét TME0/1/2, chọn mailbox rảnh
+    TxHW->>Bus: Phát nối tiếp 0x123, 0x124, 0x125 (ID nhỏ thắng arbitration nếu đụng độ)
     Bus->>bxCAN: Khung tin CAN tới (ID: 0x123 / 0x124 / 0x125, DLC: 8)
     bxCAN->>bxCAN: Filter Bank khớp dải 0x120-0x127 -> Đẩy vào RxFIFO0
     bxCAN->>ISR: Kích hoạt ngắt phần cứng CAN1_RX0_IRQn
@@ -680,12 +719,12 @@ sequenceDiagram
     Worker->>Worker: Khóa k_mutex & Cập nhật g_current_telemetry
     Safety->>Safety: Quét định kỳ mỗi 200ms: Kiểm tra quá nhiệt >105°C, quá tua >6500RPM
     Safety->>Safety: Cập nhật DTC & Nhấp nháy đèn cảnh báo LED PI1 nếu có lỗi
-    Shell->>Worker: Người dùng gõ "vehicle status" / "can stat" -> Hiển thị Telemetry
+    Note over Shell,Worker: (Lệnh Shell "vehicle status"/"can stat" chạy trên Shell Thread nội tại của Zephyr — thread riêng, không phải sim_thread — cũng đọc chung g_current_telemetry qua k_mutex)
 ```
 
 ---
 
-### 3.3. Quy Trình Xử Lý Sự Cố & Phục Hồi An Toàn (Fault & Recovery Pipeline)
+### 3.3. Quy Trình Xử Lý Sự Cố & Phục Hồi An Toàn (Fault & Recovery Pipeline) — Node 1
 
 ```mermaid
 sequenceDiagram
@@ -707,6 +746,8 @@ sequenceDiagram
     bxCAN-->>Z_CAN: Khôi phục trạng thái ERROR ACTIVE (TEC=0, REC=0)
 ```
 
+> **Node 2 xử lý Bus-Off khác hẳn — đơn giản hơn nhiều:** vì đã bật `ABOM=1` lúc khởi tạo (xem Mục 3.1b), phần cứng bxCAN trên Node 2 **tự động** đếm 128 chuỗi Recessive và quay lại Error Active mà không cần bất kỳ dòng code phần mềm nào can thiệp. `can_f103.c` có sẵn hàm `CAN1_IsBusOff()` (đọc cờ `CAN_ESR_BOFF`) nhưng hiện **chưa được gọi ở đâu trong `main.c`** — một điểm có thể bổ sung sau này (ví dụ nhấp nháy LED cảnh báo khi Node 2 tự phát hiện mình đang Bus-Off).
+
 ---
 
 # 4. PHÂN LOẠI LỖI THỰC TẾ VÀ ĐẶC THÙ PHẦN CỨNG
@@ -719,18 +760,24 @@ sequenceDiagram
 ### 4.2. Nhóm Lỗi Kiến Trúc (Architectural Bugs)
 * **Bug 4: Tràn hàng đợi k_msgq khi gặp Burst Traffic:** Khi 3 bản tin cùng phát dồn dập, nếu thread nhận có ưu tiên thấp hoặc gọi hàm in chậm (`printk`), hàng đợi sẽ đầy và gây mất gói. Khắc phục: Đặt Priority 5 cho `can_worker`, kích thước hàng đợi 16 frames, không dùng lệnh in chậm trong luồng nhận.
 * **Bug 5: Sai lệch Endianness (Intel vs Motorola) khi giải mã DBC:** DBC quy định Intel (Little-Endian) nhưng phần mềm decode theo Big-Endian khiến giá trị RPM bị biến dạng hoàn toàn (VD: 3000 RPM thành 24000 RPM). Khắc phục: Dùng chuẩn `data[3] | (data[4] << 8)` rồi mới áp dụng hệ số dịch phải 2 (`>> 2`).
-* **Bug 6: Vòng lặp Bus-Off tự sát (Bus-Off Rapid Recovery Loop):** Lạm dụng cờ tự động phục hồi `ABOM = 1` khiến vi điều khiển liên tục thử truyền lại vào đường dây đang bị ngắn mạch, gây bão ngắt và nghẽn 100% CPU. Khắc phục: Tắt `ABOM`, dùng callback `can_state_change_handler` với thời gian trễ phục hồi an toàn $100\text{ ms}$.
+* **Bug 6: Vòng lặp Bus-Off tự sát (Bus-Off Rapid Recovery Loop) — riêng trên Node 1 (Gateway):** Lạm dụng cờ tự động phục hồi `ABOM = 1` khiến vi điều khiển liên tục thử truyền lại vào đường dây đang bị ngắn mạch, gây bão ngắt và nghẽn 100% CPU. Khắc phục: Tắt `ABOM`, dùng callback `can_state_change_handler` với thời gian trễ phục hồi an toàn $100\text{ ms}$. **Lưu ý:** đây là lựa chọn riêng cho vai trò Gateway (cần kiểm soát tường minh). Node 2 (ECU đơn giản, chỉ phát) vẫn **cố ý giữ `ABOM=1`** trong `can_f103.c` — không sai, vì vai trò của nó không cần cơ chế giám sát phức tạp như Node 1 (xem Mục 3.1b).
 
 ### 4.3. Nhóm Lỗi Ngoại Lệ và Góc Khuất Phần Cứng (Edge-Case Bugs)
 * **Bug 7: Hiện tượng Babbling Node & Chết Transceiver ở mức Dominant:** Một node bị treo phần mềm giữ chân TX ở mức LOW (Dominant) liên tục làm tê liệt toàn bộ mạng CAN. Khắc phục: Sử dụng IC Transceiver có tính năng phần cứng TXD Dominant Timeout (tự ngắt driver sau khoảng 1 - 2 ms).
 * **Bug 8: Lệch pha thạch anh do nhiệt độ cao gây Stuff Error ngẫu nhiên:** Nhiệt độ khoang động cơ làm tần số dao động thạch anh bị trôi, lệch điểm lấy mẫu ra ngoài dung sai cho phép. Khắc phục: Mở rộng Resynchronization Jump Width ($SJW = 1\text{ tq} \rightarrow 2\text{ tq}$) và chọn điểm lấy mẫu tiệm cận mức chuẩn $87.5\%$.
 
 ### 4.4. Nhóm Lỗi Khi Triển Khai Trên Zephyr RTOS và STM32F7
+
 * **Bug 9: Thiếu khai báo Pin Control (`pinctrl-0`) trong Devicetree:** Cấu hình thiếu cụm node pinctrl khiến trình biên dịch Devicetree báo lỗi thiếu thuộc tính bắt buộc theo schema YAML. Khắc phục: Khai báo đầy đủ `pinctrl-0 = <&can1_rx_pb8 &can1_tx_pb9>;` và `pinctrl-names = "default";`.
 * **Bug 10: Lỗi Linker `undefined reference to 'z_impl_can_recover'`:** Do kiến trúc phần cứng bxCAN trên STM32 không hỗ trợ hàm manual recover cấp thanh ghi. Khắc phục: Sử dụng chuỗi gọi an toàn `can_stop(can_dev)` $\rightarrow$ `k_msleep(100)` $\rightarrow$ `can_start(can_dev)`.
 * **Bug 11: Lỗi Acknowledge Error (-EIO) khi kiểm thử độc lập 1 board:** Khi phát CAN mà không có node nhận trên bus để kéo mức Dominant tại ACK Slot, phần cứng sẽ báo lỗi -EIO. Khắc phục: Bật chế độ Loopback nội bộ (`can_set_mode(can_dev, CAN_MODE_LOOPBACK)`) khi kiểm thử đơn lẻ.
-* **Bug 12: Báo động giả mất tín hiệu CAN (`DTC_U0100`) lúc khởi động:** Do các thread ứng dụng chạy ngay trước khi bus CAN kịp nhận bản tin đầu tiên. Khắc phục: Thêm khoảng trễ ân hạn (Grace Period) 2 giây trước khi kích hoạt bộ giám sát Timeout.
+* **Bug 12: Báo động giả mất tín hiệu CAN (`DTC_U0100`) lúc khởi động:** Nếu mốc thời gian "lần cuối nhận bản tin" khởi tạo bằng 0 thay vì thời điểm boot, hệ thống sẽ hiểu lầm đã "mất kết nối" ngay từ giây đầu tiên do đồng hồ hệ thống `k_uptime_get_32()` đã chạy trước khi có bản tin CAN nào tới. Khắc phục: `safety_monitor_init()` khởi tạo `s_last_msg_time = k_uptime_get_32()` (mốc thời gian boot, không phải 0) — nhờ vậy hệ thống tự nhiên có ~1000ms "ân hạn" (đúng bằng ngưỡng `DTC_U0100`) trước khi có thể báo lỗi, không cần thêm cơ chế trễ riêng.
 * **Bug 13: Xung đột độ ưu tiên ngắt NVIC giữa CAN và UART:** Ngắt UART Shell có độ ưu tiên cao hơn làm trễ ngắt CAN RX, dẫn đến tràn phần cứng FIFO0 (Overrun FOVR0). Khắc phục: Cấu hình độ ưu tiên ngắt NVIC của CAN cao hơn hoặc bằng ngắt UART.
+
+### 4.5. Nhóm Lỗi Riêng Trên Node 2 (Bare-Metal STM32F103)
+
+* **Bug 14: Nạp nhầm Mailbox đang bận khi phát chùm 3 khung liên tiếp:** Nếu `CAN1_Transmit()` cứng hoá luôn dùng Mailbox 0, khung `0x124` phải chờ khung `0x123` phát xong (vài trăm µs ở 500kbps) mới được nạp — độ trễ dồn lại qua 3 khung làm lệch tần số phát thực tế so với 100ms danh nghĩa khi tải bus cao. Khắc phục: quét cờ `TME0/TME1/TME2` trong `CAN1_TSR`, chọn mailbox đầu tiên đang rảnh, tính địa chỉ thanh ghi theo `base + mb*0x10` (xem `can_f103.c` thật).
+* **Bug 15: Quên bật `AFIOEN` khi dùng chân Remap (`USE_CAN_REMAP_PB8_PB9=1`):** Thanh ghi `AFIO_MAPR` (điều khiển remap) chỉ ghi được khi clock `RCC_APB2ENR` đã cấp cho khối AFIO — quên bật khiến việc ghi `AFIO_MAPR_CAN_REMAP2` không có tác dụng, chân vẫn ở PA11/PA12 dù code tưởng đã remap sang PB8/PB9, dễ gây nhầm lẫn khi đấu dây theo sơ đồ PB8/PB9 nhưng CAN vẫn im lặng không phát.
 
 ---
 

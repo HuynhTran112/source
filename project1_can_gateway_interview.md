@@ -21,7 +21,7 @@ Mô phỏng lại đúng cách một mạng CAN Bus ô tô thật gồm **nhiề
    Nếu chỉ dùng 1 board tự gửi tự nhận (loopback nội bộ), sẽ không kiểm chứng được tầng vật lý thật (Transceiver, trở đầu cuối, dây vi sai CAN_H/CAN_L, nhiễu bus). Dùng 2 chip khác dòng (F746 và F103) buộc phải giải quyết đúng bài toán thực tế: 2 node có xung nhịp khác nhau, tốc độ bus khác nhau về mặt cấu hình thanh ghi, nhưng phải **thống nhất cùng một baudrate 500kbps ở mức tín hiệu vật lý** để nói chuyện được với nhau.
 
 2. **Node 2 (F103) cố tình làm Bare-Metal thay vì cũng dùng Zephyr.**  
-   Vì đây là "ECU vệ tinh" đơn giản — chỉ lặp một việc: đóng gói tín hiệu DBC, tính CRC, gửi CAN theo chu kỳ — không cần một RTOS đầy đủ. Chọn bare-metal cho node này vừa nhẹ (không tốn không gian trình bày RTOS phức tạp cho vai trò phụ), vừa là dịp thực hành viết driver bxCAN ở mức thanh ghi (đối lập có chủ đích với Node 1 dùng framework cao cấp) — một cách để hiểu cả hai đầu của phổ trừu tượng hoá: "chạm tay vào thanh ghi" và "dùng API RTOS".
+   Vì đây là "ECU vệ tinh" đơn giản — chỉ lặp một việc: đóng gói tín hiệu DBC, tính CRC, gửi CAN theo chu kỳ — không cần một RTOS đầy đủ. Chọn bare-metal cho node này vừa nhẹ, vừa là dịp thực hành viết driver bxCAN ở mức thanh ghi (đối lập có chủ đích với Node 1 dùng framework cao cấp) — một cách để hiểu cả hai đầu của phổ trừu tượng hoá: "chạm tay vào thanh ghi" và "dùng API RTOS".
 
 3. **Node 1 (F746) chọn Zephyr RTOS thay vì bare-metal.**  
    Vai trò Gateway phức tạp hơn nhiều: vừa nhận CAN, vừa giải mã DBC/E2E, vừa theo dõi an toàn (DTC), vừa chạy CLI chẩn đoán — nhiều việc chạy song song với các chu kỳ khác nhau. Một RTOS với các luồng (thread) độc lập, hàng đợi (`k_msgq`) và Shell console dựng sẵn giúp tách rõ từng trách nhiệm mà không phải tự viết state machine đa nhiệm bằng tay như ở bare-metal.
@@ -30,13 +30,31 @@ Mô phỏng lại đúng cách một mạng CAN Bus ô tô thật gồm **nhiề
    Trên xe thật, một bản tin CAN có thể bị nhiễu điện từ, đứt gói, hoặc một ECU lỗi phát sai dữ liệu — hậu quả có thể ảnh hưởng an toàn (VD: hiển thị sai tốc độ). Vì vậy trước khi tin một khung dữ liệu, hệ thống bắt buộc: **(a)** kiểm tra CRC-8 để phát hiện bit lỗi do nhiễu, **(b)** kiểm tra Rolling Counter (bộ đếm vòng) để phát hiện gói bị mất/lặp/replay. Đây chính là ý tưởng lõi của chuẩn AUTOSAR E2E Profile 1 dùng thật trong ngành ô tô.
 
 5. **Dùng bộ lọc phần cứng (Filter Bank) thay vì lọc bằng phần mềm sau khi nhận.**  
-   CPU không nên bị đánh thức bởi những bản tin không liên quan. bxCAN có sẵn các bộ lọc phần cứng — cấu hình 1 lần để chỉ những khung trong dải ID hợp lệ (`0x120 - 0x127`) mới được đẩy vào hàng đợi `k_msgq`, mọi khung khác bị phần cứng tự loại ngay tại FIFO, CPU không tốn một chu kỳ nào để nhìn thấy chúng.
+   CPU không nên bị đánh thức bởi những bản tin không liên quan. bxCAN có sẵn các bộ lọc phần cứng — cấu hình 1 lần để chỉ những khung trong dải ID hợp lệ (`0x120-0x127`) mới được đẩy vào hàng đợi `k_msgq`, mọi khung khác bị phần cứng tự loại ngay tại FIFO, CPU không tốn một chu kỳ nào để nhìn thấy chúng.
 
 6. **Tách luồng nhận (CAN Worker) và luồng giám sát an toàn (Safety Supervisor) thành 2 thread riêng, ưu tiên khác nhau.**  
    Việc "nhận và giải mã gói tin" cần phản ứng nhanh mỗi khi có dữ liệu tới (ưu tiên cao hơn: Priority 5). Việc "quét định kỳ xem có lỗi/mất kết nối không và nhấp nháy đèn cảnh báo" chỉ cần chạy đều đặn mỗi 200ms, không cấp bách bằng — cho chạy ở ưu tiên thấp hơn (Priority 6) để không tranh CPU với luồng nhận dữ liệu.
 
 7. **Có sẵn bộ mô phỏng "xe ảo" ngay trong Node 1, độc lập với Node 2.**  
-   Không phải lúc nào cũng có đủ 2 board để test. Node 1 tự mang theo `sim_thread` (chạy phần mềm, không qua CAN vật lý — gọi thẳng `can_gateway_send_frame`) tự phát dữ liệu giả lập tốc độ/RPM biến thiên, cộng thêm lệnh CLI `can inject overheat/overspeed/corrupt` để **chủ động bơm lỗi** kiểm tra xem lớp an toàn (DTC) có bắt đúng không — một dạng self-test không cần phần cứng thật.
+   Không phải lúc nào cũng có đủ 2 board để test. Node 1 tự mang theo `sim_thread` (chạy phần mềm, không qua CAN vật lý — gọi thẳng `can_gateway_send_frame`) tự phát dữ liệu giả lập tốc độ/RPM biến thiên, cộng thêm lệnh CLI `can inject <overheat|overspeed|timeout|corrupt|replay|drop>` để **chủ động bơm lỗi** kiểm tra xem lớp an toàn (DTC + bộ lọc debounce 3 lần) có bắt đúng không — một dạng self-test không cần phần cứng thật.
+
+8. **Tách 1 bản tin tổng hợp thành 3 bản tin theo hệ thống con vật lý (Powertrain / Transmission / Chassis).**  
+   Trên xe thật, động cơ, hộp số, phanh là 3 hệ thống con độc lập, mỗi hệ thống có ECU riêng phát bản tin riêng lên bus chung. Tách như vậy cho phép **mở rộng thêm ECU thứ 3, thứ 4...** sau này mà không phải sửa định dạng bản tin cũ — mỗi ID (`0x123` Engine, `0x124` Transmission, `0x125` Chassis) là một kênh độc lập, mỗi kênh có Rolling Counter riêng.
+
+9. **Dùng 1 bộ lọc dải (`0x120-0x127`) thay vì 3 bộ lọc riêng cho 3 ID.**  
+   bxCAN chỉ có số lượng Filter Bank giới hạn (`CONFIG_CAN_MAX_FILTER=5` trong `prj.conf`). Tận dụng bản chất mask-based: mask `0x7F8` che 8 bit cao, để ngỏ 3 bit thấp tự do khớp bất kỳ giá trị nào từ `0x120` đến `0x127` — lọc trọn cả 3 bản tin bằng đúng 1 filter.
+
+10. **Tính CRC-8 bằng bảng tra (Lookup Table) thay vì vòng lặp bit-by-bit.**  
+    Khi lưu lượng tăng gấp 3 (3 bản tin/chu kỳ thay vì 1), bảng tra sẵn 256 giá trị giúp mỗi byte chỉ tốn 1 lần tra bảng thay vì 8 lần dịch-XOR bit — đánh đổi 256 byte bộ nhớ Flash để tiết kiệm chu kỳ CPU, kinh điển trong nhúng khi cần tối ưu.
+
+11. **Rolling Counter kiểu "delta" thay vì kiểm tra nhị phân "+1 hay sai", với bộ đếm riêng cho từng ID.**  
+    Kiểu delta phân biệt rõ ràng: khung bị lặp lại (Replay attack / lỗi truyền lặp, `delta==0`) vs rớt 1 khung (`delta==2`) vs rớt nhiều khung (`delta>2`) — thông tin chẩn đoán chính xác phục vụ bảo trì qua lệnh `can stat`.
+
+12. **Round-robin qua 3 Mailbox phần cứng để gửi chùm (burst) không nghẽn.**  
+    Cho phép chọn mailbox rảnh (0, 1, hoặc 2) giúp nạp cả 3 khung gần như cùng lúc vào phần cứng, bxCAN tự sắp xếp thứ tự phát ra bus theo ưu tiên arbitration ID (ID nhỏ hơn thắng) mà phần mềm không cần tự canh trễ.
+
+13. **Bộ lọc gạn nhiễu (debounce) 3 lần trước khi kết luận dữ liệu sai lệch, thay vì báo lỗi ngay từ vi phạm đầu tiên.**  
+    Một khung tin lỗi CRC-8 hoặc bị trùng lặp có thể chỉ là nhiễu điện từ thoáng qua, không phải dấu hiệu ECU nguồn đang thật sự hỏng. `safety_monitor_report_e2e_error()` đếm dồn số lần vi phạm và chỉ nâng cờ `DTC_U0401` khi đạt 3 lần liên tiếp — tránh báo động giả nhưng vẫn đủ nhạy để bắt lỗi thật (CRC sai lặp lại, hay tấn công Replay) trong vòng vài trăm mili-giây.
 
 ### Tóm tắt luồng dữ liệu (từ ý tưởng ở trên)
 
@@ -61,67 +79,9 @@ sequenceDiagram
 
 ---
 
-## 🆕 CẬP NHẬT SO VỚI PHIÊN BẢN SOURCE TRƯỚC — NÂNG CẤP TỪ 1 BẢN TIN LÊN HỆ THỐNG 3 BẢN TIN
-
-Kiến trúc hệ thống đã được nâng cấp toàn diện từ 1 bản tin đơn lẻ lên **mạng CAN 3 bản tin chuyên biệt** theo đúng phân hệ vật lý của xe hơi thương mại (Powertrain / Transmission / Chassis):
-
-| Hạng mục | Bản 1 Bản Tin Cũ | Bản 3 Bản Tin Mới (Source Chuẩn) |
-| :--- | :--- | :--- |
-| **Số loại bản tin CAN** | 1 bản tin duy nhất `0x123` (tốc độ, RPM, nhiệt độ) | **3 bản tin riêng biệt**: `CAN_ID_ENGINE=0x123` (tốc độ/RPM/nhiệt độ nước), `CAN_ID_TRANSMISSION=0x124` (tay số, mô-men xoắn), `CAN_ID_CHASSIS=0x125` (áp lực phanh) |
-| **Bộ lọc phần cứng (Node 1)** | `id=0x123, mask=0x7FF` (khớp chính xác 1 ID) | `id=0x120, mask=0x7F8` — lọc theo **dải 8 ID** `0x120-0x127`, đủ rộng để lọt qua cả 3 bản tin `0x123/0x124/0x125` cùng lúc chỉ bằng 1 bộ lọc duy nhất |
-| **Hàm giải mã (Node 1)** | `dbc_decode_vehicle_frame()` — chỉ hiểu 1 định dạng | `dbc_decode_can_frame(can_id, ...)` — `switch(can_id)` giải mã đúng layout theo từng ID; hàm cũ vẫn bọc ngoài gọi hộ để duy trì tính tương thích |
-| **Rolling Counter** | 1 biến `last_counter` dùng chung, chỉ kiểm tra "counter tiếp theo có đúng +1 không" | Mảng `last_counters[3]` — mỗi ID có bộ đếm riêng; kiểm tra theo **delta**: `delta==0` → khung trùng lặp (replay), `delta==1` → bình thường, `delta==2` → rớt 1 khung, `delta>2` → rớt nhiều khung |
-| **Tính CRC-8** | Vòng lặp bit-by-bit (8 phép dịch bit cho mỗi byte) | **Bảng tra nhanh (Lookup Table 256 phần tử)** `e2e_crc8_table[]` — tra bảng 1 lần thay vì lặp 8 lần/byte, giảm tải CPU vượt trội khi xử lý lưu lượng gấp 3 lần |
-| **Thống kê an toàn** | Không có | Struct `VehicleE2EStats_t` mới: tổng số khung nhận, số khung hợp lệ, số lỗi CRC, số khung rớt, và đếm riêng theo từng ID (`id_123_count`, `id_124_count`, `id_125_count`) |
-| **Lệnh Shell mới** | `vehicle status`, `dtc read/clear`, `can sim/auto/inject` | Thêm **`can stat`** (xem thống kê 3 bản tin, tỷ lệ tin cậy %) và **`can stat_reset`** |
-| **Node 2 — Phát khung tin** | 1 hàm `e2e_encode_vehicle_frame()`, phát 1 frame/chu kỳ 100ms | 3 hàm encode riêng (`e2e_encode_vehicle_frame`, `e2e_encode_transmission_frame`, `e2e_encode_chassis_frame`), mỗi hàm có **bộ Rolling Counter độc lập**; mỗi chu kỳ 100ms phát liên tiếp cả 3 khung |
-| **Node 2 — `CAN1_Transmit()`** | Dùng cứng Mailbox 0 (`CAN1_TI0R`), phải đợi khung trước gửi xong mới gửi tiếp | Tự động quét cờ `TME0/TME1/TME2` trong `CAN_TSR` để **chọn 1 trong 3 Mailbox rảnh**, tính địa chỉ thanh ghi theo công thức `base + mb*0x10` — 3 khung được nạp gần như đồng thời mà không bị tắc nghẽn |
-
-### Ý tưởng thiết kế mới bổ sung:
-
-**10. Tách 1 bản tin tổng hợp thành 3 bản tin theo hệ thống con vật lý (Powertrain / Transmission / Chassis).**  
-Trên xe thật, động cơ, hộp số, phanh là 3 hệ thống con độc lập, mỗi hệ thống có ECU riêng phát bản tin riêng lên bus chung. Tách như vậy cho phép **mở rộng thêm ECU thứ 3, thứ 4...** sau này mà không phải sửa định dạng bản tin cũ — mỗi ID là một kênh độc lập.
-
-**11. Dùng 1 bộ lọc dải (`0x120-0x127`) thay vì 3 bộ lọc riêng cho 3 ID.**  
-bxCAN chỉ có số lượng Filter Bank giới hạn (`CONFIG_CAN_MAX_FILTER=5` trong `prj.conf`). Tận dụng bản chất mask-based: mask `0x7F8` che 8 bit cao, để ngỏ 3 bit thấp tự do khớp bất kỳ giá trị nào từ `0x120` đến `0x127`.
-
-**12. Đổi từ vòng lặp CRC bit-by-bit sang bảng tra (Lookup Table) khi lưu lượng tăng gấp 3.**  
-Đổi sang bảng tra sẵn 256 giá trị giúp mỗi byte chỉ tốn 1 lần tra bảng thay vì 8 lần dịch-XOR bit — đánh đổi 256 byte bộ nhớ Flash để tiết kiệm chu kỳ CPU, kinh điển trong nhúng khi cần tối ưu.
-
-**13. Rolling Counter kiểu "delta" thay vì kiểm tra nhị phân "+1 hay sai".**  
-Kiểu delta phân biệt rõ ràng: khung bị lặp lại (Replay attack / lỗi truyền lặp) vs rớt 1 khung vs rớt nhiều khung — thông tin chẩn đoán chính xác phục vụ bảo trì qua lệnh `can stat`.
-
-**14. Round-robin qua 3 Mailbox phần cứng để gửi chùm (burst) không nghẽn.**  
-Cho phép chọn mailbox rảnh (0, 1, hoặc 2) giúp nạp cả 3 khung gần như cùng lúc vào phần cứng, bxCAN tự sắp xếp thứ tự phát ra bus theo ưu tiên arbitration ID (ID nhỏ hơn thắng) mà phần mềm không cần tự canh trễ.
-
----
-
-## 🏛️ BẢNG ĐỐI CHIẾU KIẾN TRÚC 2 NODE TRONG DỰ ÁN (STM32F746 vs STM32F103)
-
-Nhằm nắm chắc hệ thống và trả lời phỏng vấn chính xác, bảng dưới đây phân tách rành mạch cấu hình phần cứng và tầng phần mềm giữa 2 Node:
-
-| Đặc Tính Kỹ Thuật | Node 1 — Gateway & Diagnostic Cluster | Node 2 — Engine / Powertrain Simulator ECU |
-| :--- | :--- | :--- |
-| **Vi Điều Khiển & Lõi** | **STM32F746NG** (ARM Cortex-M7 @ 216 MHz) | **STM32F103C8T6** "Blue Pill" (ARM Cortex-M3 @ 72 MHz) |
-| **Tầng Phần Mềm** | **Zephyr RTOS v3.7.0** (Multi-threading, Shell, Devicetree) | **100% Bare-Metal C** (Truy xuất thanh ghi trực tiếp) |
-| **Vai Trò & Hướng Dữ Liệu** | **RX Node**: Thu thập, lọc phần cứng, giải mã DBC & E2E, CLI | **TX Node**: Giả lập cảm biến xe, đóng gói DBC, tính E2E CRC-8, phát bus |
-| **Xung Nhịp Bus bxCAN** | **APB1 = 54 MHz** (Max bus APB1 trên STM32F7) | **APB1 = 36 MHz** (Max bus APB1 trên STM32F103) |
-| **Cấu Hình Bit Timing (500 kbps)** | Khai báo qua Devicetree `app.overlay` (`bitrate = 500000; sample-point = 875;`). Zephyr tự tính $BRP=6$, $TS1=15$, $TS2=2$ ($\text{Sample Point} = 88.89\%$). | Tự tính toán và nạp trực tiếp thanh ghi: `CAN1_BTR = 0x002D0003UL` ($BRP=4$, $TS1=14$, $TS2=3$, $\text{Sample Point} = 83.33\%$). |
-| **Chân CAN & Ghép Kênh Pinmux** | **PB8 (RX)** & **PB9 (TX)** ghép kênh Alternate Function **AF9** | **PA11 (CAN_RX)** & **PA12 (CAN_TX)** chế độ Alternate Function mặc định |
-| **Điều Khiển Transceiver Standby** | **Chân PI0 (STB)** kéo xuống mức LOW trong `can_gateway_init()` để đánh thức IC Transceiver trước khi kích hoạt CAN. | Chân STB nối Mass cố định (hoặc dùng module Transceiver thường trực). |
-| **Cấu Hình Bộ Lọc (Filter Bank)** | 1 Filter Bank Mask Mode nhận dải **`0x120 - 0x127`** (`id=0x120, mask=0x7F8`) qua API `can_add_rx_filter_msgq()`. | Cấu hình thanh ghi `CAN1->FMR`, `FA1R`, `FS1R`, `FR1`, `FR2` nhận Accept-All (`0x000/0x000`) để test. |
-| **Bộ Bản Tin CAN Quản Lý** | Nhận & giải mã cả 3 bản tin: `0x123` (Engine), `0x124` (Transmission), `0x125` (Chassis). | Phát tuần tự cả 3 bản tin `0x123`, `0x124`, `0x125` mỗi chu kỳ 100ms. |
-| **Giải Mã / Đóng Gói RPM** | Giải mã Intel Little-Endian: `raw = d[3] \| (d[4]<<8)`, `RPM = raw >> 2` (Factor 0.25). | Đóng gói Intel Little-Endian: `raw = RPM << 2`, `d[3] = raw & 0xFF`, `d[4] = raw >> 8`. |
-| **Quản Lý TX Mailbox** | Quản lý tự động bởi Zephyr CAN Subsystem qua hàng đợi TX. | Tự động quét 3 cờ `TME0/1/2` trong `CAN_TSR` để nạp vào Mailbox rảnh, hỗ trợ burst 3 khung liên tiếp. |
-| **Mô Phỏng & Tự Kiểm Thử** | Luồng `sim_thread` (Priority 7) tự phát bản tin ảo nội bộ và các lệnh Shell `can inject` để test DTC. | Vòng lặp `while(1)` định kỳ 100ms biến thiên thông số giả lập và phát ra bus vật lý. |
-
----
-
 ## MỤC LỤC TỔNG QUAN
 
 - [🧭 Ý tưởng & Thiết kế hệ thống](#-ý-tưởng--thiết-kế-hệ-thống-đọc-trước--tại-sao-trước-khi-học-làm-thế-nào)
-- [🆕 Cập nhật so với phiên bản Source trước](#-cập-nhật-so-với-phiên-bản-source-trước--nâng-cấp-từ-1-bản-tin-lên-hệ-thống-3-bản-tin)
-- [🏛️ Bảng đối chiếu kiến trúc 2 Node trong dự án](#️-bảng-đối-chiếu-kiến-trúc-2-node-trong-dự-án-stm32f746-vs-stm32f103)
 - [0. DANH MỤC TÀI LIỆU GỐC & HƯỚNG DẪN TRA CỨU RM/DATASHEET (LOOKUP GUIDE)](#0-danh-mục-tài-liệu-gốc--hướng-dẫn-tra-cứu-rmdatasheet-lookup-guide)
   - [0.1. Danh Mục Tài Liệu Gốc Trọng Tâm (Official Documents)](#01-danh-mục-tài-liệu-gốc-trọng-tâm-official-documents)
   - [0.2. Hướng Dẫn Từng Bước Tra Cứu Reference Manual (RM0385)](#02-hướng-dẫn-từng-bước-tra-cứu-reference-manual-rm0385)
@@ -139,9 +99,9 @@ Nhằm nắm chắc hệ thống và trả lời phỏng vấn chính xác, bả
   - [2.4. Máy Trạng Thái Quản Lý Lỗi CAN (Fault Confinement - ISO 11898-1)](#24-máy-trạng-thái-quản-lý-lỗi-can-fault-confinement---iso-11898-1)
 - [3. SƠ ĐỒ TUẦN TỰ HOẠT ĐỘNG (MERMAID SEQUENCE DIAGRAMS)](#3-sơ-đồ-tuần-tự-hoạt-động-mermaid-sequence-diagrams)
   - [3.1. Quy Trình Cấu Hình Khởi Động Phần Cứng — Node 1 (Peripheral Configuration Pipeline)](#31-quy-trình-cấu-hình-khởi-động-phần-cứng--node-1-zephyr-peripheral-configuration-pipeline)
-  - [3.1b. Quy Trình Cấu Hình Khởi Động Phần Cứng — Node 2 (Bare-Metal)](#31b-quy-trình-cấu-hình-khởi-động-phần-cứng--node-2-bare-metal-can_f103c)
-  - [3.2. Quy Trình Vận Hành & Bắt Tay Dữ Liệu Thời Gian Thực — Trọn Vẹn 2 Node (Runtime Dataflow)](#32-quy-trình-vận-hành--bắt-tay-dữ-liệu-thời-gian-thực-runtime-dataflow--trọn-vẹn-2-node)
-  - [3.3. Quy Trình Xử Lý Sự Cố & Phục Hồi An Toàn — Node 1 (Fault & Recovery Pipeline)](#33-quy-trình-xử-lý-sự-cố--phục-hồi-an-toàn-fault--recovery-pipeline--node-1)
+  - [3.2. Quy Trình Cấu Hình Khởi Động Phần Cứng — Node 2 (Bare-Metal)](#32-quy-trình-cấu-hình-khởi-động-phần-cứng--node-2-bare-metal-can_f103c)
+  - [3.3. Quy Trình Vận Hành & Bắt Tay Dữ Liệu Thời Gian Thực — Trọn Vẹn 2 Node (Runtime Dataflow)](#33-quy-trình-vận-hành--bắt-tay-dữ-liệu-thời-gian-thực-runtime-dataflow--trọn-vẹn-2-node)
+  - [3.4. Quy Trình Xử Lý Sự Cố & Phục Hồi An Toàn — Node 1 (Fault & Recovery Pipeline)](#34-quy-trình-xử-lý-sự-cố--phục-hồi-an-toàn-fault--recovery-pipeline--node-1)
 - [4. PHÂN LOẠI LỖI THỰC TẾ VÀ ĐẶC THÙ PHẦN CỨNG](#4-phân-loại-lỗi-thực-tế-và-đặc-thù-phần-cứng)
   - [4.1. Nhóm Lỗi Phổ Biến (Common Bugs)](#41-nhóm-lỗi-phổ-biến-common-bugs)
   - [4.2. Nhóm Lỗi Kiến Trúc (Architectural Bugs)](#42-nhóm-lỗi-kiến-trúc-architectural-bugs)
@@ -247,6 +207,23 @@ Dự án hiện thực một **Trạm Cổng Giao Tiếp (Gateway) và Giám Sá
 | **An toàn dữ liệu** | AUTOSAR E2E Profile 1 | CRC-8 SAE J1850 đa thức `0x2F`, Alive Counter 4-bit và Data ID `0x1A2B`. |
 | **Khả năng tự phục hồi** | ISO 11898-1 Bus-Off Recovery | Nhận diện trạng thái tê liệt bus và kích hoạt chuỗi phục hồi an toàn trong `< 100 ms`. |
 
+So sánh chi tiết hơn cấu hình 2 Node để nắm chắc từng chỗ khác biệt:
+
+| Đặc Tính Kỹ Thuật | Node 1 — Gateway & Diagnostic Cluster | Node 2 — Engine / Powertrain Simulator ECU |
+| :--- | :--- | :--- |
+| **Vi Điều Khiển & Lõi** | **STM32F746NG** (ARM Cortex-M7 @ 216 MHz) | **STM32F103C8T6** "Blue Pill" (ARM Cortex-M3 @ 72 MHz) |
+| **Tầng Phần Mềm** | **Zephyr RTOS v3.7.0** (Multi-threading, Shell, Devicetree) | **100% Bare-Metal C** (Truy xuất thanh ghi trực tiếp) |
+| **Vai Trò & Hướng Dữ Liệu** | **RX Node**: Thu thập, lọc phần cứng, giải mã DBC & E2E, CLI | **TX Node**: Giả lập cảm biến xe, đóng gói DBC, tính E2E CRC-8, phát bus |
+| **Xung Nhịp Bus bxCAN** | **APB1 = 54 MHz** (Max bus APB1 trên STM32F7) | **APB1 = 36 MHz** (Max bus APB1 trên STM32F103) |
+| **Cấu Hình Bit Timing (500 kbps)** | Khai báo qua Devicetree `app.overlay` (`bitrate = 500000; sample-point = 875;`). Zephyr tự tính $BRP=6$, $TS1=15$, $TS2=2$ ($\text{Sample Point} = 88.89\%$). | Tự tính toán và nạp trực tiếp thanh ghi: `CAN1_BTR = 0x002D0003UL` ($BRP=4$, $TS1=14$, $TS2=3$, $\text{Sample Point} = 83.33\%$). |
+| **Chân CAN & Ghép Kênh Pinmux** | **PB8 (RX)** & **PB9 (TX)** ghép kênh Alternate Function **AF9** | **PA11 (CAN_RX)** & **PA12 (CAN_TX)** chế độ Alternate Function mặc định |
+| **Điều Khiển Transceiver Standby** | **Chân PI0 (STB)** kéo xuống mức LOW trong `can_gateway_init()` để đánh thức IC Transceiver trước khi kích hoạt CAN. | Chân STB nối Mass cố định (hoặc dùng module Transceiver thường trực). |
+| **Cấu Hình Bộ Lọc (Filter Bank)** | 1 Filter Bank Mask Mode nhận dải **`0x120 - 0x127`** (`id=0x120, mask=0x7F8`) qua API `can_add_rx_filter_msgq()`. | Cấu hình thanh ghi `CAN1->FMR`, `FA1R`, `FS1R`, `FR1`, `FR2` nhận Accept-All (`0x000/0x000`) để test. |
+| **Bộ Bản Tin CAN Quản Lý** | Nhận & giải mã cả 3 bản tin: `0x123` (Engine), `0x124` (Transmission), `0x125` (Chassis). | Phát tuần tự cả 3 bản tin `0x123`, `0x124`, `0x125` mỗi chu kỳ 100ms. |
+| **Giải Mã / Đóng Gói RPM** | Giải mã Intel Little-Endian: `raw = d[3] \| (d[4]<<8)`, `RPM = raw >> 2` (Factor 0.25). | Đóng gói Intel Little-Endian: `raw = RPM << 2`, `d[3] = raw & 0xFF`, `d[4] = raw >> 8`. |
+| **Quản Lý TX Mailbox** | Quản lý tự động bởi Zephyr CAN Subsystem qua hàng đợi TX. | Tự động quét 3 cờ `TME0/1/2` trong `CAN_TSR` để nạp vào Mailbox rảnh, hỗ trợ burst 3 khung liên tiếp. |
+| **Mô Phỏng & Tự Kiểm Thử** | Luồng `sim_thread` (Priority 7) tự phát bản tin ảo nội bộ và các lệnh Shell `can inject` để test DTC. | Vòng lặp `while(1)` định kỳ 100ms biến thiên thông số giả lập và phát ra bus vật lý. |
+
 ---
 
 ### 1.2. Sơ Đồ Khối Kiến Trúc Phân Tầng & Luồng Dữ Liệu Đa Nhiệm (Zephyr Multi-threading)
@@ -290,7 +267,7 @@ flowchart TD
 | **Thread 1 — `can_worker`** | Tự viết (`K_THREAD_DEFINE`) | 5 (cao nhất) | `main.c` | `k_msgq_get(K_FOREVER)` → giải mã DBC theo ID + xác thực E2E (CRC-8 LUT + Rolling Counter delta) → ghi `g_current_telemetry` |
 | **Thread 2 — `safety`** | Tự viết (`K_THREAD_DEFINE`) | 6 | `main.c` | Mỗi 200ms: quét ngưỡng (>105°C, >6500 RPM, mất tín hiệu >1000ms) → cập nhật `s_active_dtcs` → nhấp nháy LED cảnh báo (PI1) |
 | **Thread 3 — `sim`** | Tự viết (`K_THREAD_DEFINE`) | 7 (thấp nhất) | `diag_shell.c` | Khi bật `can auto on`: tự phát dữ liệu giả lập 5Hz thẳng vào hàng đợi, không cần Node 2 thật |
-| **Shell Thread** | Có sẵn trong Zephyr (`CONFIG_SHELL=y`) | theo cấu hình mặc định của Zephyr, không khai báo trong code project | `diag_shell.c` (chỉ đăng ký lệnh, không tự tạo thread) | Xử lý các lệnh gõ tay: `vehicle status`, `dtc read/clear`, `can stat`, `can inject ...` |
+| **Shell Thread** | Có sẵn trong Zephyr (`CONFIG_SHELL=y`) | theo cấu hình mặc định của Zephyr, không khai báo trong code project | `diag_shell.c` (chỉ đăng ký lệnh, không tự tạo thread) | Xử lý các lệnh gõ tay: `vehicle status`, `dtc read/clear`, `can stat`, `can inject <overheat\|overspeed\|timeout\|corrupt\|replay\|drop>` |
 
 > ⚠️ **Lưu ý:** Shell Thread không xuất hiện trong danh sách `K_THREAD_DEFINE` của project — nó do subsystem Shell của Zephyr tự tạo. Dễ nhầm nó với Thread 3 (`sim`) vì cả hai đều liên quan tới CLI, nhưng đây là 2 ngữ cảnh thực thi khác nhau: Thread 3 chỉ lo tự phát dữ liệu giả lập, còn việc đọc lệnh gõ tay và in kết quả ra màn hình là việc của Shell Thread.
 
@@ -566,26 +543,53 @@ uint8_t compute_e2e_crc8(const uint8_t *data, uint16_t length, uint16_t data_id)
 }
 ```
 
-#### Logic Đánh Giá Rolling Counter Delta Phân Loại Lỗi Chi Tiết:
+#### Logic Đánh Giá Rolling Counter Delta Phân Loại Lỗi Chi Tiết (khớp `dbc_decoder.c`, mảng riêng `s_last_counters[3]` cho từng ID):
 ```c
-uint8_t delta = (current_counter >= last_counter) ? 
-                (current_counter - last_counter) : 
-                ((current_counter + 16) - last_counter);
+uint8_t delta = (current_counter >= s_last_counters[id_idx]) ?
+                (current_counter - s_last_counters[id_idx]) :
+                ((current_counter + 16) - s_last_counters[id_idx]);
 
 if (delta == 0) {
     /* Khung tin bị trùng lặp (Duplicate / Replay attack) */
-    stats.dropped_frames++;
-} else if (delta == 1) {
-    /* Trình tự hoàn hảo (Normal Sequence) */
-    stats.valid_frames++;
+    s_e2e_stats.duplicate_frames++;
+    safety_monitor_report_e2e_error(); /* Nạp 1 "chấm" vào bộ đếm debounce 3 lần */
+    out->is_e2e_valid = false;
+    return false;
+} else if (delta > 2) {
+    /* Mất nhiều khung tin liên tiếp (Burst Drop) */
+    s_e2e_stats.lost_drop_frames += (delta - 1);
 } else if (delta == 2) {
     /* Mất chính xác 1 khung tin trên đường truyền */
-    stats.dropped_frames += 1;
-} else {
-    /* Mất nhiều khung tin liên tiếp (Burst Drop) */
-    stats.dropped_frames += (delta - 1);
+    s_e2e_stats.lost_drop_frames += 1;
+}
+/* delta == 1: Trình tự hoàn hảo (Normal Sequence), không làm gì thêm */
+```
+
+#### Bộ Lọc Debounce 3 Lần Trước Khi Kết Luận Dữ Liệu Sai Lệch (`DTC_U0401`)
+
+Một khung tin bị lỗi CRC-8 hoặc bị phát hiện trùng lặp (`delta==0`) đều gọi `safety_monitor_report_e2e_error()` — nhưng **1 lần vi phạm chưa đủ để kết luận có lỗi thật**: nhiễu điện từ trên bus có thể làm hỏng ngẫu nhiên đúng 1 khung rồi thôi, không phải dấu hiệu của một ECU đang phát sai liên tục. `safety_monitor.c` đếm dồn số lần vi phạm (`s_e2e_fault_count`) và chỉ nâng cờ **`DTC_U0401`** khi số lần vi phạm đạt **3 lần liên tiếp** — một bộ lọc gạn nhiễu (debounce filter) kinh điển trong chẩn đoán ô tô, tránh báo động giả từ một lần nhiễu thoáng qua trong khi vẫn bắt được lỗi thật (CRC sai lặp lại nhiều lần, hoặc tấn công Replay) trong vòng vài trăm mili-giây.
+
+```c
+/* safety_monitor.c */
+void safety_monitor_report_e2e_error(void)
+{
+    k_mutex_lock(&s_dtc_mutex, K_FOREVER);
+    s_e2e_fault_count++;
+    if (s_e2e_fault_count >= 3) {
+        add_dtc_internal(DTC_U0401);
+    }
+    k_mutex_unlock(&s_dtc_mutex);
 }
 ```
+
+Bảng mã lỗi chẩn đoán (DTC) hệ thống đang quản lý:
+
+| Mã DTC | Điều kiện kích hoạt | Nguồn dữ liệu |
+| :--- | :--- | :--- |
+| `U0100` | Không nhận được bất kỳ khung tin nào (0x123/0x124/0x125) trong hơn 1000ms | `safety_monitor_update()` — mốc thời gian dùng chung cho cả 3 ID |
+| `P0115` | Nhiệt độ nước làm mát > 105°C (từ bản tin `0x123`) | `safety_monitor_update()` |
+| `P0219` | Vòng tua máy > 6500 RPM (từ bản tin `0x123`) | `safety_monitor_update()` |
+| `U0401` | Vi phạm E2E (CRC sai hoặc Replay) đạt **3 lần liên tiếp** — debounce filter | `dbc_decode_can_frame()` → `safety_monitor_report_e2e_error()` |
 
 ---
 
@@ -660,7 +664,7 @@ sequenceDiagram
     App->>Z_CAN: can_start() hòa mạng CAN
 ```
 
-### 3.1b. Quy Trình Cấu Hình Khởi Động Phần Cứng — Node 2 (Bare-Metal, `can_f103.c`)
+### 3.2. Quy Trình Cấu Hình Khởi Động Phần Cứng — Node 2 (Bare-Metal, `can_f103.c`)
 
 Khác với Node 1 (mọi bước đều đi qua lớp trừu tượng Zephyr Driver), Node 2 tự tay thực hiện toàn bộ 7 bước theo đúng trình tự bắt buộc của RM0008:
 
@@ -681,11 +685,11 @@ sequenceDiagram
     App->>bxCAN: Xóa INRQ=0 -> Chờ INAK=0 (rời Init Mode, hòa mạng CAN)
 ```
 
-> **Khác biệt đáng chú ý:** Node 2 chủ động bật `ABOM=1` (tự động phục hồi Bus-Off bằng phần cứng, không cần phần mềm can thiệp) — ngược hẳn với Node 1 cố tình **tắt** cơ chế tương đương (`can_stop`/`can_start` thủ công, xem Mục 2.4 & 3.3). Đây không phải mâu thuẫn mà là 2 lựa chọn thiết kế hợp lý cho 2 vai trò khác nhau: Node 2 chỉ phát, phục hồi nhanh bằng phần cứng là đủ; Node 1 làm Gateway an toàn, cần kiểm soát tường minh để tránh vòng lặp ngắt "tự sát" (xem Bug 6).
+> **Khác biệt đáng chú ý:** Node 2 chủ động bật `ABOM=1` (tự động phục hồi Bus-Off bằng phần cứng, không cần phần mềm can thiệp) — ngược hẳn với Node 1 cố tình **tắt** cơ chế tương đương (`can_stop`/`can_start` thủ công, xem Mục 2.4 & 3.4). Đây không phải mâu thuẫn mà là 2 lựa chọn thiết kế hợp lý cho 2 vai trò khác nhau: Node 2 chỉ phát, phục hồi nhanh bằng phần cứng là đủ; Node 1 làm Gateway an toàn, cần kiểm soát tường minh để tránh vòng lặp ngắt "tự sát" (xem Bug 6).
 
 ---
 
-### 3.2. Quy Trình Vận Hành & Bắt Tay Dữ Liệu Thời Gian Thực (Runtime Dataflow) — Trọn Vẹn 2 Node
+### 3.3. Quy Trình Vận Hành & Bắt Tay Dữ Liệu Thời Gian Thực (Runtime Dataflow) — Trọn Vẹn 2 Node
 
 ```mermaid
 sequenceDiagram
@@ -724,7 +728,7 @@ sequenceDiagram
 
 ---
 
-### 3.3. Quy Trình Xử Lý Sự Cố & Phục Hồi An Toàn (Fault & Recovery Pipeline) — Node 1
+### 3.4. Quy Trình Xử Lý Sự Cố & Phục Hồi An Toàn (Fault & Recovery Pipeline) — Node 1
 
 ```mermaid
 sequenceDiagram
@@ -746,7 +750,7 @@ sequenceDiagram
     bxCAN-->>Z_CAN: Khôi phục trạng thái ERROR ACTIVE (TEC=0, REC=0)
 ```
 
-> **Node 2 xử lý Bus-Off khác hẳn — đơn giản hơn nhiều:** vì đã bật `ABOM=1` lúc khởi tạo (xem Mục 3.1b), phần cứng bxCAN trên Node 2 **tự động** đếm 128 chuỗi Recessive và quay lại Error Active mà không cần bất kỳ dòng code phần mềm nào can thiệp. `can_f103.c` có sẵn hàm `CAN1_IsBusOff()` (đọc cờ `CAN_ESR_BOFF`) nhưng hiện **chưa được gọi ở đâu trong `main.c`** — một điểm có thể bổ sung sau này (ví dụ nhấp nháy LED cảnh báo khi Node 2 tự phát hiện mình đang Bus-Off).
+> **Node 2 xử lý Bus-Off khác hẳn — đơn giản hơn nhiều:** vì đã bật `ABOM=1` lúc khởi tạo (xem Mục 3.2), phần cứng bxCAN trên Node 2 **tự động** đếm 128 chuỗi Recessive và quay lại Error Active mà không cần bất kỳ dòng code phần mềm nào can thiệp. `can_f103.c` có sẵn hàm `CAN1_IsBusOff()` (đọc cờ `CAN_ESR_BOFF`) nhưng hiện **chưa được gọi ở đâu trong `main.c`** — một điểm có thể bổ sung sau này (ví dụ nhấp nháy LED cảnh báo khi Node 2 tự phát hiện mình đang Bus-Off).
 
 ---
 
@@ -760,7 +764,7 @@ sequenceDiagram
 ### 4.2. Nhóm Lỗi Kiến Trúc (Architectural Bugs)
 * **Bug 4: Tràn hàng đợi k_msgq khi gặp Burst Traffic:** Khi 3 bản tin cùng phát dồn dập, nếu thread nhận có ưu tiên thấp hoặc gọi hàm in chậm (`printk`), hàng đợi sẽ đầy và gây mất gói. Khắc phục: Đặt Priority 5 cho `can_worker`, kích thước hàng đợi 16 frames, không dùng lệnh in chậm trong luồng nhận.
 * **Bug 5: Sai lệch Endianness (Intel vs Motorola) khi giải mã DBC:** DBC quy định Intel (Little-Endian) nhưng phần mềm decode theo Big-Endian khiến giá trị RPM bị biến dạng hoàn toàn (VD: 3000 RPM thành 24000 RPM). Khắc phục: Dùng chuẩn `data[3] | (data[4] << 8)` rồi mới áp dụng hệ số dịch phải 2 (`>> 2`).
-* **Bug 6: Vòng lặp Bus-Off tự sát (Bus-Off Rapid Recovery Loop) — riêng trên Node 1 (Gateway):** Lạm dụng cờ tự động phục hồi `ABOM = 1` khiến vi điều khiển liên tục thử truyền lại vào đường dây đang bị ngắn mạch, gây bão ngắt và nghẽn 100% CPU. Khắc phục: Tắt `ABOM`, dùng callback `can_state_change_handler` với thời gian trễ phục hồi an toàn $100\text{ ms}$. **Lưu ý:** đây là lựa chọn riêng cho vai trò Gateway (cần kiểm soát tường minh). Node 2 (ECU đơn giản, chỉ phát) vẫn **cố ý giữ `ABOM=1`** trong `can_f103.c` — không sai, vì vai trò của nó không cần cơ chế giám sát phức tạp như Node 1 (xem Mục 3.1b).
+* **Bug 6: Vòng lặp Bus-Off tự sát (Bus-Off Rapid Recovery Loop) — riêng trên Node 1 (Gateway):** Lạm dụng cờ tự động phục hồi `ABOM = 1` khiến vi điều khiển liên tục thử truyền lại vào đường dây đang bị ngắn mạch, gây bão ngắt và nghẽn 100% CPU. Khắc phục: Tắt `ABOM`, dùng callback `can_state_change_handler` với thời gian trễ phục hồi an toàn $100\text{ ms}$. **Lưu ý:** đây là lựa chọn riêng cho vai trò Gateway (cần kiểm soát tường minh). Node 2 (ECU đơn giản, chỉ phát) vẫn **cố ý giữ `ABOM=1`** trong `can_f103.c` — không sai, vì vai trò của nó không cần cơ chế giám sát phức tạp như Node 1 (xem Mục 3.2).
 
 ### 4.3. Nhóm Lỗi Ngoại Lệ và Góc Khuất Phần Cứng (Edge-Case Bugs)
 * **Bug 7: Hiện tượng Babbling Node & Chết Transceiver ở mức Dominant:** Một node bị treo phần mềm giữ chân TX ở mức LOW (Dominant) liên tục làm tê liệt toàn bộ mạng CAN. Khắc phục: Sử dụng IC Transceiver có tính năng phần cứng TXD Dominant Timeout (tự ngắt driver sau khoảng 1 - 2 ms).
@@ -815,6 +819,8 @@ sequenceDiagram
   2. **Mất gói tin (Loss):** Được phát hiện nhờ bước nhảy của Rolling Counter ($\Delta \ge 2$).
   3. **Chèn gói giả mạo (Masquerading):** Được phát hiện nhờ mã định danh bí mật 16-bit Data ID (`0x1A2B`) được nhúng ẩn trong phép tính CRC-8. Nếu kẻ tấn công không biết Data ID, giá trị CRC tính ra sẽ sai hoàn toàn.
   4. **Biến dạng dữ liệu bộ nhớ (Corruption):** Được phát hiện nhờ mã băm CRC-8 SAE J1850 đa thức `0x2F` với khoảng cách Hamming $d \ge 4$.
+
+  Sau khi phát hiện vi phạm, hệ thống không báo lỗi ngay từ lần đầu mà đếm dồn qua bộ lọc debounce 3 lần (`safety_monitor_report_e2e_error()`) rồi mới nâng `DTC_U0401` — tránh báo động giả từ nhiễu thoáng qua (xem Mục 2.3).
 
 ### Câu 5: "Khi mạng CAN bị lỗi Bus-Off, bạn xử lý thế nào để hệ thống không bị treo?"
 * Không bật cờ tự động phục hồi tức thì `ABOM = 1` trong `CAN_MCR` để tránh vi điều khiển rơi vào vòng lặp ngắt thiêu đốt 100% CPU khi dây dẫn bị chập ngắn mạch vật lý.
